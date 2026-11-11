@@ -222,13 +222,19 @@ test("resolve of 50 documents issues one SQL statement", async () => withTestDb(
   });
   try {
     const ctx = { ...ctxFor(counting), actor: "t" };
+    const created: string[] = [];
     for (let i = 0; i < 50; i++) {
       const { id } = await createDocument(ctx, { collection: "posts" });
+      created.push(id);
       await insertPublishedLocalized(counting, id, "en", 1, { title: `t${i}`, body: "b" });
     }
     count = 0;
     const out = await resolve(ctx, { collection: "posts", locale: "de-CH" });
     expect(out).toHaveLength(50);
+    // Identity and projection, not just cardinality: every document once, in creation order, with its own data.
+    expect(out.map((d) => d.id)).toEqual(created);
+    expect(out.map((d) => d.data.title)).toEqual(created.map((_, i) => `t${i}`));
+    expect(out.every((d) => d.data.body === "b" && d.fellBack.title === "en")).toBe(true);
     expect(count).toBe(1);
   } finally {
     await counting.end();

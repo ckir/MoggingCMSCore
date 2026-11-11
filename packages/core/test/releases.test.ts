@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import type { Sql } from "postgres";
 import {
   NotFoundError, NotPublishableError, StaleReleaseError, ValidationError, addToRelease, createDocument, createRelease,
-  getSyncState, migrate, publish, publishRelease, saveDraft,
+  deleteDocument, getSyncState, migrate, publish, publishRelease, saveDraft,
 } from "../src/index.js";
 import { ctxFor, extraConnection, insertAiDraftLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
@@ -256,6 +256,9 @@ test("two overlapping releases published concurrently both complete without dead
       }
       const [{ n }] = (await sql`select count(*)::int as n from document_localized where is_head_published and locale in ('de', 'de-CH')`) as unknown as [{ n: number }];
       expect(n).toBe(12 * (round + 1));
+      // Both release rows are marked published, not merely their documents' heads.
+      const rels = await sql`select published_at is not null as done from releases where id in (${a.id}, ${b.id})`;
+      expect(rels.map((r) => r.done)).toEqual([true, true]);
     }
   } finally {
     await sqlB.end();
@@ -388,4 +391,20 @@ test("a source item of document A does not make a target item of document B stal
   expect(rel!.allow_stale).toBe(false);
   expect(rel!.published_at).toBeInstanceOf(Date);
   expect(stateOf(await getSyncState(ctx, { docId: b.docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "current" });
+}));
+
+test("publishRelease fails atomically when a document in the release was soft-deleted", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const keep = await docWithSource(ctx, true);
+  const gone = await docWithSource(ctx, true);
+  const { id: releaseId } = await createRelease(ctx, { name: "r-del" });
+  await addToRelease(ctx, { releaseId, docId: keep.docId, locale: "de", version: keep.deVersion });
+  await addToRelease(ctx, { releaseId, docId: gone.docId, locale: "de", version: gone.deVersion });
+  await deleteDocument(ctx, { docId: gone.docId });
+  await expect(publishRelease(ctx, { releaseId })).rejects.toThrow(NotFoundError);
+  // Nothing published: the surviving document keeps no de head and the release is still open.
+  const [{ n }] = (await sql`select count(*)::int as n from document_localized where locale = 'de' and is_head_published`) as unknown as [{ n: number }];
+  expect(n).toBe(0);
+  const [rel] = await sql`select published_at from releases where id = ${releaseId}`;
+  expect(rel!.published_at).toBeNull();
 }));

@@ -427,3 +427,34 @@ test("recordAiDraft prefers the published head over a later superseded draft row
   expect(rows[2]!.data).toEqual({ title: "Pub", body: "Welt" });
   expect(rows[2]!.source_hashes).toEqual({ title: hashes.title, body: hashes.body });
 }));
+
+test("approveClean skips a draft that a human superseded between the scan and the document lock", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { title: "Hallo" }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("title")],
+  });
+  const other = await extraConnection(sql);
+  try {
+    let bulk: Promise<Awaited<ReturnType<typeof approveClean>>> | undefined;
+    await other.begin(async (tx) => {
+      await tx`select id from documents where id = ${docId} for update`; // hold the per-document lock
+      bulk = approveClean(ctx, { locale: "de" }); // scan sees the DRAFT_AI head, then blocks on the lock
+      for (let i = 0; i < 200; i++) { // wait until approveClean is really queued behind our lock
+        const [{ n }] = (await tx`select count(*)::int as n from pg_stat_activity
+          where wait_event_type = 'Lock' and pid <> pg_backend_pid()`) as unknown as [{ n: number }];
+        if (n > 0) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      // A human draft takes over the head while approveClean waits.
+      await tx`update document_localized set is_head_draft = false where doc_id = ${docId} and locale = 'de' and is_head_draft`;
+      await tx`insert into document_localized (doc_id, locale, version, state, data, is_head_draft, created_by)
+        values (${docId}, 'de', 99, 'DRAFT_HUMAN', ${tx.json({ title: "Von Hand" })}, true, 'human')`;
+    });
+    const r = await bulk!;
+    expect(r).toEqual({ approved: 0, skipped: [{ docId, locale: "de", reason: "no longer a DRAFT_AI head" }] });
+    const rows = await heads(sql, docId, "de");
+    expect(rows.filter((x) => x.is_head_draft).map((x) => [x.version, x.state])).toEqual([[99, "DRAFT_HUMAN"]]);
+    const [{ n }] = await sql`select count(*)::int as n from content_provenance where bulk_id is not null`;
+    expect(n).toBe(0);
+  } finally { await other.end(); }
+}));

@@ -72,3 +72,19 @@ test("nested object rejects prototype-named undeclared keys", () => {
     expect(() => normalizeValue(f, JSON.parse(`{"${key}":1}`)), key).toThrow(ValidationError);
   }
 });
+
+// Pinned vectors: digests computed outside this code base (`printf '%s' <RFC 8785 canonical JSON> | sha256sum`),
+// so a drift in the digest, the encoding or the canonicalisation cannot pass by changing code and fixture together.
+test("hashValue matches pinned SHA-256 vectors over RFC 8785 canonical JSON", () => {
+  expect(hashValue("Hello")).toBe("c25bf945aaff8fe16826d3c1ef117044d6cc1af8e0e9f0b4162308460a8207a7");
+  expect(hashValue({ b: [true, null], a: 1 })).toBe("1cc69c7fa23616ca2ec3ee70d24390a6225c8832db8a4c814c7e0e7f942f8668");
+  expect(hashValue(1.5)).toBe("9f29a130438b81170b92a42650f9a94291ecad60bd47af2a3886e75f7f728725");
+  expect(hashValue([])).toBe("4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945");
+  // Near-miss distractor: the unquoted string is a different value.
+  expect(hashValue("Hello")).not.toBe("185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969");
+});
+test("richText rejects NaN and Infinity nested inside the document, naming the path", () => {
+  expect(() => normalizeValue(richText(), { children: [{ value: NaN }] }, "body")).toThrow(/body\.children\[0\]\.value.*non-finite/);
+  expect(() => normalizeValue(richText(), { children: [{ value: Infinity }] }, "body")).toThrow(ValidationError);
+  expect(normalizeValue(richText(), { children: [{ value: 2 }] }, "body")).toEqual({ children: [{ value: 2 }] });
+});

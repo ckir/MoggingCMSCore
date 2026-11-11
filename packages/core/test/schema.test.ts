@@ -101,3 +101,16 @@ test("chainFor treats prototype-named fields as unknown", () => {
     expect(() => chainFor(cfg, "de", "posts", f), f).toThrow(NotFoundError);
   }
 });
+
+test("normalizeLocale accepts UN M.49 numeric regions and three-letter languages", () => {
+  expect(normalizeLocale("es-419")).toBe("es-419");
+  expect(normalizeLocale("ast-es")).toBe("ast-ES");
+  expect(normalizeLocale("YUE")).toBe("yue");
+  // Distractors: a two-digit numeric subtag is neither a region nor a variant.
+  expect(() => normalizeLocale("es-41")).toThrow(ValidationError);
+});
+
+test("defineConfig rejects a body field that is not richText", () => {
+  const bad = defineCollection("notes", { title: { ...text(), body: true } as Field, body: richText({ body: true }) });
+  expect(() => defineConfig({ collections: [bad], locales })).toThrow(/only a richText field can be the body/);
+});
