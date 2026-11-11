@@ -5,5 +5,7 @@ export type {
   Mark, Text, InlineCode, OpaqueInline, Image, Break, Link, Inline, Paragraph, Heading, ThematicBreak,
   Blockquote, ListItem, List, TableCell, TableRow, Table, Code, Container, OpaqueBlock, Block, RichTextRoot,
 } from "./tree.js";
+export { importFolder } from "./import.js";
+export type { ImportInput, FileOutcome, FileMessage, ImportReport } from "./import.js";
 export { REJECTION_ORDER, restoreDraft, sentinelize } from "./sentinel.js";
 export type { RejectionCode, SentinelOriginal, SentinelPrepared, RestoreResult } from "./sentinel.js";

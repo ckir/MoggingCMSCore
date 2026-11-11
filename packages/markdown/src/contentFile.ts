@@ -19,7 +19,7 @@ function isPlain(v: unknown): v is Record<string, unknown> {
 }
 
 export function splitFrontMatter(input: string): ParsedFile {
-  const text = input.replace(/\r\n/g, "\n").normalize("NFC");
+  const text = (input.startsWith("\uFEFF") ? input.slice(1) : input).replace(/\r\n/g, "\n").normalize("NFC");
   if (!text.startsWith("---\n")) return { frontMatter: {}, body: text };
   const lines = text.split("\n");
   let close = -1;

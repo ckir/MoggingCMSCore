@@ -25,6 +25,10 @@ const emptyTree = { type: "root", version: 1, mode: "md", children: [] };
 const map = (text: string, o = SRC) => mapFile(docs, splitFrontMatter(text), o);
 
 describe("content files", () => {
+  test("leading BOM is stripped", () => {
+    expect(splitFrontMatter("\uFEFF---\ntitle: T\n---\nHi\n").frontMatter).toEqual({ title: "T" });
+  });
+
   test("bare key, empty string and missing key", () => {
     expect("banner" in map("---\nbanner:\n---\nHi\n").localized).toBe(false);
     expect(map('---\nbanner: ""\n---\nHi\n').localized["banner"]).toBe("");
