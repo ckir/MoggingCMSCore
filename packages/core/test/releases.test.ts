@@ -408,3 +408,19 @@ test("publishRelease fails atomically when a document in the release was soft-de
   const [rel] = await sql`select published_at from releases where id = ${releaseId}`;
   expect(rel!.published_at).toBeNull();
 }));
+
+test("publishRelease records the releasing actor as unpublished_by on the heads it supersedes", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId } = await docWithSource(ctx, false);
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: "B de" } });
+  await publish(ctx, { docId, locale: "de" }); // de v1 is the published head
+  const { version } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de 2", body: "B de 2" } });
+  const { id: releaseId } = await createRelease(ctx, { name: "supersede" });
+  await addToRelease(ctx, { releaseId, docId, locale: "de", version });
+  await publishRelease(ctxFor(sql, "release-publisher"), { releaseId });
+  const rows = await sql`select version, is_head_published, unpublished_by, published_by from document_localized
+    where doc_id = ${docId} and locale = 'de' order by version`;
+  expect(rows.map((r) => [r.version, r.is_head_published, r.unpublished_by, r.published_by])).toEqual([
+    [1, false, "release-publisher", "releaser"], [2, true, null, "release-publisher"],
+  ]);
+}));
