@@ -76,7 +76,8 @@ export async function addToRelease(ctx: Ctx, input: AddToReleaseInput): Promise<
 /**
  * Publishes every item of a release in one transaction (spec 7.2, 8.1). Lock order: release row, then the
  * involved `documents` rows in ascending id. Stale re-check judges each localized item's own draft row
- * against the CURRENT published source head; the flip is `publishWithinTx` (spec 6.3) with one stamp.
+ * against the source as it will be after the flip (the in-release source item's draft, else the current
+ * published source head); the flip is `publishWithinTx` (spec 6.3) with one stamp.
  */
 export async function publishRelease(ctx: Ctx, input: PublishReleaseInput): Promise<void> {
   await assertLicensed(ctx);
@@ -117,18 +118,23 @@ export async function publishRelease(ctx: Ctx, input: PublishReleaseInput): Prom
       }
     }
 
-    // Stale re-check: fields of the item's own draft snapshot whose recorded source hash differs from the
-    // source published head's hash (same predicate as getSyncState's 'stale'). Source-locale and shared items
-    // have nothing to compare to.
+    // Stale re-check: fields of the item's own draft snapshot whose recorded source hash differs from the hash
+    // of the source as it will be once the release is live: the in-release source item's draft row when the
+    // release also carries this document's source-locale item, else the current published source head. Same
+    // predicate as getSyncState's 'stale': the target has a stored hash for the field (else 'untracked') and it
+    // is distinct from the source's (a missing source hash is therefore never 'current'). Source-locale and
+    // shared items have nothing to compare to.
     const staleRows = await tx`
       select ri.doc_id, ri.locale, array_agg(k.key order by k.key) as fields
       from release_items ri
       join document_localized t on t.doc_id = ri.doc_id and t.locale = ri.locale and t.version = ri.draft_version
-      join document_localized s on s.doc_id = ri.doc_id and s.locale = ${source} and s.is_head_published
+      left join release_items si on si.release_id = ri.release_id and si.doc_id = ri.doc_id and si.locale = ${source}
+      join document_localized s on s.doc_id = ri.doc_id and s.locale = ${source}
+        and (case when si.draft_version is not null then s.version = si.draft_version else s.is_head_published end)
       cross join lateral jsonb_object_keys(t.data) as k(key)
       where ri.release_id = ${releaseId} and ri.locale is not null and ri.locale <> ${source}
         and s.data ? k.key and t.source_hashes ? k.key
-        and t.source_hashes ->> k.key <> s.source_hashes ->> k.key
+        and t.source_hashes ->> k.key is distinct from s.source_hashes ->> k.key
       group by ri.doc_id, ri.locale
       order by ri.doc_id, ri.locale`;
     const stale: StaleReleaseItem[] = staleRows.map((r) => ({

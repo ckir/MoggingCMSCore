@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import type { Sql } from "postgres";
 import {
   NotFoundError, NotPublishableError, StaleReleaseError, ValidationError, addToRelease, createDocument, createRelease,
-  migrate, publish, publishRelease, saveDraft,
+  getSyncState, migrate, publish, publishRelease, saveDraft,
 } from "../src/index.js";
 import { ctxFor, extraConnection, insertAiDraftLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
@@ -302,3 +302,75 @@ test("the public API exposes the release and publish functions but not publishWi
     expect(typeof api[name]).toBe("function");
   }
 });
+
+// ---- Stale check against the source as it WILL be after the flip (spec 8.1, ruling R14) ----
+
+type StaleErr = StaleReleaseError & { items: Array<{ docId: string; locale: string; fields: string[] }> };
+const stateOf = (rows: Awaited<ReturnType<typeof getSyncState>>) =>
+  Object.fromEntries(rows.map((r) => [`${r.locale}.${r.field}`, r.state]));
+
+/** docWithSource(de draft derived from en v1) + an en v2 DRAFT with `data`, both put in a new release. */
+async function releaseWithNewSource(ctx: Ctx, data: Record<string, unknown>) {
+  const { docId, deVersion } = await docWithSource(ctx, true);
+  const { version: enVersion } = await saveDraft(ctx, { docId, locale: "en", data });
+  const { id } = await createRelease(ctx, { name: "src+tgt" });
+  await addToRelease(ctx, { releaseId: id, docId, locale: "en", version: enVersion });
+  await addToRelease(ctx, { releaseId: id, docId, locale: "de", version: deVersion });
+  return { docId, deVersion, enVersion, id };
+}
+
+test("a release with a new source item and a target derived from the old source is stale", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, id } = await releaseWithNewSource(ctx, { title: "T2", body: "B" });
+  const before = await sql`select doc_id, locale, version, state, is_head_draft, is_head_published from document_localized order by doc_id, locale, version`;
+  const err = await publishRelease(ctx, { releaseId: id }).then(() => undefined, (e: unknown) => e) as StaleErr;
+  expect(err).toBeInstanceOf(StaleReleaseError);
+  expect(err.items).toEqual([{ docId, locale: "de", fields: ["title"] }]);
+  expect(await sql`select doc_id, locale, version, state, is_head_draft, is_head_published from document_localized order by doc_id, locale, version`).toEqual(before);
+  const [rel] = await sql`select published_at, allow_stale from releases where id = ${id}`;
+  expect(rel).toMatchObject({ published_at: null, allow_stale: false });
+}));
+
+test("the same release publishes with allowStale and records allow_stale = true", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, id } = await releaseWithNewSource(ctx, { title: "T2", body: "B" });
+  await publishRelease(ctx, { releaseId: id, allowStale: true });
+  const [rel] = await sql`select published_at, allow_stale from releases where id = ${id}`;
+  expect(rel!.allow_stale).toBe(true);
+  expect(rel!.published_at).toBeInstanceOf(Date);
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "stale", "de.body": "current" });
+}));
+
+test("a target carrying the new source's hashes publishes without StaleReleaseError and reads current", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, deVersion, enVersion, id } = await releaseWithNewSource(ctx, { title: "T2", body: "B" });
+  // Fixture: en v2 is only a draft here, so saveDraft(de) cannot stamp its hashes (it stamps the PUBLISHED
+  // source). The de draft is made to be "translated against v2" by copying v2's self-hashes with direct SQL.
+  await sql`update document_localized t set source_hashes = s.source_hashes
+    from document_localized s
+    where t.doc_id = ${docId} and t.locale = 'de' and t.version = ${deVersion}
+      and s.doc_id = ${docId} and s.locale = 'en' and s.version = ${enVersion}`;
+  await publishRelease(ctx, { releaseId: id });
+  const [rel] = await sql`select allow_stale from releases where id = ${id}`;
+  expect(rel!.allow_stale).toBe(false);
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "current" });
+}));
+
+test("a release with only a target item is stale when the source moved after the target was drafted", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, deVersion } = await docWithSource(ctx, true);
+  const { id } = await createRelease(ctx, { name: "tgt-only" });
+  await addToRelease(ctx, { releaseId: id, docId, locale: "de", version: deVersion });
+  await republishSource(ctx, docId, { title: "T2", body: "B" });
+  const err = await publishRelease(ctx, { releaseId: id }).then(() => undefined, (e: unknown) => e) as StaleErr;
+  expect(err).toBeInstanceOf(StaleReleaseError);
+  expect(err.items).toEqual([{ docId, locale: "de", fields: ["title"] }]);
+}));
+
+test("staleness against an in-release source item is per field: an untouched title is not reported", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, id } = await releaseWithNewSource(ctx, { title: "T", body: "B2" });
+  const err = await publishRelease(ctx, { releaseId: id }).then(() => undefined, (e: unknown) => e) as StaleErr;
+  expect(err).toBeInstanceOf(StaleReleaseError);
+  expect(err.items).toEqual([{ docId, locale: "de", fields: ["body"] }]);
+}));

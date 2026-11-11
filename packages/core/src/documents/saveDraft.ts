@@ -69,6 +69,13 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
     }
     const version = (heads!.max_version as number) + 1;
 
+    // Base head for the carry-forward below, read BEFORE the draft head is cleared: this locale's draft head,
+    // else its published head, else none.
+    const base = isShared || locale === config.locales.source ? undefined : (await tx`
+      select data, source_hashes from document_localized
+      where doc_id = ${input.docId} and locale = ${locale} and (is_head_draft or is_head_published)
+      order by is_head_draft desc limit 1`)[0];
+
     await tx`update ${table} set is_head_draft = false
       where doc_id = ${input.docId} ${scope} and is_head_draft`;
 
@@ -78,17 +85,25 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
       return { version };
     }
 
-    // Hash vector (spec 6.4): source locale hashes its own values; a target records the hash of the
-    // source locale's current published value for each saved field (none if the source has no value).
+    // Hash vector (spec 6.4): source locale hashes its own values. A target records the hash of the source
+    // locale's current published value for each CHANGED or NEW field (none if the source has no value); a
+    // field whose value is unchanged against this locale's base head (draft head, else published head)
+    // carries the base's stored hash forward, so a re-save never asserts sync (only trackFields does).
     const sourceHashes: Record<string, string> = {};
     if (locale === config.locales.source) {
       for (const [k, v] of Object.entries(data)) sourceHashes[k] = hashValue(v);
     } else {
+      const baseData = (base?.data ?? {}) as Record<string, unknown>;
+      const baseHashes = (base?.source_hashes ?? {}) as Record<string, string>;
       const [src] = await tx`select data from document_localized
         where doc_id = ${input.docId} and locale = ${config.locales.source} and is_head_published`;
       const srcData = (src?.data ?? {}) as Record<string, unknown>;
-      for (const k of Object.keys(data)) {
-        if (Object.hasOwn(srcData, k)) sourceHashes[k] = hashValue(srcData[k]);
+      for (const [k, v] of Object.entries(data)) {
+        if (base && Object.hasOwn(baseData, k) && hashValue(v) === hashValue(baseData[k])) {
+          if (Object.hasOwn(baseHashes, k)) sourceHashes[k] = baseHashes[k]!;
+        } else if (Object.hasOwn(srcData, k)) {
+          sourceHashes[k] = hashValue(srcData[k]);
+        }
       }
     }
     await tx`insert into document_localized

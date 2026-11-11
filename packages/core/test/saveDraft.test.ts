@@ -1,5 +1,8 @@
 import { expect, test } from "vitest";
-import { ConflictError, NotFoundError, ValidationError, createDocument, deleteDocument, hashValue, migrate, saveDraft } from "../src/index.js";
+import {
+  ConflictError, NotFoundError, ValidationError, createDocument, deleteDocument, getSyncState, hashValue, migrate, publish,
+  saveDraft, trackFields,
+} from "../src/index.js";
 import { ctxFor, extraConnection, insertPublishedLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 import type { Sql } from "postgres";
@@ -156,4 +159,126 @@ test("prototype-named undeclared keys are rejected and nothing is written", asyn
   const [{ n: nl }] = await sql`select count(*)::int as n from document_localized where doc_id = ${docId}`;
   const [{ n: ns }] = await sql`select count(*)::int as n from document_shared where doc_id = ${docId}`;
   expect([nl, ns]).toEqual([0, 0]);
+}));
+
+// ---- Re-saving a target snapshot must not assert sync on unchanged fields (spec 6.4, ruling R13) ----
+
+const stateOf = (rows: Awaited<ReturnType<typeof getSyncState>>) =>
+  Object.fromEntries(rows.map((r) => [`${r.locale}.${r.field}`, r.state]));
+
+const hashesOf = async (sql: Sql, docId: string, locale: string, version: number) => {
+  const [row] = await sql`select source_hashes from document_localized where doc_id = ${docId} and locale = ${locale} and version = ${version}`;
+  return row!.source_hashes as Record<string, string>;
+};
+
+test("re-saving an unchanged stale field does not make it current (typo fix keeps body stale)", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B" } });
+  await publish(ctx, { docId, locale: "en" });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "T de typo", body: "B de" } });
+  await publish(ctx, { docId, locale: "de" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B2" } });
+  await publish(ctx, { docId, locale: "en" });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
+  // The editor fixes only the title typo and resubmits the whole snapshot, body unchanged.
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: "B de" } });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
+  await publish(ctx, { docId, locale: "de" });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
+}));
+
+test("changed field gets the current source hash, unchanged keeps the old one, new field gets the current one", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B", legal: "L" } });
+  await publish(ctx, { docId, locale: "en" });
+  const { version: v1 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: "B de" } });
+  expect(await hashesOf(sql, docId, "de", v1)).toEqual({ title: hashValue("T"), body: hashValue("B") });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T2", body: "B2", legal: "L" } });
+  await publish(ctx, { docId, locale: "en" });
+  const { version: v2 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T2 de", body: "B de", legal: "L de" } });
+  expect(await hashesOf(sql, docId, "de", v2)).toEqual({
+    title: hashValue("T2"), // changed: current source hash
+    body: hashValue("B"), // unchanged: base hash carried forward (not hashValue("B2"))
+    legal: hashValue("L"), // new: current source hash
+  });
+}));
+
+test("an unchanged field with no stored hash stays untracked", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  // de has legal, but the source has no published legal value at save time: no hash recorded.
+  await insertPublishedLocalized(sql, docId, "en", 1, { title: "T" }, { title: hashValue("T") });
+  const { version: v1 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", legal: "Recht" } });
+  expect(await hashesOf(sql, docId, "de", v1)).toEqual({ title: hashValue("T") });
+  // The source gains a legal value, then de is re-saved with legal unchanged.
+  await sql`update document_localized set data = ${sql.json({ title: "T", legal: "L" })},
+    source_hashes = ${sql.json({ title: hashValue("T"), legal: hashValue("L") })} where doc_id = ${docId} and locale = 'en'`;
+  const { version: v2 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de 2", legal: "Recht" } });
+  expect(await hashesOf(sql, docId, "de", v2)).toEqual({ title: hashValue("T") });
+  await publish(ctx, { docId, locale: "de" });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))["de.legal"]).toBe("untracked");
+}));
+
+test("a first save of a locale (no base head) stamps every field from the source", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B" } });
+  await publish(ctx, { docId, locale: "en" });
+  const { version } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: "B de" } });
+  expect(await hashesOf(sql, docId, "de", version)).toEqual({ title: hashValue("T"), body: hashValue("B") });
+}));
+
+test("the base is the draft head when both a draft head and a published head exist", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B" } });
+  await publish(ctx, { docId, locale: "en" });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: "B de" } });
+  await publish(ctx, { docId, locale: "de" }); // published de: title->hash(T), body->hash(B)
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B2" } });
+  await publish(ctx, { docId, locale: "en" });
+  // Draft head: body changed (stamped with hash(B2)), title unchanged (carries hash(T)).
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: "B de 2" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B3" } });
+  await publish(ctx, { docId, locale: "en" });
+  // Next save: body unchanged vs the DRAFT head (it differs from the published head) -> keeps the draft's
+  // hash(B2); judged against the published head it would be a change and read hash(B3).
+  const { version } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: "B de 2" } });
+  expect(await hashesOf(sql, docId, "de", version)).toEqual({ title: hashValue("T"), body: hashValue("B2") });
+}));
+
+test("trackFields on an unchanged field is the explicit assertion: it reads current afterwards", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B" } });
+  await publish(ctx, { docId, locale: "en" });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: "B de" } });
+  await publish(ctx, { docId, locale: "de" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B2" } });
+  await publish(ctx, { docId, locale: "en" });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: "B de" } });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))["de.body"]).toBe("stale");
+  await publish(ctx, { docId, locale: "de" });
+  await trackFields(ctx, { docId, locale: "de", fields: ["body"] });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "current" });
+}));
+
+test("jsonb round trip: stored self-hash equals hashValue of the data read back", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  // body is richText (arbitrary JSON): nested nulls, a list with null elements, numbers 0 / -0.5 / 1e21,
+  // nested objects and a decomposed e-acute (normalized to NFC before hashing and storage).
+  const body = {
+    type: "doc", note: null, text: "Cafe\u0301",
+    nums: [0, -0.5, 1e21, null], deep: { a: { b: null, c: [null, { d: "x", e: null }] } },
+  };
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Cafe\u0301", body, price: 1e21 } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "y", price: 0, tags: ["a", "caf\u00e9"] } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "z", price: -0.5, body: [null, 0, { k: null }] } });
+  const rows = await sql`select data, source_hashes from document_localized where doc_id = ${docId} order by version`;
+  expect(rows).toHaveLength(3);
+  for (const r of rows) {
+    const data = r.data as Record<string, unknown>;
+    const hashes = r.source_hashes as Record<string, string>;
+    expect(Object.keys(hashes).sort()).toEqual(Object.keys(data).sort());
+    for (const k of Object.keys(data)) expect(hashes[k], k).toBe(hashValue(data[k]));
+  }
+  const first = rows[0]!.data as Record<string, unknown>;
+  expect(first.title).toBe("Caf\u00e9");
+  expect((first.body as { text: string }).text).toBe("Caf\u00e9");
 }));
