@@ -41,7 +41,7 @@ const out = await exportFolder(ctx, { dir: "export" });
 ## Export
 
 `exportFolder` writes the **published** heads to `<dir>/<locale>/<collection>/<slug>.<ext>`, where `ext`
-is `mdx` when the published body tree has mode `mdx` (or, with no body, any published richText tree does), else `md`. The source-locale file carries the shared
+is `mdx` when the published body tree has mode `mdx` (or, with no body, any published richText tree does), else `md`. A field holding a rich-text tree of the other mode is exported as is, with the warning `<field>: has a <mode> tree in a .<ext> file; it will re-import as <ext>`. The source-locale file carries the shared
 fields. References are written as slugs, or as the id with a warning when the target is deleted or has no
 published slug (such a reference will not re-import). Empties are always written explicitly and a bare key is never
 written, so export followed by import leaves every file `unchanged` (spec 9.4).

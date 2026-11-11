@@ -89,6 +89,27 @@ function treeMode(field: Field, value: unknown): "md" | "mdx" | null {
   }
 }
 
+/** Every richText tree mode found in `value` (nested lists and objects included). */
+function treeModes(field: Field, value: unknown, out: Set<"md" | "mdx">): void {
+  switch (field.kind) {
+    case "richText":
+      if (isPlain(value) && (value["mode"] === "mdx" || value["mode"] === "md")) out.add(value["mode"] as "md" | "mdx");
+      return;
+    case "list":
+      if (Array.isArray(value)) for (const x of value) treeModes(field.item, x, out);
+      return;
+    case "object":
+      if (!isPlain(value)) return;
+      for (const [k, v] of Object.entries(value)) {
+        const sub = Object.hasOwn(field.fields, k) ? field.fields[k] : undefined;
+        if (sub !== undefined) treeModes(sub, v, out);
+      }
+      return;
+    default:
+      return;
+  }
+}
+
 /** The body tree's mode if there is one, else the mode of any richText tree in the published data; md by default. */
 function bodyMode(col: Collection, ...datas: Array<Record<string, unknown>>): "md" | "mdx" {
   const bodyName = Object.entries(col.fields).find(([, f]) => f.body)?.[0];
@@ -162,6 +183,14 @@ export async function exportFolder(ctx: Ctx, input: ExportInput): Promise<Export
           continue;
         }
         for (const b of bad) warnings.push({ file: rel, message: `${b}: not a v1 tree; omitted` });
+
+        for (const [name, field] of Object.entries(col.fields)) {
+          const modes = new Set<"md" | "mdx">();
+          treeModes(field, field.localized ? localized[name] : shared[name], modes);
+          for (const m of modes) {
+            if (m !== ext) warnings.push({ file: rel, message: `${name}: has a ${m} tree in a .${ext} file; it will re-import as ${ext}` });
+          }
+        }
 
         // refToText is synchronous: resolve every referenced id up front.
         for (const [name, field] of Object.entries(col.fields)) {

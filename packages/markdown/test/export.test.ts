@@ -148,6 +148,29 @@ describe("exportFolder", () => {
     });
   });
 
+  test("warns when a file's rich-text trees have mixed modes", async () => {
+    await setup(async (_sql, ctx) => {
+      const tree = (mode: "md" | "mdx") => ({
+        type: "root", version: 1, mode,
+        children: [{ type: "paragraph", children: [{ type: "text", value: "x", marks: [] }] }],
+      });
+      const mk = async (slug: string, body: "md" | "mdx", summary: "md" | "mdx") => {
+        const { id } = await createDocument(ctx, { collection: "docs" });
+        await saveDraft(ctx, { docId: id, locale: "shared", data: { slug } });
+        await saveDraft(ctx, { docId: id, locale: "en", data: { title: "T", body: tree(body), summary: tree(summary) } });
+        await publish(ctx, { docId: id, locale: "shared" });
+        await publish(ctx, { docId: id, locale: "en" });
+      };
+      await mk("mixed", "md", "mdx");
+      await mk("same", "md", "md");
+      const r = await exportFolder(ctx, { dir: fresh() });
+      expect(r.files).toEqual(["en/docs/mixed.md", "en/docs/same.md"]);
+      expect(r.warnings).toEqual([
+        { file: "en/docs/mixed.md", message: "summary: has a mdx tree in a .md file; it will re-import as md" },
+      ]);
+    });
+  });
+
   test("a reference to a deleted target is warned", async () => {
     await setup(async (_sql, ctx) => {
       const dir = writeTree(null, { "en/docs/intro.md": INTRO, "en/docs/other.md": OTHER, "en/people/jane.md": JANE });
