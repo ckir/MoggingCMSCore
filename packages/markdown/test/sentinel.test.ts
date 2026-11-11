@@ -113,3 +113,69 @@ describe("restoreDraft", () => {
     expect(codesOf(restoreDraft(p, p.markdown.replace(":::tip", ":::tipp")))).toEqual(["BLOCK_SEQUENCE"]);
   });
 });
+
+describe("restoreDraft hardening", () => {
+  const mk = (src: string) => sentinelize(markdownToTree(src));
+  const run = (src: string, edit: (md: string) => string) => {
+    const p = mk(src);
+    const draft = edit(p.markdown);
+    expect(draft).not.toBe(p.markdown);
+    return restoreDraft(p, draft);
+  };
+
+  test("code block moved out of a list item", () => {
+    expect(codesOf(run("* item\n\n  ```js\n  q\n  ```\n", (m) => m.replace(/\n\n\s+⟦MOGGING:0⟧/, "\n\n⟦MOGGING:0⟧")))).toEqual(["BLOCK_SEQUENCE"]);
+  });
+
+  test("code block moved out of a blockquote", () => {
+    expect(codesOf(run("> quote\n>\n> ```js\n> q\n> ```\n", (m) => m.replace(/\n> ⟦MOGGING:0⟧/, "\n\n⟦MOGGING:0⟧")))).toEqual(["BLOCK_SEQUENCE"]);
+  });
+
+  test("two code blocks swapped", () => {
+    expect(codesOf(run("```js\na\n```\n\n```js\nb\n```\n", (m) => m.replace("⟦MOGGING:0⟧", "@@").replace("⟦MOGGING:1⟧", "⟦MOGGING:0⟧").replace("@@", "⟦MOGGING:1⟧")))).toEqual(["BLOCK_SEQUENCE"]);
+  });
+
+  test("ordered list start changed", () => {
+    expect(codesOf(run("3. a\n4. b\n", (m) => m.replace("3.", "1.")))).toEqual(["BLOCK_SEQUENCE"]);
+  });
+
+  test("task checkbox flipped", () => {
+    expect(codesOf(run("* [ ] a\n* [x] b\n", (m) => m.replace("[ ]", "[x]")))).toEqual(["BLOCK_SEQUENCE"]);
+  });
+
+  test("image turned into a link", () => {
+    expect(codesOf(run("See ![b](u) now\n", (m) => m.replace("![b](u)", "[b](u)")))).toEqual(["LINK_TARGETS"]);
+  });
+
+  test("sentinelize throws on a sentinel-like container attribute", () => {
+    expect(() => mk(':::tip{title="MOGGING:1"}\nBody\n:::\n')).toThrow(ValidationError);
+  });
+
+  test.each([
+    ["heading", (m: string) => m.replace("\n\n⟦MOGGING:1⟧", "\n\n# ⟦MOGGING:1⟧")],
+    ["emphasis", (m: string) => m.replace("\n\n⟦MOGGING:1⟧", "\n\n*⟦MOGGING:1⟧*")],
+    ["table cell", (m: string) => m.replace("\n\n⟦MOGGING:1⟧", "\n\n| a |\n|---|\n| ⟦MOGGING:1⟧ |")],
+  ])("block sentinel moved into a %s", (_n, edit) => {
+    expect(codesOf(run("Use `x`.\n\n```js\nq\n```\n", edit))).toEqual(["SENTINEL_ALTERED"]);
+  });
+
+  test("invented index", () => {
+    expect(codesOf(run("Use `x`.\n", (m) => m + "\n⟦MOGGING:9⟧\n"))).toEqual(["SENTINEL_ALTERED"]);
+  });
+
+  test("identity on a non-corpus source with nested structures", () => {
+    const src = [
+      "* outer", "", "  * inner", "", "    ```js", "    q", "    ```", "",
+      "| a | `b` |", "|---|:-:|", "| `c` | d |", "",
+      "## Head `code`", "",
+      ':::tip[Label `l`]{title="T" id="i"}', "Body `c`.", ":::", "",
+      "* [ ] todo", "* [x] done", "",
+      "3. three", "4. four", "",
+    ].join("\n");
+    const p = mk(src);
+    const r = restoreDraft(p, p.markdown);
+    expect(r.ok, r.ok ? "" : `${r.codes.join(",")} ${r.detail}`).toBe(true);
+    if (r.ok) expect(r.root).toEqual(p.source);
+  });
+});
+

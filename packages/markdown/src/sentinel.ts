@@ -32,6 +32,12 @@ function assertNoSentinel(node: unknown, path: string): void {
     const v = o[f];
     if (typeof v === "string" && RESIDUE.test(v)) throw new ValidationError(`source already contains a sentinel token at ${path}.${f}`);
   }
+  if (o["type"] === "container") {
+    if (typeof o["name"] === "string" && RESIDUE.test(o["name"])) throw new ValidationError(`source already contains a sentinel token at ${path}.name`);
+    for (const [k, v] of Object.entries((o["attributes"] ?? {}) as Record<string, unknown>)) {
+      if (typeof v === "string" && RESIDUE.test(v)) throw new ValidationError(`source already contains a sentinel token at ${path}.attributes.${k}`);
+    }
+  }
   for (const [k, v] of Object.entries(o)) if (v && typeof v === "object") assertNoSentinel(v, `${path}.${k}`);
 }
 
@@ -91,12 +97,14 @@ export function sentinelize(root: RichTextRoot): SentinelPrepared {
 
 // ---------------------------------------------------------------- structure signature
 
-function signature(root: RichTextRoot): string[] {
+function signature(root: RichTextRoot, indexOf?: WeakMap<object, number>): string[] {
   const out: string[] = [];
+  let counter = 0; // document-order original numbering, mirrors sentinelize; used for the source tree
+  const idx = (n: object): number => { const c = counter++; return indexOf ? (indexOf.get(n) ?? -1) : c; };
   const inl = (list: Inline[]): void => {
     for (const n of list) {
-      if (n.type === "inlineCode") out.push("inlineCode");
-      else if (n.type === "opaqueInline") out.push(`opaqueInline:${n.node}`);
+      if (n.type === "inlineCode") { idx(n); out.push("inlineCode"); }
+      else if (n.type === "opaqueInline") { idx(n); out.push(`opaqueInline:${n.node}`); }
       else if (n.type === "link") inl(n.children);
     }
   };
@@ -105,23 +113,32 @@ function signature(root: RichTextRoot): string[] {
       switch (b.type) {
         case "paragraph": out.push("paragraph"); inl(b.children); break;
         case "heading": out.push(`heading:${b.depth}`); inl(b.children); break;
-        case "blockquote": out.push("blockquote"); blk(b.children); break;
+        case "blockquote": out.push("blockquote"); blk(b.children); out.push("/blockquote"); break;
         case "list":
-          out.push(b.ordered ? "list:o" : "list:u");
-          for (const it of b.children) { out.push("listItem"); blk(it.children); }
+          out.push(b.ordered ? `list:o:${JSON.stringify(b.start)}` : "list:u");
+          for (const it of b.children) { out.push(`listItem:${String(it.checked)}`); blk(it.children); out.push("/listItem"); }
+          out.push("/list");
           break;
         case "table":
-          out.push("table");
-          for (const row of b.children) { out.push(`tableRow:${row.children.length}`); for (const c of row.children) inl(c.children); }
+          out.push(`table:${b.align.join(",")}`);
+          for (const row of b.children) {
+            out.push(`tableRow:${row.children.length}`);
+            for (const c of row.children) { out.push("tableCell"); inl(c.children); out.push("/tableCell"); }
+            out.push("/tableRow");
+          }
+          out.push("/table");
           break;
         case "thematicBreak": out.push("thematicBreak"); break;
-        case "code": out.push("code"); break;
-        case "opaqueBlock": out.push(`opaqueBlock:${b.node}`); break;
-        case "container":
-          out.push(`container:${b.name}`);
+        case "code": out.push(`code#${idx(b)}`); break;
+        case "opaqueBlock": out.push(`opaqueBlock:${b.node}#${idx(b)}`); break;
+        case "container": {
+          const attrs = Object.fromEntries(Object.entries(b.attributes).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
+          out.push(`container:${b.name}:${JSON.stringify(attrs)}`);
           if (b.label) inl(b.label);
           blk(b.children);
+          out.push("/container");
           break;
+        }
       }
     }
   };
@@ -133,8 +150,8 @@ function linkTargets(root: RichTextRoot): string[] {
   const out: string[] = [];
   const inl = (list: Inline[]): void => {
     for (const n of list) {
-      if (n.type === "image") out.push(n.url);
-      else if (n.type === "link") { out.push(n.url); inl(n.children); }
+      if (n.type === "image") out.push(`img:${n.url}`);
+      else if (n.type === "link") { out.push(`link:${n.url}`); inl(n.children); }
     }
   };
   const blk = (list: Block[]): void => {
@@ -195,6 +212,7 @@ export function restoreDraft(prepared: SentinelPrepared, draftMarkdown: string):
   // 3. re-insert the originals at legal positions only
   const seen = new Map<number, number>();
   const hit = (i: number): void => { seen.set(i, (seen.get(i) ?? 0) + 1); };
+  const indexOf = new WeakMap<object, number>();
   const inl = (list: Inline[]): Inline[] => {
     const out: Inline[] = [];
     for (const node of list) {
@@ -209,6 +227,7 @@ export function restoreDraft(prepared: SentinelPrepared, draftMarkdown: string):
         if (m.index > last) out.push({ type: "text", value: t.value.slice(last, m.index), marks: [...t.marks] });
         const clone = structuredClone(orig.node) as InlineCode | OpaqueInline;
         clone.marks = [...t.marks];
+        indexOf.set(clone, idx);
         out.push(clone);
         hit(idx);
         last = m.index + m[0].length;
@@ -218,14 +237,19 @@ export function restoreDraft(prepared: SentinelPrepared, draftMarkdown: string):
     }
     return canonicalize(out);
   };
-  const blk = (list: Block[], legal: boolean): Block[] =>
+  const blk = (list: Block[]): Block[] =>
     list.map((b): Block => {
-      if (legal && b.type === "paragraph" && b.children.length === 1) {
+      if (b.type === "paragraph" && b.children.length === 1) {
         const only = b.children[0]!;
         if (only.type === "text" && only.marks.length === 0) {
           const m = new RegExp(`^${SENT_SRC}$`).exec(only.value);
           const orig = m ? originals[Number(m[1])] : undefined;
-          if (orig && orig.kind === "block") { hit(orig.index); return structuredClone(orig.node) as Block; }
+          if (orig && orig.kind === "block") {
+            hit(orig.index);
+            const clone = structuredClone(orig.node) as Block;
+            indexOf.set(clone, orig.index);
+            return clone;
+          }
         }
       }
       switch (b.type) {
@@ -234,23 +258,23 @@ export function restoreDraft(prepared: SentinelPrepared, draftMarkdown: string):
           b.children = inl(b.children);
           return b;
         case "blockquote":
-          b.children = blk(b.children, true);
+          b.children = blk(b.children);
           return b;
         case "list":
-          for (const it of b.children) it.children = blk(it.children, true);
+          for (const it of b.children) it.children = blk(it.children);
           return b;
         case "table":
           for (const row of b.children) for (const cell of row.children) cell.children = inl(cell.children);
           return b;
         case "container":
           if (b.label) b.label = inl(b.label);
-          b.children = blk(b.children, true);
+          b.children = blk(b.children);
           return b;
         default:
           return b;
       }
     });
-  const restored: RichTextRoot = { ...draft, children: blk(draft.children, true) };
+  const restored: RichTextRoot = { ...draft, children: blk(draft.children) };
   for (const [i, c] of counts) {
     if (i < n && (seen.get(i) ?? 0) !== c && !codes.has("SENTINEL_ALTERED")) {
       codes.add("SENTINEL_ALTERED");
@@ -263,7 +287,7 @@ export function restoreDraft(prepared: SentinelPrepared, draftMarkdown: string):
   // 4 + 5. structure and link targets, only when the sentinels are sound
   if (codes.size === 0) {
     const a = signature(source);
-    const b = signature(restored);
+    const b = signature(restored, indexOf);
     if (a.join("|") !== b.join("|")) {
       codes.add("BLOCK_SEQUENCE");
       let k = 0;
