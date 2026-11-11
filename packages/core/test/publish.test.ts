@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { NotFoundError, NotPublishableError, createDocument, migrate, publish, saveDraft, unpublish } from "../src/index.js";
+import { NotFoundError, NotPublishableError, createDocument, deleteDocument, migrate, publish, saveDraft, unpublish } from "../src/index.js";
 import { ctxFor, extraConnection, insertAiDraftLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 import type { Sql } from "postgres";
@@ -151,4 +151,19 @@ test("two concurrent publishes of the same draft head: one wins, the other is No
       expect(n).toBe(1);
     }
   } finally { await other.end(); }
+}));
+
+test("lifecycle timestamps are millisecond-granular and touch exactly", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "A" } });
+  await publish(ctx, { docId, locale: "en" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "B" } });
+  await publish(ctx, { docId, locale: "en" });
+  await unpublish(ctx, { docId, locale: "en" });
+  await deleteDocument(ctx, { docId });
+  const rows = await sql`select published_at = date_trunc('milliseconds', published_at) as p_ms,
+      unpublished_at = date_trunc('milliseconds', unpublished_at) as u_ms from document_localized where doc_id = ${docId} order by version`;
+  expect(rows.map((r) => [r.p_ms, r.u_ms])).toEqual([[true, true], [true, true]]);
+  const [d] = await sql`select deleted_at = date_trunc('milliseconds', deleted_at) as ms from documents where id = ${docId}`;
+  expect(d!.ms).toBe(true);
 }));

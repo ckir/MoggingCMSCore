@@ -26,6 +26,10 @@ export async function publish(ctx: Ctx, input: PublishInput): Promise<void> {
   await sql.begin(async (tx) => {
     const [doc] = await tx`select id from documents where id = ${input.docId} and deleted_at is null for update`;
     if (!doc) throw new NotFoundError(`Document "${input.docId}" not found`);
+    // One millisecond-granular instant per transaction, read after the lock (spec 6.3 time travel:
+    // JS Dates are ms precision, so stored stamps must be too; intervals touch exactly).
+    const [{ t }] = (await tx`select date_trunc('milliseconds', clock_timestamp()) as t`) as unknown as [{ t: Date }];
+    const stamp = t.toISOString();
 
     const table = isShared ? tx`document_shared` : tx`document_localized`;
     const scope = isShared ? tx`` : tx`and locale = ${locale}`;
@@ -54,11 +58,11 @@ export async function publish(ctx: Ctx, input: PublishInput): Promise<void> {
     }
 
     // Clear the old published head first: the partial unique index allows only one.
-    await tx`update ${table} set is_head_published = false, unpublished_at = now()
+    await tx`update ${table} set is_head_published = false, unpublished_at = ${stamp}::timestamptz
       where doc_id = ${input.docId} ${scope} and is_head_published`;
     // Draft head: becomes the published head. Republish: draft head (if any) is left untouched.
     await tx`update ${table} set state = 'PUBLISHED', is_head_published = true, is_head_draft = false,
-        published_at = now(), published_by = ${actor}, unpublished_at = null
+        published_at = ${stamp}::timestamptz, published_by = ${actor}, unpublished_at = null
       where doc_id = ${input.docId} ${scope} and version = ${target.version}`;
   });
 }
@@ -72,9 +76,13 @@ export async function unpublish(ctx: Ctx, input: UnpublishInput): Promise<void> 
   await sql.begin(async (tx) => {
     const [doc] = await tx`select id from documents where id = ${input.docId} and deleted_at is null for update`;
     if (!doc) throw new NotFoundError(`Document "${input.docId}" not found`);
+    // One millisecond-granular instant per transaction, read after the lock (spec 6.3 time travel:
+    // JS Dates are ms precision, so stored stamps must be too; intervals touch exactly).
+    const [{ t }] = (await tx`select date_trunc('milliseconds', clock_timestamp()) as t`) as unknown as [{ t: Date }];
+    const stamp = t.toISOString();
     const table = isShared ? tx`document_shared` : tx`document_localized`;
     const scope = isShared ? tx`` : tx`and locale = ${locale}`;
-    await tx`update ${table} set is_head_published = false, unpublished_at = now()
+    await tx`update ${table} set is_head_published = false, unpublished_at = ${stamp}::timestamptz
       where doc_id = ${input.docId} ${scope} and is_head_published`;
   });
 }

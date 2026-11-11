@@ -88,15 +88,21 @@ export async function resolveReference(
   const { chains } = ctx.config.locales;
   const chain = [locale, ...(Object.hasOwn(chains, locale) ? chains[locale]! : [])];
   const [row] = await ctx.sql`
-    select l.locale
+    select
+      (select l.locale
+        from document_localized l
+        join jsonb_array_elements_text(${ctx.sql.json(chain as never)}::jsonb) with ordinality as k(locale, ord)
+          on k.locale = l.locale
+        where l.doc_id = d.id and l.is_head_published
+        order by k.ord
+        limit 1) as resolved,
+      exists (select 1 from document_shared s where s.doc_id = d.id and s.is_head_published) as has_shared
     from documents d
-    join document_localized l on l.doc_id = d.id and l.is_head_published
-    join jsonb_array_elements_text(${ctx.sql.json(chain as never)}::jsonb) with ordinality as k(locale, ord)
-      on k.locale = l.locale
-    where d.id = ${input.docId} and d.deleted_at is null
-    order by k.ord
-    limit 1`;
-  return row ? { id: input.docId, resolvedLocale: row.locale as string } : null;
+    where d.id = ${input.docId} and d.deleted_at is null`;
+  if (!row) return null;
+  if (row.resolved) return { id: input.docId, resolvedLocale: row.resolved as string };
+  // No localized head in the chain: a published shared head still makes the target resolvable (6.6).
+  return row.has_shared ? { id: input.docId, resolvedLocale: locale } : null;
 }
 
 export type Snapshot = {
