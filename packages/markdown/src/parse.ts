@@ -46,7 +46,7 @@ function slice(src: string, node: AnyNode, blockColumn?: number): string {
   return [first, ...lines].join("\n");
 }
 
-function canonicalize(list: Inline[]): Inline[] {
+export function canonicalize(list: Inline[]): Inline[] {
   const out: Inline[] = [];
   for (const n of list) {
     if (n.type === "text") {
