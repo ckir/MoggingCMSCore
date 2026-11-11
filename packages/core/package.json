@@ -6,6 +6,9 @@
   "license": "SEE LICENSE IN LICENSE.md",
   "engines": { "node": ">=22" },
   "main": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run"
+  },
   "dependencies": {
     "canonicalize": "^5",
     "postgres": "^4"
