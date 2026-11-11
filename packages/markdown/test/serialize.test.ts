@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import { ValidationError } from "@mogging/core";
-import { markdownToTree, treeToMarkdown } from "../src/index.js";
+import { markdownToTree, restoreDraft, sentinelize, treeToMarkdown } from "../src/index.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dir = path.join(here, "corpus");
@@ -85,5 +85,43 @@ describe("treeToMarkdown", () => {
   test("rejects an invalid tree", () => {
     const valid = markdownToTree("x\n");
     expect(() => treeToMarkdown({ ...valid, version: 2 } as never)).toThrow(ValidationError);
+  });
+});
+
+const rt = (src: string, mode: "md" | "mdx") => {
+  const t = markdownToTree(src, { mode });
+  const md = treeToMarkdown(t);
+  expect(markdownToTree(md, { mode })).toEqual(t);
+  const p = sentinelize(t);
+  expect(restoreDraft(p, p.markdown).ok).toBe(true);
+};
+
+describe("capstone r1 round trips", () => {
+  it("escapes { and < in mdx container labels", () => {
+    for (const x of [
+      ":::tip[A \\{ b]\nx\n:::\n",
+      ":::tip[A \\<b]\nx\n:::\n",
+      ":::tip[*A \\{ b*]\nx\n:::\n",
+      "> :::tip[A \\{ b]\n> x\n> :::\n",
+      ":::tip[A \\} b]\nx\n:::\n",
+    ]) rt(x, "mdx");
+    for (const x of [":::tip[A { b]\nx\n:::\n", ":::tip[A <b]\nx\n:::\n"]) rt(x, "md");
+  });
+
+  it("keeps a raw inline source that starts a line inline", () => {
+    for (const x of [
+      "para\n    <div>foo</div>\n",
+      "para\n    <!-- c -->\n",
+      "a\\\n    <div>x</div>\n",
+      "- item\n      <div>x</div>\n",
+      "> q\n>     <div>x</div>\n",
+      "para\n    ```\n    code\n    ```\n",
+      "para\n    <span>x</span> y\n",
+      "para\n    ```x``` y\n",
+      "para\n    [^1]\n\n[^1]: n\n",
+      "a `x` b\n",
+      "a\\\n`x`\n",
+    ]) rt(x, "md");
+    for (const x of ["para\n    <div>x</div>\n", "para\n    <Foo />\n", "para\n    {1+1}\n"]) rt(x, "mdx");
   });
 });

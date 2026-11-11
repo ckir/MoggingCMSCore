@@ -18,7 +18,17 @@ function marksOf(n: Inline): readonly Mark[] {
  * before any `html` child into a space, which would turn a hard break (`\\` + eol) into `\\ `.
  */
 const RAW_INLINE = "mogRawInline";
-const rawInline: Handle = (node) => (node as unknown as { value: string }).value;
+/**
+ * A source that starts an output line (after a soft or hard break) could open an html block, a fence or a
+ * reference definition, so it is indented four spaces: a paragraph continuation line can open none of those, and
+ * its indentation is not part of the tree. The first child of a parent starts the paragraph (or sits after an
+ * inline opener), where indentation would make an indented code block instead.
+ */
+const rawInline: Handle = (node, parent, _state, info) => {
+  const value = (node as unknown as { value: string }).value;
+  const first = (parent as unknown as { children: unknown[] } | undefined)?.children[0] === node;
+  return info.before === "\n" && !first ? "    " + value : value;
+};
 (rawInline as any).peek = (node: { value: string }) => node.value.charAt(0);
 
 function leaf(n: Inline): PhrasingContent {
@@ -144,6 +154,11 @@ export function treeToMarkdown(root: RichTextRoot): string {
   const mdast = { type: "root", children: blocks(root.children) } as Root;
   return toMarkdown(mdast, {
     extensions: [gfmToMarkdown(), directiveToMarkdown(), ...(root.mode === "mdx" ? [mdxToMarkdown()] : [])],
+    // The directive handler writes a label through containerPhrasing without entering "phrasing", so mdx's own
+    // `{` and `<` patterns (inConstruct "phrasing") do not apply there.
+    unsafe: root.mode === "mdx"
+      ? [{ character: "{", inConstruct: "label" }, { character: "<", inConstruct: "label" }]
+      : [],
     handlers: { [RAW_INLINE]: rawInline, emphasis: attention("emphasis"), strong: attention("strong") } as Options["handlers"],
   });
 }
