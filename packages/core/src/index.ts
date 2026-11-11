@@ -13,3 +13,4 @@ export * from "./documents/publish.js";
 export * from "./documents/recordAiDraft.js";
 export * from "./documents/approve.js";
 export * from "./read/resolve.js";
+export * from "./sync/state.js";
