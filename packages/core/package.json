@@ -6,6 +6,8 @@
   "license": "SEE LICENSE IN LICENSE.md",
   "engines": { "node": ">=22" },
   "main": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "files": ["src", "migrations", "README.md"],
   "scripts": {
     "test": "vitest run"
   },
