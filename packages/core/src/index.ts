@@ -9,3 +9,4 @@ export * from "./ctx.js";
 export * from "./migrate.js";
 export * from "./documents/create.js";
 export * from "./documents/saveDraft.js";
+export * from "./documents/publish.js";

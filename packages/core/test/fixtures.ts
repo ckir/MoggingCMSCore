@@ -43,3 +43,12 @@ export async function insertPublishedLocalized(
     values (${docId}, ${locale}, ${version}, 'PUBLISHED', ${sql.json(data as never)}, ${sql.json(sourceHashes)},
             true, 'fixture', now(), 'fixture')`;
 }
+
+/** Inserts a DRAFT_AI draft head directly (recordAiDraft does not exist yet). Localized only. */
+export async function insertAiDraftLocalized(
+  sql: Sql, docId: string, locale: string, version: number, data: Record<string, unknown>,
+): Promise<void> {
+  await sql`update document_localized set is_head_draft = false where doc_id = ${docId} and locale = ${locale} and is_head_draft`;
+  await sql`insert into document_localized (doc_id, locale, version, state, data, is_head_draft, created_by)
+    values (${docId}, ${locale}, ${version}, 'DRAFT_AI', ${sql.json(data as never)}, true, 'ai')`;
+}
