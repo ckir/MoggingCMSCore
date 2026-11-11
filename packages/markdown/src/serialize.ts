@@ -1,7 +1,8 @@
 import { toMarkdown, defaultHandlers } from "mdast-util-to-markdown";
-import type { Handle } from "mdast-util-to-markdown";
+import type { Handle, Options } from "mdast-util-to-markdown";
 import { gfmToMarkdown } from "mdast-util-gfm";
 import { directiveToMarkdown } from "mdast-util-directive";
+import { mdxToMarkdown } from "mdast-util-mdx";
 import type { PhrasingContent, RootContent, Root } from "mdast";
 import { MARK_ORDER, validateTree } from "./tree.js";
 import type { Block, Inline, ListItem, Mark, RichTextRoot, TableCell, TableRow } from "./tree.js";
@@ -12,11 +13,19 @@ function marksOf(n: Inline): readonly Mark[] {
   return n.type === "break" || n.type === "link" ? [] : n.marks;
 }
 
+/**
+ * Inline source is emitted through a private node type, not `html`: containerPhrasing rewrites the line ending
+ * before any `html` child into a space, which would turn a hard break (`\\` + eol) into `\\ `.
+ */
+const RAW_INLINE = "mogRawInline";
+const rawInline: Handle = (node) => (node as unknown as { value: string }).value;
+(rawInline as any).peek = (node: { value: string }) => node.value.charAt(0);
+
 function leaf(n: Inline): PhrasingContent {
   switch (n.type) {
     case "text": return { type: "text", value: n.value };
     case "inlineCode":
-    case "opaqueInline": return { type: "html", value: n.source };
+    case "opaqueInline": return { type: RAW_INLINE, value: n.source } as unknown as PhrasingContent;
     case "image": return { type: "image", url: n.url, title: n.title, alt: n.alt };
     case "break": return { type: "break" };
     case "link":
@@ -134,7 +143,7 @@ export function treeToMarkdown(root: RichTextRoot): string {
   validateTree(root);
   const mdast = { type: "root", children: blocks(root.children) } as Root;
   return toMarkdown(mdast, {
-    extensions: [gfmToMarkdown(), directiveToMarkdown()],
-    handlers: { emphasis: attention("emphasis"), strong: attention("strong") },
+    extensions: [gfmToMarkdown(), directiveToMarkdown(), ...(root.mode === "mdx" ? [mdxToMarkdown()] : [])],
+    handlers: { [RAW_INLINE]: rawInline, emphasis: attention("emphasis"), strong: attention("strong") } as Options["handlers"],
   });
 }

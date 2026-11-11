@@ -176,6 +176,26 @@ function placeholders(md: string): string {
 
 // ---------------------------------------------------------------- restoreDraft
 
+/**
+ * `spread` is a layout property, not content: the sentinel markdown puts a blank line between an item's paragraph
+ * and a block original, which flips tight items to loose on reparse. Once the signatures prove the two trees have
+ * the same shape, the source's `spread` wins. Both trees are walked in the same preorder.
+ */
+function copySpread(src: Block[], dst: Block[]): void {
+  for (let i = 0; i < src.length && i < dst.length; i++) {
+    const a = src[i]!, b = dst[i]!;
+    if (a.type === "list" && b.type === "list") {
+      b.spread = a.spread;
+      for (let k = 0; k < a.children.length && k < b.children.length; k++) {
+        b.children[k]!.spread = a.children[k]!.spread;
+        copySpread(a.children[k]!.children, b.children[k]!.children);
+      }
+    } else if ((a.type === "blockquote" && b.type === "blockquote") || (a.type === "container" && b.type === "container")) {
+      copySpread(a.children, b.children);
+    }
+  }
+}
+
 /** Structurally validates an AI draft against its sentinelized source and re-inserts the originals. */
 export function restoreDraft(prepared: SentinelPrepared, draftMarkdown: string): RestoreResult {
   const { source, originals } = prepared;
@@ -294,6 +314,7 @@ export function restoreDraft(prepared: SentinelPrepared, draftMarkdown: string):
       while (k < a.length && a[k] === b[k]) k++;
       notes.push(`block seq differs at ${k}: source=${a[k] ?? "(end)"} draft=${b[k] ?? "(end)"} (len ${a.length} vs ${b.length})`);
     }
+    else copySpread(source.children, restored.children);
     if (linkTargets(source).join("\n") !== linkTargets(restored).join("\n")) {
       codes.add("LINK_TARGETS");
       notes.push("link/image targets differ from the source");

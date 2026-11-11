@@ -13,6 +13,25 @@ const SRC = "Use `x` and [docs](https://a.example) for {name}.\n\n```js\nq\n```\
 const prep = () => sentinelize(markdownToTree(SRC));
 const codesOf = (r: ReturnType<typeof restoreDraft>) => (r.ok ? [] : r.codes);
 
+describe("identity translation", () => {
+  test.each([
+    "- a\n  ```js\n  x\n  ```\n- b\n",
+    "- a\n  <div>\n  x\n  </div>\n- b\n",
+  ])("identity keeps tight list items with a block original %j", (src) => {
+    const p = sentinelize(markdownToTree(src));
+    const r = restoreDraft(p, p.markdown);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.root).toEqual(p.source);
+  });
+
+  test("identity ok on an mdx source with escaped braces", () => {
+    const p = sentinelize(markdownToTree("a \\{x\\} b and `c`\n", { mode: "mdx" }));
+    const r = restoreDraft(p, p.markdown);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.root).toEqual(p.source);
+  });
+});
+
 describe("sentinelize", () => {
   test("numbering and kinds", () => {
     const p = sentinelize(markdownToTree("Run `a` then:\n\n```sh\nb\n```\n"));

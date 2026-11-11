@@ -33,7 +33,8 @@ describe("treeToMarkdown", () => {
   });
 
   test.each(["a**b**c", "***x***", "*a*__b__", "**a *b* c**", "~~*x*~~ y", '[**a** b](u "t")', "`x` **`y`**", "a  \nb",
-    "*a.*__b__", "*`y`*__b__", "*<b>*__c__", "__a.__*b*", "~~a.~~**b**", "*a*__.b__"])(
+    "*a.*__b__", "*`y`*__b__", "*<b>*__c__", "__a.__*b*", "~~a.~~**b**", "*a*__.b__",
+    "a  \n`x`\n", "a  \n<b>x</b>\n", "a\\\n`x`\n", "*a*  \n`x`\n"])(
     "idempotent on mark edge case %j",
     (src) => {
       const t1 = markdownToTree(src);
@@ -64,6 +65,14 @@ describe("treeToMarkdown", () => {
     const md = treeToMarkdown(t);
     expect(md).toContain(":::tip[Title]");
     expect(markdownToTree(md)).toEqual(t);
+  });
+
+  test.each(["a \\{x\\} b\n", "a \\< b\n", "x \\{ y\n"])("mdx mode escapes braces %j", (src) => {
+    const t1 = markdownToTree(src, { mode: "mdx" });
+    const md1 = treeToMarkdown(t1);
+    const t2 = markdownToTree(md1, { mode: "mdx" });
+    expect(t2).toEqual(t1);
+    expect(treeToMarkdown(t2)).toBe(md1);
   });
 
   test("mdx mode preserved", () => {
