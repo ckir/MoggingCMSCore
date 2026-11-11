@@ -30,13 +30,14 @@ export function parseMdast(markdown: string, mode: "md" | "mdx"): Root {
 type AnyNode = Nodes & { position?: { start: { offset?: number; column: number }; end: { offset?: number } } };
 
 /** Source text of a node with container prefixes (`> `, list indentation) removed from every line after the first. */
-function slice(src: string, node: AnyNode): string {
+function slice(src: string, node: AnyNode, blockColumn?: number): string {
   const pos = node.position;
   if (!pos || pos.start.offset === undefined || pos.end.offset === undefined) {
     throw new Error("internal: node without position");
   }
   const [first, ...rest] = src.slice(pos.start.offset, pos.end.offset).split("\n");
-  const max = pos.start.column - 1;
+  // Inline nodes strip against their enclosing block's column; a mid-line column would eat real content.
+  const max = (blockColumn ?? pos.start.column) - 1;
   const lines = rest.map((line) => {
     let i = 0;
     while (i < max && i < line.length && (line[i] === " " || line[i] === "\t" || line[i] === ">")) i++;
@@ -66,7 +67,7 @@ function sortMarks(marks: Iterable<Mark>): Mark[] {
   return MARK_ORDER.filter((m) => s.has(m));
 }
 
-function inlines(src: string, children: readonly Nodes[], marks: Mark[], inLink = false): Inline[] {
+function inlines(src: string, bc: number, children: readonly Nodes[], marks: Mark[], inLink = false): Inline[] {
   const out: Inline[] = [];
   for (const n of children) {
     switch (n.type) {
@@ -76,15 +77,15 @@ function inlines(src: string, children: readonly Nodes[], marks: Mark[], inLink 
       case "emphasis":
       case "strong":
       case "delete":
-        out.push(...inlines(src, n.children, [...marks, n.type], inLink));
+        out.push(...inlines(src, bc, n.children, [...marks, n.type], inLink));
         break;
       case "link":
         if (inLink) {
-          out.push(...inlines(src, n.children, marks, true)); // a link cannot contain a link: keep the text
+          out.push(...inlines(src, bc, n.children, marks, true)); // a link cannot contain a link: keep the text
         } else {
           out.push({
             type: "link", url: n.url, title: n.title ?? null,
-            children: canonicalize(inlines(src, n.children, marks, true)) as Link["children"],
+            children: canonicalize(inlines(src, bc, n.children, marks, true)) as Link["children"],
           });
         }
         break;
@@ -95,26 +96,28 @@ function inlines(src: string, children: readonly Nodes[], marks: Mark[], inLink 
         out.push({ type: "break" });
         break;
       case "inlineCode":
-        out.push({ type: "inlineCode", value: n.value, source: slice(src, n), marks: sortMarks(marks) });
+        out.push({ type: "inlineCode", value: n.value, source: slice(src, n, bc), marks: sortMarks(marks) });
         break;
       default:
-        out.push({ type: "opaqueInline", node: n.type, source: slice(src, n), marks: sortMarks(marks) });
+        out.push({ type: "opaqueInline", node: n.type, source: slice(src, n, bc), marks: sortMarks(marks) });
     }
   }
   return out;
 }
 
-function inlineList(src: string, children: readonly Nodes[]): Inline[] {
-  return canonicalize(inlines(src, children, []));
+function inlineList(src: string, block: AnyNode, children: readonly Nodes[]): Inline[] {
+  const bc = block.position?.start.column;
+  if (bc === undefined) throw new Error("internal: node without position");
+  return canonicalize(inlines(src, bc, children, []));
 }
 
 function blocks(src: string, children: readonly Nodes[]): Block[] {
   return children.map((n): Block => {
     switch (n.type) {
       case "paragraph":
-        return { type: "paragraph", children: inlineList(src, n.children) };
+        return { type: "paragraph", children: inlineList(src, n, n.children) };
       case "heading":
-        return { type: "heading", depth: n.depth, children: inlineList(src, n.children) };
+        return { type: "heading", depth: n.depth, children: inlineList(src, n, n.children) };
       case "thematicBreak":
         return { type: "thematicBreak" };
       case "blockquote":
@@ -133,7 +136,7 @@ function blocks(src: string, children: readonly Nodes[]): Block[] {
           align: (n.align ?? []).map((a) => a ?? null),
           children: n.children.map((row): TableRow => ({
             type: "tableRow",
-            children: row.children.map((cell): TableCell => ({ type: "tableCell", children: inlineList(src, cell.children) })),
+            children: row.children.map((cell): TableCell => ({ type: "tableCell", children: inlineList(src, cell, cell.children) })),
           })),
         };
       case "code":
@@ -143,7 +146,7 @@ function blocks(src: string, children: readonly Nodes[]): Block[] {
         for (const [k, v] of Object.entries(n.attributes ?? {})) attributes[k] = v ?? "";
         const first = n.children[0];
         const hasLabel = first?.type === "paragraph" && first.data?.directiveLabel === true;
-        const label = hasLabel ? inlineList(src, first.children) : [];
+        const label = hasLabel ? inlineList(src, first, first.children) : [];
         return {
           type: "container", name: n.name, attributes,
           label: label.length > 0 ? label : null,

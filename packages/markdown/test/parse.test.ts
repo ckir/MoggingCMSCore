@@ -94,6 +94,19 @@ describe("markdownToTree", () => {
     expect(t.children).toEqual([{ type: "paragraph", children: [{ type: "text", value: "Café", marks: [] }] }]);
   });
 
+  test("inline sources keep continuation-line bytes", () => {
+    const firstOpaque = (md: string) =>
+      (markdownToTree(md).children[0] as any).children
+        .flatMap((c: any) => c.children ?? [c])
+        .flatMap((c: any) => c.children ?? [c])
+        .find((n: any) => n.type === "opaqueInline");
+    expect(firstOpaque("text <a\n    href=x>y</a>\n")).toMatchObject({ node: "html", source: "<a\n    href=x>" });
+    expect(firstOpaque("- i <a\n      href=x>y</a>\n")).toMatchObject({ node: "html", source: "<a\n    href=x>" });
+    expect(firstOpaque("> q <a\n>   href=x>y</a>\n")).toMatchObject({ node: "html", source: "<a\n  href=x>" });
+    const p = markdownToTree("a `b\n    c` d\n").children[0] as any;
+    expect(p.children.find((n: any) => n.type === "inlineCode").source).toBe("`b\n    c`");
+  });
+
   test("every corpus page converts to a valid tree", () => {
     const dir = path.join(here, "corpus");
     const files = fs.readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "README.md");
