@@ -1,6 +1,8 @@
 # MoggingCMSCore design
 
-Date: 2026-11-11. Status: DRAFT for owner approval. Repo state at writing: empty (README and .gitignore).
+Date: 2026-11-11. Status: APPROVED by the owner on 2026-11-11 (licence MIT, scope `@mogging`,
+bulk approval allowed, announce after a template exists). Repo state at writing: empty (README and
+.gitignore).
 
 This document is the design a builder plans from. It records what the owner decided, what Claude
 proposed and the owner ratified, and what is left to the builder. Three agy-first consults shaped it
@@ -85,7 +87,7 @@ arrived through a channel that scales.
 - No LLM call inside a database transaction or request handler; all generation runs in background
   jobs.
 - Prompts, model ids and token counts never live in content tables.
-- Open source, self-hostable. Licence is the owner's call (section 10).
+- Open source under the MIT licence, self-hostable.
 
 ## 5. Approaches considered
 
@@ -281,7 +283,8 @@ published_at) for time-travel. `state` is one of PUBLISHED, DRAFT_HUMAN, DRAFT_A
 
 `content_provenance(id, doc_id, locale, version int null, field_path text null, job_id null,
 model_id, prompt_version, prompt_tokens, completion_tokens, cost_micros, edited bool, discarded bool,
-discard_reason text null, acknowledged_warnings text[] null, approved_by, approved_at, created_at)`. `version` and `field_path` are null
+discard_reason text null, acknowledged_warnings text[] null, bulk_id uuid null, approved_by,
+approved_at, created_at)`. `version` and `field_path` are null
 on a discarded-cost row, which records a provider call whose result was never stored (section 8.2).
 Every provider call produces exactly one provenance row per field it covered, or one discarded row.
 
@@ -469,8 +472,12 @@ configuration; the CLI refuses to compile without them.
 
 v0.1 has no admin UI. Review happens through the CLI, which prints a side-by-side diff of source
 change and AI draft per field with glossary matches and warnings highlighted, and accepts approve,
-reject, and edit-then-approve per (document, locale). There is deliberately no "approve all" command
-in v0.1. The CLI can also serve a minimal local web page with the same side-by-side view for people
+reject, and edit-then-approve per (document, locale). There is no unconditional "approve all". The
+owner-approved bulk path is `mogging review --approve-clean [--collection] [--locale]`: it approves
+every `DRAFT_AI` head in scope that has zero warnings and passed every validator, skips the rest
+and lists them, and writes one bulk-approval provenance row per approved draft carrying the actor,
+a shared `bulk_id` and the count, so a later audit can see which approvals were individual and which
+were bulk. The CLI can also serve a minimal local web page with the same side-by-side view for people
 who prefer a browser; it is read-and-approve only and is not a CMS editor. This is Claude's call to
 keep the "no UI" boundary while still making review humane.
 
@@ -552,13 +559,12 @@ The peer also noted that translatable text inside admonitions is lost to the opa
 spike measures how common that is for the showcase docs before v0.1 decides whether to parse
 admonition bodies.
 
-**Owner decides, not yet decided:** the open-source licence; the npm scope name (`@mogging` is
-assumed); whether v0.1 is announced before or after a framework template exists; and the bulk
-approval question: the review peer predicts that strict per-document review of a first import
-(hundreds of documents) will be bypassed with shell loops. Options: keep strict review (current
-text); or allow `mogging review --approve-clean`, which approves only drafts with zero warnings and
-records a single bulk-approval provenance row naming the actor and the count. Claude recommends the
-second, because a sanctioned bulk path with a record beats an unsanctioned script with none.
+**Owner decided (2026-11-11):** licence MIT; npm scope `@mogging`; v0.1 is announced only after a
+framework template exists; and bulk approval is allowed as `mogging review --approve-clean`, which
+approves only drafts with zero warnings and records a single bulk-approval provenance row naming
+the actor and the count (section 8.6). The review peer had predicted that strict per-document review
+of a first import would be bypassed with shell loops; a sanctioned bulk path with a record beats an
+unsanctioned script with none.
 
 ## 11. What v0.1 looks like when done
 
