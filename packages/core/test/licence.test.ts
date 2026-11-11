@@ -145,6 +145,23 @@ test("limits are carried through verifyKey unchanged", () => {
   expect(verifyKey(token, [kp.publicPem]).limits).toEqual({ seats: 3, sites: 1.5 });
 });
 
+test("limits are forward-compatible: any plain object verifies and is carried through unchanged (spec 12.2, R10)", () => {
+  const future = {
+    seats: "3", features: ["sso", "audit"], tier: "pro", quota: null, nested: { a: { b: [1, "x"] } }, n: 2, flag: false,
+  };
+  const out = verifyKey(signRaw(JSON.stringify({ ...payload, limits: future })), [kp.publicPem]);
+  expect(out).toEqual({ ...payload, limits: future });
+  // JSON 1e999 parses to Infinity: an unknown numeric limit is not judged either.
+  const inf = verifyKey(signRaw(JSON.stringify({ ...payload, limits: {} }).replace("{}", '{"seats":1e999}')), [kp.publicPem]);
+  expect(inf.limits).toEqual({ seats: Infinity });
+  // null means "no limits": verifies, and the returned payload has no limits field.
+  const none = verifyKey(signRaw(JSON.stringify({ ...payload, limits: null })), [kp.publicPem]);
+  expect(none).toEqual(payload);
+  expect(Object.hasOwn(none, "limits")).toBe(false);
+  // encodeKey accepts the widened type too.
+  expect(verifyKey(encodeKey({ ...payload, limits: future }, kp.privatePem), [kp.publicPem]).limits).toEqual(future);
+});
+
 test("expiry is valid through 23:59:59.999 UTC on the stated date and expired at 00:00 UTC the next day", () => {
   const token = encodeKey({ ...payload, expiry: "2026-11-11" }, kp.privatePem);
   expect(verifyKey(token, [kp.publicPem], new Date("2026-11-11T00:00:00.000Z")).expiry).toBe("2026-11-11");
@@ -187,9 +204,9 @@ test("malformed tokens are LICENCE_INVALID and never another error type", () => 
     "expiry Feb 30": signRaw(JSON.stringify({ ...payload, expiry: "2099-02-30" })),
     "null plan": signRaw(JSON.stringify({ ...payload, plan: null })),
     "limits array": signRaw(JSON.stringify({ ...payload, limits: [1] })),
-    "limits null": signRaw(JSON.stringify({ ...payload, limits: null })),
-    "limits string value": signRaw(JSON.stringify({ ...payload, limits: { seats: "3" } })),
-    "limits infinite value": signRaw(JSON.stringify({ ...payload, limits: {} }).replace("{}", '{"seats":1e999}')),
+    "limits string": signRaw(JSON.stringify({ ...payload, limits: "pro" })),
+    "limits number": signRaw(JSON.stringify({ ...payload, limits: 3 })),
+    "limits boolean": signRaw(JSON.stringify({ ...payload, limits: true })),
   };
   // Genuinely invalid UTF-8 bytes in the payload, correctly signed.
   const bad = Buffer.from([0x7b, 0xff, 0x7d]);

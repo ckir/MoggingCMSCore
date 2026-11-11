@@ -3,13 +3,16 @@ import type { KeyObject } from "node:crypto";
 import { LicenceError } from "../errors.js";
 import { PUBLIC_KEYS } from "./publicKey.js";
 
-/** Signed licence payload (spec 12.2). `limits` is reserved: carried through, ignored by v0.1. */
+/**
+ * Signed licence payload (spec 12.2). `limits` is reserved: v0.1 carries it through unchanged and never judges its
+ * values, so an old engine always verifies a newer key with limit kinds it does not know.
+ */
 export type LicencePayload = {
   licensee: string;
   license_id: string;
   expiry: string; // ISO date YYYY-MM-DD, valid through 23:59:59.999 UTC of that date
   plan: "solo" | "noncommercial" | string;
-  limits?: Record<string, number>;
+  limits?: Record<string, unknown>;
 };
 
 const PREFIX = "mog1";
@@ -52,12 +55,10 @@ function toPayload(v: unknown): LicencePayload {
   const out: LicencePayload = {
     licensee: v.licensee as string, license_id: v.license_id as string, expiry, plan: v.plan as string,
   };
-  if (v.limits !== undefined) {
-    const limits = v.limits;
-    if (!isPlainObject(limits) || !Object.values(limits).every((n) => typeof n === "number" && Number.isFinite(n))) {
-      throw invalid('payload field "limits" must be an object of finite numbers');
-    }
-    out.limits = limits as Record<string, number>;
+  // Absent or null = no limits. Otherwise only the container is checked: values are a later plan's business.
+  if (v.limits !== undefined && v.limits !== null) {
+    if (!isPlainObject(v.limits)) throw invalid('payload field "limits" must be an object');
+    out.limits = v.limits;
   }
   return out;
 }
