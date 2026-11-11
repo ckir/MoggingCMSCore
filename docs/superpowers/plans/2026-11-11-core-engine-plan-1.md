@@ -60,11 +60,17 @@ Expected: `CREATE ROLE` and `CREATE DATABASE`.
 - [ ] **Step 4: Write the failing smoke test** `packages/core/test/smoke.test.ts`:
 
 ```ts
-test("connects and runs inside an isolated schema", async () => {
+test("connects and runs inside an isolated schema, and drops it afterwards", async () => {
+  let name = "";
   await withTestDb(async (sql) => {
     const [{ schema }] = await sql`select current_schema() as schema`;
     expect(schema).toMatch(/^t_[a-z0-9]{8}$/);
+    name = schema;
   });
+  const sql = postgres(process.env.DATABASE_URL!);
+  const rows = await sql`select 1 from pg_namespace where nspname = ${name}`;
+  expect(rows).toHaveLength(0);
+  await sql.end();
 });
 ```
 
@@ -185,12 +191,12 @@ test("isEmptyValue is true for '' [] {} and false for 0 and false", ...);
 
 **Interfaces:**
 - Produces `migrate(sql: Sql, dir?: string): Promise<string[]>` applying numbered `*.sql` files not yet in `migrations(name, applied_at)`, each in its own transaction, returning the names applied.
-- Produces `0001_engine.sql`: exactly the tables and indexes of spec 7.1 (documents, document_shared, document_localized, content_provenance, ai_jobs, releases, release_items, glossary, ai_budgets, migrations), with the probe DDL in `.clavity/scratch/storage-layout/claude-probe.sql` as the starting point and spec 7.1 winning where they differ: `document_shared` gets `state`, `is_head_published`, `is_head_draft`, `published_at`, `published_by`, `unpublished_at`; `document_localized.state` check includes `APPROVED`; `content_provenance` gains `job_id`, `edited`, `discarded`, `discard_reason`, `acknowledged_warnings`, `bulk_id`, nullable `version` and `field_path`; `ai_jobs` is per (doc, locale) with `field_paths text[]`, `source_hashes jsonb`, `cost_estimate_micros`, `budget_scope`, plus the reaper index; `ai_budgets` without reservation column; `releases.allow_stale`.
+- Produces `0001_engine.sql`: exactly the tables and indexes of spec 7.1 (documents, document_shared, document_localized, content_provenance, ai_jobs, releases, release_items, glossary, ai_budgets, migrations), with the probe DDL in `.clavity/scratch/storage-layout/claude-probe.sql` as the starting point and spec 7.1 winning where they differ: `document_shared` gets `state`, `is_head_published`, `is_head_draft`, `published_at`, `published_by`, `unpublished_at`; `document_localized.state` check includes `APPROVED`; `content_provenance` gains `job_id`, `edited`, `discarded`, `discard_reason`, `warnings text[] not null default '{}'`, `acknowledged_warnings`, `bulk_id`, nullable `version` and `field_path`; `ai_jobs` is per (doc, locale) with `field_paths text[]`, `source_hashes jsonb`, `cost_estimate_micros`, `budget_scope`, plus the reaper index; `ai_budgets` without reservation column; `releases.allow_stale`.
 - Produces `type Ctx = { sql: Sql; config: MoggingConfig; actor: string }` in `ctx.ts`.
 - Produces `createDocument(ctx, { collection: string }): Promise<{ id: string }>` and
   `deleteDocument(ctx, { docId }): Promise<void>` (soft delete: sets `deleted_at = now()`; spec 6.3
   time-travel treats the document as absent from then on; hard delete is not in v0.1).
-- Produces `saveDraft(ctx, { docId: string; locale: string | "shared"; data: Record<string, unknown>; expectedVersion?: number; }): Promise<{ version: number }>`. Behaviour (spec 7.2, 6.3, 6.4): lock the `documents` row; validate every key is a declared field of the right scope (localized vs shared) and normalize values; strip top-level nulls; allocate `version = max(version)+1` for that (doc, locale) or (doc, shared); if `expectedVersion` is given and differs from the current head version (draft head if any, else published head, else 0) throw `ConflictError`; clear the previous draft head flag; insert with `state = DRAFT_HUMAN`; for a non-source locale, set `source_hashes[field] = hash of the source locale's current published value` for every field saved (spec 6.4, "human save asserts sync"); for the source locale, `source_hashes[field] = hash of its own value`. Shared snapshots have no `source_hashes`.
+- Produces `saveDraft(ctx, { docId: string; locale: string | "shared"; data: Record<string, unknown>; expectedVersion?: number; }): Promise<{ version: number }>`. `data` is the **complete** snapshot for that locale (spec 6.3: a snapshot is never a delta): a field omitted from `data` is absent in the new version and will fall back. There is no partial-merge save in v0.1; callers that want to change one field read the head with `getDocument` (Task 7) and resubmit it. Behaviour (spec 7.2, 6.3, 6.4): lock the `documents` row; validate every key is a declared field of the right scope (localized vs shared) and normalize values; strip top-level nulls; allocate `version = max(version)+1` for that (doc, locale) or (doc, shared); if `expectedVersion` is given and differs from the current head version (draft head if any, else published head, else 0) throw `ConflictError`; clear the previous draft head flag; insert with `state = DRAFT_HUMAN`; for a non-source locale, set `source_hashes[field] = hash of the source locale's current published value` for every field saved (spec 6.4, "human save asserts sync"); for the source locale, `source_hashes[field] = hash of its own value`. Shared snapshots have no `source_hashes`.
 
 - [ ] **Step 1: Write failing migration tests**:
 
@@ -227,23 +233,35 @@ test("two concurrent saves with the same expectedVersion: one succeeds, one conf
 
 ---
 
-### Task 6: Publish, unpublish, AI-draft recording and approval
+### Task 6A: Publish and unpublish
 
 **Files:**
-- Create: `packages/core/src/documents/publish.ts`, `packages/core/src/documents/recordAiDraft.ts`, `packages/core/src/documents/approve.ts`
-- Test: `packages/core/test/publish.test.ts`, `packages/core/test/approve.test.ts`
+- Create: `packages/core/src/documents/publish.ts`
+- Test: `packages/core/test/publish.test.ts`
 
 **Interfaces:**
-- Produces `publish(ctx, { docId; locale: string | "shared"; version?: number }): Promise<void>` (spec 6.3 flip rule): the draft head (or the given version) must be `DRAFT_HUMAN` or `APPROVED`; `DRAFT_AI` throws `NotPublishableError`; sets `state = PUBLISHED`, head flags, `published_at = now()`, `published_by = ctx.actor`; previous published head gets `is_head_published = false`, `unpublished_at = now()`; all under the `documents` row lock.
-- Produces `unpublish(ctx, { docId; locale }): Promise<void>`: clears the published head and sets `unpublished_at`; the row stays and can be republished.
-- Produces `recordAiDraft(ctx, { docId; locale; fields: Record<string, unknown>; sourceVersion: number; sourceHashes: Record<string, string>; provenance: Array<{ fieldPath; modelId; promptVersion; promptTokens; completionTokens; costMicros; jobId? }> }): Promise<{ version: number } | { cancelled: "DRAFT_HUMAN" | "SOURCE_MOVED" }>` (spec 8.1): if the source locale's published head version is not `sourceVersion` return `SOURCE_MOVED`; if the draft head is `DRAFT_HUMAN` return `DRAFT_HUMAN`; if the draft head is `DRAFT_AI` or `APPROVED`, build the new snapshot from that draft's data with `fields` replacing the stale ones and clear its head flag (supersede); otherwise build from the published head's data; insert `DRAFT_AI` with `source_hashes` merged; write provenance rows; all in one transaction.
-- Produces `approve(ctx, { docId; locale; edits?: Record<string, unknown>; rejectFields?: string[]; acknowledgedWarnings?: string[]; bulkId?: string }): Promise<{ version: number }>` (spec 6.3): the draft head must be `DRAFT_AI`; rejected fields revert to the published head's value or are removed; `edits` are normalized and applied; a new `APPROVED` version is inserted as draft head; provenance rows copied from the AI version with `edited = true` for edited fields, `acknowledged_warnings`, `bulk_id`, `approved_by = ctx.actor`, `approved_at = now()`; the AI version loses its head flag and stays in history.
+- Produces `publish(ctx, { docId; locale: string | "shared"; version?: number }): Promise<void>` (spec 6.3 flip rule), under the `documents` row lock. Without `version`: the current draft head is published; it must be `DRAFT_HUMAN` or `APPROVED`, and `DRAFT_AI` or no draft head throws `NotPublishableError`. With `version`: that row must be either the current draft head (same rule) or a previously published row (`state = PUBLISHED`, `is_head_published = false`), which is the republish case; any other row (a historical draft, a superseded AI draft) throws `NotPublishableError`. On success: `state = PUBLISHED`, `is_head_published = true`, `is_head_draft = false`, `published_at = now()`, `published_by = ctx.actor`, `unpublished_at = null`; the previous published head gets `is_head_published = false`, `unpublished_at = now()`.
+- Produces `unpublish(ctx, { docId; locale }): Promise<void>`: clears the published head and sets `unpublished_at`; the row stays and can be republished by version.
+
+- [ ] **Step 1: Write failing publish tests**: `publish flips flags and stamps published_at/published_by`; `previous head gets unpublished_at`; `DRAFT_AI cannot be published` (NotPublishableError); `a historical draft version cannot be published` (NotPublishableError); `unpublish then publish by version republishes the same row and clears unpublished_at`; `shared snapshot follows the same lifecycle`.
+- [ ] **Step 2: Run** (FAIL). **Step 3: Implement** `publish.ts`. **Step 4: Run** (PASS). **Step 5: Commit** `feat(core): publish and unpublish as head flips`.
+
+---
+
+### Task 6B: AI-draft recording and approval
+
+**Files:**
+- Create: `packages/core/src/documents/recordAiDraft.ts`, `packages/core/src/documents/approve.ts`
+- Test: `packages/core/test/approve.test.ts`
+
+**Interfaces:**
+- Consumes: `publish` from Task 6A, `saveDraft` from Task 5, `hashValue` and `normalizeValue` from Task 4.
+- Produces `recordAiDraft(ctx, { docId; locale; fields: Record<string, unknown>; sourceVersion: number; sourceHashes: Record<string, string>; provenance: Array<{ fieldPath; modelId; promptVersion; promptTokens; completionTokens; costMicros; jobId?; warnings?: string[] }> }): Promise<{ version: number } | { cancelled: "DRAFT_HUMAN" | "SOURCE_MOVED" }>` (spec 8.1), all in one transaction **under the `documents` row lock** so it serializes with `saveDraft`: if the source locale's published head version is not `sourceVersion` return `SOURCE_MOVED`; if the draft head is `DRAFT_HUMAN` return `DRAFT_HUMAN`; if the draft head is `DRAFT_AI` or `APPROVED`, build the new snapshot from that draft's data with `fields` replacing the stale ones and clear its head flag (supersede); otherwise build from the published head's data; insert `DRAFT_AI` with `source_hashes` merged; write provenance rows.
+- Produces `approve(ctx, { docId; locale; edits?: Record<string, unknown>; rejectFields?: string[]; acknowledgedWarnings?: string[]; bulkId?: string }): Promise<{ version: number }>` (spec 6.3), under the `documents` row lock: the draft head must be `DRAFT_AI`; rejected fields revert to the published head's value or are removed; `edits` are normalized and applied; a new `APPROVED` version is inserted as draft head; provenance rows copied from the AI version with `edited = true` for edited fields, `acknowledged_warnings`, `bulk_id`, `approved_by = ctx.actor`, `approved_at = now()`; the AI version loses its head flag and stays in history.
 - Produces `approveClean(ctx, { collection?: string; locale?: string }): Promise<{ approved: number; skipped: Array<{ docId; locale; reason: string }> }>`: calls `approve` with one shared `bulkId` for every `DRAFT_AI` head in scope whose provenance rows all have an empty `warnings` array. `content_provenance.warnings text[] not null default '{}'` is declared in spec 7.1 (added 2026-11-11 for this); plan 3's validator fills it, and `recordAiDraft` accepts an optional `warnings: string[]` per provenance entry so this plan's test can create a draft with a warning.
 
-- [ ] **Step 1: Write failing publish tests**: `publish flips flags and stamps published_at/published_by`; `previous head gets unpublished_at`; `DRAFT_AI cannot be published` (NotPublishableError); `unpublish then republish keeps the same version row`; `shared snapshot follows the same lifecycle`.
-- [ ] **Step 2: Run** (FAIL). **Step 3: Implement** `publish.ts`. **Step 4: Run** (PASS). **Step 5: Commit** `feat(core): publish and unpublish as head flips`.
-- [ ] **Step 6: Write failing approve tests**: `recordAiDraft returns SOURCE_MOVED when source advanced`; `recordAiDraft returns DRAFT_HUMAN when a human draft exists and inserts nothing`; `recordAiDraft supersedes a stale APPROVED draft and keeps its non-stale field values` (edit `title` in APPROVED, make `body` stale, expect new draft title === edited title); `approve with edits marks edited provenance and produces APPROVED head`; `approve rejectFields reverts to published value`; `approveClean approves only drafts without warnings and shares one bulk_id`.
-- [ ] **Step 7: Run** (FAIL). **Step 8: Implement** `recordAiDraft.ts`, `approve.ts`. **Step 9: Run** (PASS). **Step 10: Commit** `feat(core): AI draft recording, supersede rule, approval and approve-clean`.
+- [ ] **Step 1: Write failing approve tests**: `recordAiDraft returns SOURCE_MOVED when source advanced`; `recordAiDraft returns DRAFT_HUMAN when a human draft exists and inserts nothing`; `recordAiDraft supersedes a stale APPROVED draft and keeps its non-stale field values` (edit `title` in APPROVED, make `body` stale, expect new draft title === edited title); `concurrent saveDraft and recordAiDraft on the same (doc, locale): the human draft is never overwritten` (run both with `Promise.allSettled`; whichever order, the final draft head is `DRAFT_HUMAN` or the AI call returned `DRAFT_HUMAN`); `approve with edits marks edited provenance and produces APPROVED head`; `approve rejectFields reverts to published value`; `approveClean approves only drafts without warnings and shares one bulk_id`.
+- [ ] **Step 2: Run** (FAIL). **Step 3: Implement** `recordAiDraft.ts`, `approve.ts`. **Step 4: Run** (PASS). **Step 5: Commit** `feat(core): AI draft recording, supersede rule, approval and approve-clean`.
 
 ---
 
@@ -256,6 +274,8 @@ test("two concurrent saves with the same expectedVersion: one succeeds, one conf
 **Interfaces:**
 - Produces `resolve(ctx, { collection: string; locale: string; ids?: string[]; limit?: number; asOf?: Date }): Promise<Array<{ id: string; data: Record<string, unknown>; fellBack: Record<string, string>; missing: string[] }>>` (spec 7.3, 6.2, 6.3): one SQL statement joining the shared head and the published head of every locale in the union of all chains for the collection, merged in chain order per field by the query builder using `chainFor`; `fellBack[field]` names the locale a field came from when it is not `locale`; `missing` lists localized fields no locale in the chain had; with `asOf`, the head predicate becomes `published_at <= asOf and (unpublished_at is null or unpublished_at > asOf)` and documents with `deleted_at <= asOf` are absent.
 - Produces `resolveReference(ctx, { docId; locale }): Promise<{ id; resolvedLocale: string } | null>` (spec 6.6).
+- Produces `getDocument(ctx, { collection: string; docId?: string; slug?: string }): Promise<DocumentRecord | null>` where `DocumentRecord = { id; collection; createdAt; deletedAt: Date | null; shared: { published: Snapshot | null; draft: Snapshot | null }; locales: Record<string, { published: Snapshot | null; draft: Snapshot | null }> }` and `Snapshot = { version; state; data; sourceHashes: Record<string, string>; createdAt; createdBy; publishedAt: Date | null; publishedBy: string | null }`. Raw heads, no fallback applied; exactly one of `docId` or `slug` is required (`slug` looks up `document_shared` published-or-draft head `data->>'slug'`). This is what the importer (re-import match), the AI worker (source hashes and draft context) and the review surface (side-by-side) read.
+- Produces `listDocuments(ctx, { collection: string; limit?: number; after?: string; includeDeleted?: boolean }): Promise<{ items: Array<{ id; slug: string | null; createdAt }>; next: string | null }>` ordered by `created_at, id` with keyset pagination (`after` is the last id seen).
 
 - [ ] **Step 1: Write failing tests** (fixture: 3 docs; en published for all; de published with `legal` absent and `title` present; de-CH published for doc 1 only with `title`):
 
@@ -272,6 +292,9 @@ test("asOf before first publication returns no documents", async () => {
 });
 test("asOf between two publications returns the first version", ...);
 test("resolve of 50 documents issues one SQL statement", ...);            // count statements via a postgres.js debug hook
+test("getDocument by slug returns raw heads per locale with sourceHashes and no fallback", ...);
+test("getDocument returns null for an unknown slug", ...);
+test("listDocuments paginates by keyset and excludes soft-deleted docs by default", ...);
 ```
 - [ ] **Step 2: Run** (FAIL). **Step 3: Implement** `query.ts` (builds the statement; the merge is `coalesce(jsonb ||...)` in chain order, with per-field overrides selected in SQL by `->` on the specific locale rows) and `resolve.ts`. **Step 4: Run** (PASS).
 - [ ] **Step 5: Commit** `feat(core): single-statement fallback resolve with time travel`.
@@ -317,7 +340,7 @@ test("resolve of 50 documents issues one SQL statement", ...);            // cou
 - Test: `packages/core/test/api.test.ts`
 
 **Interfaces:**
-- Produces the exported surface named in spec 9.3: `defineConfig`, `defineCollection`, field builders, `migrate`, `createDocument`, `saveDraft`, `publish`, `unpublish`, `recordAiDraft`, `approve`, `approveClean`, `resolve`, `resolveReference`, `getSyncState`, `trackFields`, `createRelease`, `addToRelease`, `publishRelease`, the error classes, and the `Ctx` and `MoggingConfig` types.
+- Produces the exported surface named in spec 9.3: `defineConfig`, `defineCollection`, field builders, `normalizeLocale`, `chainFor`, `migrate`, `createDocument`, `deleteDocument`, `getDocument`, `listDocuments`, `saveDraft`, `publish`, `unpublish`, `recordAiDraft`, `approve`, `approveClean`, `resolve`, `resolveReference`, `getSyncState`, `trackFields`, `createRelease`, `addToRelease`, `publishRelease`, `hashValue`, `normalizeValue`, the error classes, and the `Ctx`, `MoggingConfig`, `Field`, `DocumentRecord` and `Snapshot` types.
 
 - [ ] **Step 1: Write the failing test** that imports each name from `@mogging/core` and asserts `typeof === "function"` (or class).
 - [ ] **Step 2: Run** (FAIL). **Step 3: Export everything from `index.ts`; write the README** (install, `DATABASE_URL`, a 15-line example that defines a collection, migrates, saves, publishes and resolves). **Step 4: Run the whole suite and typecheck**: `pnpm test && pnpm typecheck`. Expected: all PASS, no type errors.
@@ -331,3 +354,23 @@ test("resolve of 50 documents issues one SQL statement", ...);            // cou
 - Type consistency: `Ctx`, `Field`, `MoggingConfig`, `chainFor`, `hashValue`, `normalizeValue` are defined in Tasks 3 to 5 and used by the same names afterwards.
 - Review Focus items 1 to 5 are pinned in Tasks 3, 5, 7, 5 and 4 respectively.
 - Proportion: the plan is shorter than the spec; code appears only as test assertions.
+
+## Review ledger
+
+Agy panel round 1 on this plan (2026-11-11), five seats, 5 findings, all verified against the text:
+
+- FOLDED: `getDocument` and `listDocuments` (spec 9.3) were missing, which would have blocked the
+  importer, the AI worker and the CLI; added to Task 7 with `DocumentRecord` and `Snapshot` types,
+  and to Task 10.
+- FOLDED: `recordAiDraft` and `approve` did not name the `documents` row lock; added, with a
+  concurrency test against `saveDraft` (Task 6B).
+- FOLDED: `publish` rejected republishing an unpublished row and allowed any historical version;
+  rule rewritten with the republish case and tests for both (Task 6A).
+- FOLDED: Task 5's column list omitted `warnings`; added.
+- FOLDED: `saveDraft` did not say replace or merge; it replaces (Task 5).
+- FOLDED (open question): Task 6 split into 6A publish and 6B approval so a reviewer can accept one
+  without the other.
+- FOLDED (peer discarded it, Claude disagreed): `withTestDb` smoke test now asserts the schema is
+  dropped (Task 1).
+- DISCARDED-BELOW-FLOOR, accepted: `required` validation ergonomics (spec 10 leaves field-builder
+  ergonomics to the builder).
