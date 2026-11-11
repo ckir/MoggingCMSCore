@@ -65,7 +65,7 @@ function normalizeAt(field: Field, value: unknown, path: string): unknown {
       if (!isPlainObject(value)) throw new ValidationError(`${path}: expected object`);
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(value)) {
-        const sub = field.fields[k];
+        const sub = Object.hasOwn(field.fields, k) ? field.fields[k] : undefined;
         if (sub === undefined) throw new ValidationError(`${path}.${k}: undeclared key`);
         if (v === undefined) continue;
         out[k] = v === null ? null : normalizeAt(sub, v, `${path}.${k}`);

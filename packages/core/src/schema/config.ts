@@ -59,9 +59,9 @@ export function chainFor(
   const loc = normalizeLocale(locale);
   const col = config.collections.find((x) => x.name === collection);
   if (!col) throw new NotFoundError(`Unknown collection "${collection}"`);
-  const f = col.fields[field];
+  const f = Object.hasOwn(col.fields, field) ? col.fields[field] : undefined;
   if (!f) throw new NotFoundError(`Unknown field "${collection}.${field}"`);
   if (f.fallback === "none") return [loc];
   if (Array.isArray(f.fallback)) return [loc, ...f.fallback.map(normalizeLocale)];
-  return [loc, ...(config.locales.chains[loc] ?? [])];
+  return [loc, ...(Object.hasOwn(config.locales.chains, loc) ? config.locales.chains[loc]! : [])];
 }

@@ -144,3 +144,16 @@ test("two concurrent saves with the same expectedVersion: one succeeds, one conf
     await other.end();
   }
 }));
+
+test("prototype-named undeclared keys are rejected and nothing is written", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  for (const key of ["constructor", "toString", "hasOwnProperty", "__proto__", "valueOf"]) {
+    for (const locale of ["de", "shared"]) {
+      const data = JSON.parse(`{"${key}":1}`) as Record<string, unknown>;
+      await expect(saveDraft(ctx, { docId, locale, data }), `${locale}/${key}`).rejects.toThrow(ValidationError);
+    }
+  }
+  const [{ n: nl }] = await sql`select count(*)::int as n from document_localized where doc_id = ${docId}`;
+  const [{ n: ns }] = await sql`select count(*)::int as n from document_shared where doc_id = ${docId}`;
+  expect([nl, ns]).toEqual([0, 0]);
+}));

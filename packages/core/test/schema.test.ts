@@ -94,3 +94,10 @@ test("errors carry codes and extend MoggingError", () => {
     expect(typeof e.code).toBe("string");
   }
 });
+
+test("chainFor treats prototype-named fields as unknown", () => {
+  const cfg = defineConfig({ collections: [posts], locales });
+  for (const f of ["constructor", "toString", "__proto__"]) {
+    expect(() => chainFor(cfg, "de", "posts", f), f).toThrow(NotFoundError);
+  }
+});

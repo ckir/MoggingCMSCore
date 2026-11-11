@@ -34,7 +34,7 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
 
   const normalized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input.data)) {
-    const field = collection.fields[key];
+    const field = Object.hasOwn(collection.fields, key) ? collection.fields[key] : undefined;
     if (!field) throw new ValidationError(`${collection.name}.${key}: undeclared field`);
     if (field.localized === isShared) {
       throw new ValidationError(

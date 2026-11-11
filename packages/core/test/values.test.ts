@@ -65,3 +65,10 @@ test("boolean, reference, dateTime kind checks", () => {
 test("richText NFC-normalizes strings recursively", () => {
   expect(normalizeValue(richText(), { children: [{ t: "é" }] })).toEqual({ children: [{ t: "é" }] });
 });
+
+test("nested object rejects prototype-named undeclared keys", () => {
+  const f = object({ zip: number() });
+  for (const key of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+    expect(() => normalizeValue(f, JSON.parse(`{"${key}":1}`)), key).toThrow(ValidationError);
+  }
+});
