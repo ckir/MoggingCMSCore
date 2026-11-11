@@ -1,6 +1,6 @@
 import type { Ctx } from "../ctx.js";
 import { NotFoundError, NotPublishableError, StaleReleaseError, ValidationError } from "../errors.js";
-import { publishWithinTx } from "../documents/publish.js";
+import { publishWithinTx } from "../documents/publishCore.js";
 import { normalizeLocale } from "../schema/locale.js";
 
 export type CreateReleaseInput = { name: string };

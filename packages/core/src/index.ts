@@ -9,9 +9,13 @@ export * from "./ctx.js";
 export * from "./migrate.js";
 export * from "./documents/create.js";
 export * from "./documents/saveDraft.js";
-export * from "./documents/publish.js";
+export { publish, unpublish } from "./documents/publish.js";
+export type { PublishInput, UnpublishInput } from "./documents/publish.js";
 export * from "./documents/recordAiDraft.js";
 export * from "./documents/approve.js";
 export * from "./read/resolve.js";
 export * from "./sync/state.js";
-export * from "./releases/releases.js";
+export { createRelease, addToRelease, publishRelease } from "./releases/releases.js";
+export type {
+  CreateReleaseInput, AddToReleaseInput, PublishReleaseInput, StaleReleaseItem, StaleReleaseErrorWithItems,
+} from "./releases/releases.js";

@@ -293,3 +293,12 @@ test("overlapping releases on the same items: the loser sees the winner's commit
     await sqlB.end();
   }
 }), 120_000);
+
+test("the public API exposes the release and publish functions but not publishWithinTx", async () => {
+  const api = await import("../src/index.js");
+  expect("publishWithinTx" in api).toBe(false);
+  expect("resolveLocale" in api).toBe(false);
+  for (const name of ["publish", "unpublish", "createRelease", "addToRelease", "publishRelease"] as const) {
+    expect(typeof api[name]).toBe("function");
+  }
+});
