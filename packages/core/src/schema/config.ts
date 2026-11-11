@@ -5,12 +5,22 @@ import { normalizeLocale } from "./locale.js";
 export type MoggingConfig = {
   collections: Collection[];
   locales: { source: string; chains: Record<string, string[]> };
+  /** Licence key token (spec 12.2); `MOGGING_LICENSE_KEY` takes precedence. */
+  license?: string;
+  /** Purchase address named in the licence refusal (spec 12.3); default https://mogging.dev/buy. */
+  purchaseUrl?: string;
 };
 
 export function defineConfig(c: {
   collections: Collection[];
   locales: { source: string; chains: Record<string, string[]> };
+  license?: string;
+  purchaseUrl?: string;
 }): MoggingConfig {
+  if (c.license !== undefined && typeof c.license !== "string") throw new ValidationError("license must be a string");
+  if (c.purchaseUrl !== undefined && typeof c.purchaseUrl !== "string") {
+    throw new ValidationError("purchaseUrl must be a string");
+  }
   if (c.collections.length === 0) throw new ValidationError("Config needs at least one collection");
   const names = new Set<string>();
   for (const col of c.collections) {
@@ -47,7 +57,11 @@ export function defineConfig(c: {
       }
     }
   }
-  return { collections: c.collections, locales: { source, chains } };
+  return {
+    collections: c.collections, locales: { source, chains },
+    ...(c.license !== undefined ? { license: c.license } : {}),
+    ...(c.purchaseUrl !== undefined ? { purchaseUrl: c.purchaseUrl } : {}),
+  };
 }
 
 export function chainFor(

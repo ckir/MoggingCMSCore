@@ -1,5 +1,6 @@
 import type { Ctx } from "../ctx.js";
 import { NotFoundError, NotPublishableError, StaleReleaseError, ValidationError } from "../errors.js";
+import { assertLicensed } from "../licence/guard.js";
 import { publishWithinTx } from "../documents/publishCore.js";
 import { normalizeLocale } from "../schema/locale.js";
 
@@ -78,6 +79,7 @@ export async function addToRelease(ctx: Ctx, input: AddToReleaseInput): Promise<
  * against the CURRENT published source head; the flip is `publishWithinTx` (spec 6.3) with one stamp.
  */
 export async function publishRelease(ctx: Ctx, input: PublishReleaseInput): Promise<void> {
+  await assertLicensed(ctx);
   const { sql, actor, config } = ctx;
   const releaseId = releaseIdOf(input.releaseId);
   const source = config.locales.source;

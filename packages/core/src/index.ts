@@ -19,3 +19,6 @@ export { createRelease, addToRelease, publishRelease } from "./releases/releases
 export type {
   CreateReleaseInput, AddToReleaseInput, PublishReleaseInput, StaleReleaseItem, StaleReleaseErrorWithItems,
 } from "./releases/releases.js";
+export { verifyKey } from "./licence/key.js";
+export type { LicencePayload } from "./licence/key.js";
+export { getLicenceState, assertLicensed } from "./licence/guard.js";

@@ -21,3 +21,9 @@ export class StaleReleaseError extends MoggingError {
 export class NotFoundError extends MoggingError {
   constructor(message: string) { super("not_found", message); }
 }
+export type LicenceErrorCode = "LICENCE_INVALID" | "LICENCE_EXPIRED" | "LICENCE_REQUIRED";
+/** Licence key verification failure, or a guarded write refused after the evaluation window (spec 12). */
+export class LicenceError extends MoggingError {
+  declare readonly code: LicenceErrorCode;
+  constructor(code: LicenceErrorCode, message: string) { super(code, message); }
+}

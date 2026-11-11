@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Sql } from "postgres";
 import type { Ctx } from "../ctx.js";
 import { NotFoundError, NotPublishableError, ValidationError } from "../errors.js";
+import { assertLicensed } from "../licence/guard.js";
 import { normalizeLocale } from "../schema/locale.js";
 import { hashValue } from "../values/hash.js";
 import { normalizeValue, stripTopLevelNulls } from "../values/normalize.js";
@@ -38,6 +39,7 @@ function resolveLocale(ctx: Ctx, input: string): string {
 
 type Outcome = { version: number } | { skipped: string };
 
+/** Unguarded: its only callers, `approve` and `approveClean`, each call `assertLicensed` first. */
 async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): Promise<Outcome> {
   const { config, sql, actor } = ctx;
   const locale = resolveLocale(ctx, input.locale);
@@ -151,6 +153,7 @@ async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): P
 
 /** Approves the DRAFT_AI head of (doc, locale) into a new APPROVED draft head (spec 6.3). */
 export async function approve(ctx: Ctx, input: ApproveInput): Promise<{ version: number }> {
+  await assertLicensed(ctx);
   const out = await approveImpl(ctx, input, false);
   if ("skipped" in out) throw new Error("unreachable"); // cleanOnly=false never skips
   return out;
@@ -158,6 +161,7 @@ export async function approve(ctx: Ctx, input: ApproveInput): Promise<{ version:
 
 /** Bulk path (spec 8.6): approves every warning-free DRAFT_AI head in scope under one shared bulkId. */
 export async function approveClean(ctx: Ctx, input: ApproveCleanInput = {}): Promise<ApproveCleanResult> {
+  await assertLicensed(ctx); // once per bulk call, before the scan; approveImpl itself is unguarded
   const { config, sql } = ctx;
   const locale = input.locale === undefined ? undefined : resolveLocale(ctx, input.locale);
   if (input.collection !== undefined && !config.collections.some((c) => c.name === input.collection)) {
