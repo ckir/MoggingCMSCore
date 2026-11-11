@@ -70,11 +70,11 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
     const version = (heads!.max_version as number) + 1;
 
     // Base head for the carry-forward below, read BEFORE the draft head is cleared: this locale's draft head,
-    // else its published head, else none.
+    // else its published head, else its latest row by version in any state (e.g. after unpublish), else none.
     const base = isShared || locale === config.locales.source ? undefined : (await tx`
       select data, source_hashes from document_localized
-      where doc_id = ${input.docId} and locale = ${locale} and (is_head_draft or is_head_published)
-      order by is_head_draft desc limit 1`)[0];
+      where doc_id = ${input.docId} and locale = ${locale}
+      order by is_head_draft desc, is_head_published desc, version desc limit 1`)[0];
 
     await tx`update ${table} set is_head_draft = false
       where doc_id = ${input.docId} ${scope} and is_head_draft`;

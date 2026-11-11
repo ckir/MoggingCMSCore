@@ -374,3 +374,18 @@ test("staleness against an in-release source item is per field: an untouched tit
   expect(err).toBeInstanceOf(StaleReleaseError);
   expect(err.items).toEqual([{ docId, locale: "de", fields: ["body"] }]);
 }));
+
+test("a source item of document A does not make a target item of document B stale", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const a = await docWithSource(ctx, false);
+  const b = await docWithSource(ctx, true); // de derived from B's unchanged published source
+  const { version: aEn } = await saveDraft(ctx, { docId: a.docId, locale: "en", data: { title: "T2", body: "B2" } });
+  const { id } = await createRelease(ctx, { name: "ab" });
+  await addToRelease(ctx, { releaseId: id, docId: a.docId, locale: "en", version: aEn });
+  await addToRelease(ctx, { releaseId: id, docId: b.docId, locale: "de", version: b.deVersion });
+  await publishRelease(ctx, { releaseId: id });
+  const [rel] = await sql`select allow_stale, published_at from releases where id = ${id}`;
+  expect(rel!.allow_stale).toBe(false);
+  expect(rel!.published_at).toBeInstanceOf(Date);
+  expect(stateOf(await getSyncState(ctx, { docId: b.docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "current" });
+}));

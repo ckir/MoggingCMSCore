@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
   ConflictError, NotFoundError, ValidationError, createDocument, deleteDocument, getSyncState, hashValue, migrate, publish,
-  saveDraft, trackFields,
+  recordAiDraft, saveDraft, trackFields, unpublish,
 } from "../src/index.js";
 import { ctxFor, extraConnection, insertPublishedLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
@@ -257,6 +257,70 @@ test("trackFields on an unchanged field is the explicit assertion: it reads curr
   await publish(ctx, { docId, locale: "de" });
   await trackFields(ctx, { docId, locale: "de", fields: ["body"] });
   expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "current" });
+}));
+
+test("after unpublish (no draft head, no published head) a re-save still carries unchanged hashes forward", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "World" } });
+  await publish(ctx, { docId, locale: "en" });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Halo", body: "Welt" } });
+  await publish(ctx, { docId, locale: "de" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "New world" } });
+  await publish(ctx, { docId, locale: "en" });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
+  await unpublish(ctx, { docId, locale: "de" });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt" } });
+  await publish(ctx, { docId, locale: "de" });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
+}));
+
+test("a human save after an AI draft carries the AI hash for an unchanged field", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B" } });
+  await publish(ctx, { docId, locale: "en" });
+  const ai = await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { title: "T ai", body: "B ai" }, sourceVersion: 1,
+    sourceHashes: { title: hashValue("T"), body: hashValue("B") },
+    provenance: [{ fieldPath: "body", modelId: "m", promptVersion: "1", promptTokens: 1, completionTokens: 1, costMicros: 1 }],
+  });
+  expect(ai).toEqual({ version: 1 });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B2" } });
+  await publish(ctx, { docId, locale: "en" });
+  const { version } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T human", body: "B ai" } });
+  expect(await hashesOf(sql, docId, "de", version)).toEqual({ title: hashValue("T"), body: hashValue("B") });
+  await publish(ctx, { docId, locale: "de" });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
+}));
+
+test("target re-save compares canonical forms over awkward stored values: unchanged carries, changed re-stamps", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B", price: 1 } });
+  await publish(ctx, { docId, locale: "en" });
+  // Raw values the caller resubmits verbatim: 1e-7, -0, 0.1+0.2, decomposed accent in a value and in an object
+  // key, list with null elements, nested null keys.
+  const raw = () => ({
+    "cafe\u0301": "Cafe\u0301", tiny: 1e-7, negZero: -0, sum: 0.1 + 0.2,
+    list: [null, "x", null, { deep: null, k: [null] }], nest: { a: { b: null } },
+  });
+  const { version: v1 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "t", body: raw(), price: 0.1 + 0.2 } });
+  const first = await hashesOf(sql, docId, "de", v1);
+  expect(first).toEqual({ title: hashValue("T"), body: hashValue("B"), price: hashValue(1) });
+  const [stored] = await sql`select data from document_localized where doc_id = ${docId} and locale = 'de' and version = ${v1}`;
+  expect(Object.keys((stored!.data as { body: object }).body)).toContain("caf\u00e9");
+  // The source moves on; any spurious re-stamp would now read the new source hashes.
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T2", body: "B2", price: 2 } });
+  await publish(ctx, { docId, locale: "en" });
+  const { version: v2 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "t", body: raw(), price: 0.1 + 0.2 } });
+  expect(await hashesOf(sql, docId, "de", v2)).toEqual(first);
+  await publish(ctx, { docId, locale: "de" });
+  // Re-save the stored data read back from the database (jsonb forms of the numbers): still unchanged.
+  const [back] = await sql`select data from document_localized where doc_id = ${docId} and locale = 'de' and version = ${v2}`;
+  const { version: v3 } = await saveDraft(ctx, { docId, locale: "de", data: back!.data as Record<string, unknown> });
+  expect(await hashesOf(sql, docId, "de", v3)).toEqual(first);
+  // A changed value re-stamps that field only.
+  const changed = raw(); changed.tiny = 2e-7;
+  const { version: v4 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "t", body: changed, price: 0.1 + 0.2 } });
+  expect(await hashesOf(sql, docId, "de", v4)).toEqual({ title: first.title, body: hashValue("B2"), price: first.price });
 }));
 
 test("jsonb round trip: stored self-hash equals hashValue of the data read back", async () => withTestDb(async (sql) => {

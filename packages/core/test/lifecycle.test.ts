@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
   approve, createDocument, deleteDocument, getDocument, getSyncState, migrate, publish, recordAiDraft, resolve,
-  saveDraft,
+  saveDraft, unpublish,
 } from "../src/index.js";
 import { ctxFor } from "./fixtures.js";
 import { withTestDb } from "./db.js";
@@ -59,4 +59,35 @@ test("lifecycle: deleteDocument hides the document from resolve, asOf before the
   expect(before[0]).toMatchObject({ id: docId, data: { title: "Hello", body: "World" }, fellBack: {} });
   expect(await resolve(ctx, { collection: "posts", locale: "en", asOf: deletedAt })).toEqual([]);
   expect(await resolve(ctx, { collection: "posts", locale: "en", asOf: new Date(deletedAt.getTime() + 1000) })).toEqual([]);
+}));
+
+async function staleBodyDoc(ctx: ReturnType<typeof ctxFor>) {
+  const { id: docId } = await createDocument(ctx, { collection: "posts" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "World" } });
+  await publish(ctx, { docId, locale: "en" });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Halo", body: "Welt" } });
+  await publish(ctx, { docId, locale: "de" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "New world" } });
+  await publish(ctx, { docId, locale: "en" });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
+  return docId;
+}
+
+test("regression pin: a typo fix that resubmits the unchanged body keeps it stale (published base)", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const ctx = ctxFor(sql, "editor");
+  const docId = await staleBodyDoc(ctx);
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt" } });
+  await publish(ctx, { docId, locale: "de" });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
+}));
+
+test("regression pin: unpublish, typo fix, re-save and publish keeps the unchanged body stale", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const ctx = ctxFor(sql, "editor");
+  const docId = await staleBodyDoc(ctx);
+  await unpublish(ctx, { docId, locale: "de" });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt" } });
+  await publish(ctx, { docId, locale: "de" });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
 }));
