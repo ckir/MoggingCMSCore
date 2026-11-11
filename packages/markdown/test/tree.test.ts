@@ -59,6 +59,9 @@ describe("validateTree", () => {
     ["version 2", (t) => { t.version = 2; }, "$.version"],
     ["unknown type html", (t) => { t.children[2] = { type: "html", value: "<b>" }; }, "$.children[2]"],
     ["depth 7", (t) => { t.children[1].depth = 7; }, "$.children[1].depth"],
+    ["list start NaN", (t) => { t.children[4].start = NaN; }, "$.children[4].start"],
+    ["list start 1.5", (t) => { t.children[4].start = 1.5; }, "$.children[4].start"],
+    ["list start -1", (t) => { t.children[4].start = -1; }, "$.children[4].start"],
     ["container label []", (t) => { t.children[7].label = []; }, "$.children[7].label"],
   ];
 

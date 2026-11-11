@@ -153,7 +153,10 @@ function block(n: unknown, path: string): void {
     case "list": {
       exactKeys(n, ["type", "ordered", "start", "spread", "children"], path);
       bool(n, "ordered", path); bool(n, "spread", path);
-      if (n["start"] !== null && typeof n["start"] !== "number") fail(`${path}.start`, "expected a number or null");
+      const start = n["start"];
+      if (start !== null && !(typeof start === "number" && Number.isInteger(start) && start >= 0)) {
+        fail(`${path}.start`, "expected null or a non-negative integer");
+      }
       arr(n, "children", path).forEach((it, i) => {
         const p = `${path}.children[${i}]`;
         if (!isObj(it) || it["type"] !== "listItem") fail(p, "expected a listItem");
