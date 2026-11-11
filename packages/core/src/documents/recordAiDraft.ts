@@ -76,19 +76,13 @@ export async function recordAiDraft(ctx: Ctx, input: RecordAiDraftInput): Promis
       where doc_id = ${input.docId} and locale = ${config.locales.source} and is_head_published`;
     if (!src || src.version !== input.sourceVersion) return { cancelled: "SOURCE_MOVED" };
 
-    const [draft] = await tx`select version, state, data, source_hashes from document_localized
-      where doc_id = ${input.docId} and locale = ${locale} and is_head_draft`;
-    if (draft && draft.state === "DRAFT_HUMAN") return { cancelled: "DRAFT_HUMAN" };
-
-    type Base = { data: Record<string, unknown>; source_hashes: Record<string, string> };
-    let base: Base | undefined;
-    if (draft) {
-      base = draft as unknown as Base; // DRAFT_AI or APPROVED: supersede, build from it
-    } else {
-      const [pub] = await tx`select data, source_hashes from document_localized
-        where doc_id = ${input.docId} and locale = ${locale} and is_head_published`;
-      base = pub as unknown as Base | undefined;
-    }
+    // Base = draft head, else published head, else the latest row by version in any state (e.g. after
+    // unpublish), else none. Read under the documents lock before any head flag is cleared.
+    type Base = { state: string; is_head_draft: boolean; data: Record<string, unknown>; source_hashes: Record<string, string> };
+    const [base] = (await tx`select state, is_head_draft, data, source_hashes from document_localized
+      where doc_id = ${input.docId} and locale = ${locale}
+      order by is_head_draft desc, is_head_published desc, version desc limit 1`) as unknown as Array<Base | undefined>;
+    if (base && base.is_head_draft && base.state === "DRAFT_HUMAN") return { cancelled: "DRAFT_HUMAN" };
 
     const data: Record<string, unknown> = stripTopLevelNulls({ ...(base?.data ?? {}), ...normalized });
     const hashes: Record<string, string> = { ...(base?.source_hashes ?? {}) };

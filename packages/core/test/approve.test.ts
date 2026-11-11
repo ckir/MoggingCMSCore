@@ -1,10 +1,10 @@
 import { expect, test } from "vitest";
 import type { Sql } from "postgres";
 import {
-  NotPublishableError, ValidationError, approve, approveClean, createDocument, hashValue, migrate, publish,
-  recordAiDraft, saveDraft,
+  NotPublishableError, ValidationError, approve, approveClean, createDocument, getDocument, getSyncState, hashValue, migrate, publish,
+  recordAiDraft, saveDraft, unpublish,
 } from "../src/index.js";
-import { ctxFor, extraConnection } from "./fixtures.js";
+import { ctxFor, extraConnection, insertPublishedLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 const prov = (fieldPath: string, extra: { warnings?: string[]; jobId?: number } = {}) => ({
@@ -373,4 +373,57 @@ test("an edited field hashes the current source published value even when the so
   await approve(ctx, { docId, locale: "de", edits: { body: "Neu" } });
   [head] = await sql`select source_hashes from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
   expect(head!.source_hashes).toEqual({ title: hashValue("Hello 2") });
+}));
+
+test("recordAiDraft after unpublish keeps the sibling fields and their hashes", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Deutscher Titel", body: "Deutscher Text" } });
+  await publish(ctx, { docId, locale: "de" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "New world" } });
+  await publish(ctx, { docId, locale: "en" });
+  await unpublish(ctx, { docId, locale: "de" });
+  const en = (await getDocument(ctx, { collection: "posts", docId }))!.locales.en!.published!;
+  const r = await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { body: "Neuer deutscher Text" }, sourceVersion: en.version,
+    sourceHashes: { body: en.sourceHashes.body! }, provenance: [prov("body")],
+  });
+  expect(r).toEqual({ version: 2 });
+  const rows = await heads(sql, docId, "de");
+  expect(rows[1]).toMatchObject({
+    state: "DRAFT_AI", is_head_draft: true,
+    data: { title: "Deutscher Titel", body: "Neuer deutscher Text" },
+    source_hashes: { title: hashes.title, body: en.sourceHashes.body },
+  });
+  await approve(ctx, { docId, locale: "de" });
+  await publish(ctx, { docId, locale: "de" });
+  const states = Object.fromEntries((await getSyncState(ctx, { docId, locale: "de" })).map((x) => [x.field, x.state]));
+  expect(states).toEqual({ title: "current", body: "current" });
+}));
+
+test("recordAiDraft with only non-head rows and no published head bases on the LATEST row by version", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "A" } });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "B", legal: "L" } });
+  await sql`update document_localized set is_head_draft = false where doc_id = ${docId} and locale = 'de'`;
+  const r = await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { body: "Welt" }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("body")],
+  });
+  expect(r).toEqual({ version: 3 });
+  const rows = await heads(sql, docId, "de");
+  expect(rows[2]!.data).toEqual({ title: "B", legal: "L", body: "Welt" });
+  expect(rows[2]!.source_hashes).toEqual({ title: hashes.title, body: hashes.body });
+}));
+
+test("recordAiDraft prefers the published head over a later superseded draft row", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  await insertPublishedLocalized(sql, docId, "de", 1, { title: "Pub" }, { title: hashes.title });
+  await sql`insert into document_localized (doc_id, locale, version, state, data, source_hashes, is_head_draft, created_by)
+    values (${docId}, 'de', 2, 'DRAFT_HUMAN', ${sql.json({ title: "Old draft", legal: "x" })}, ${sql.json({})}, false, 'fixture')`;
+  const r = await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { body: "Welt" }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("body")],
+  });
+  expect(r).toEqual({ version: 3 });
+  const rows = await heads(sql, docId, "de");
+  expect(rows[2]!.data).toEqual({ title: "Pub", body: "Welt" });
+  expect(rows[2]!.source_hashes).toEqual({ title: hashes.title, body: hashes.body });
 }));

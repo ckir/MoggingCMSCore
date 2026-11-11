@@ -91,3 +91,27 @@ test("regression pin: unpublish, typo fix, re-save and publish keeps the unchang
   await publish(ctx, { docId, locale: "de" });
   expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
 }));
+
+test("regression pin: AI re-translation after unpublish keeps the sibling field and ends current", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const ctx = ctxFor(sql, "editor");
+  const { id: docId } = await createDocument(ctx, { collection: "posts" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "World" } });
+  await publish(ctx, { docId, locale: "en" });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt" } });
+  await publish(ctx, { docId, locale: "de" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "New world" } });
+  await publish(ctx, { docId, locale: "en" });
+  await unpublish(ctx, { docId, locale: "de" });
+  const en = (await getDocument(ctx, { collection: "posts", docId }))!.locales.en!.published!;
+  const r = await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { body: "Neue Welt" }, sourceVersion: en.version, sourceHashes: { body: en.sourceHashes.body! },
+    provenance: [{ fieldPath: "body", modelId: "m", promptVersion: "1", promptTokens: 1, completionTokens: 1, costMicros: 1 }],
+  });
+  expect(r).toEqual({ version: 2 });
+  await approve(ctx, { docId, locale: "de" });
+  await publish(ctx, { docId, locale: "de" });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "current" });
+  const [doc] = await resolve(ctx, { collection: "posts", locale: "de" });
+  expect(doc).toMatchObject({ data: { title: "Hallo", body: "Neue Welt" }, fellBack: {} });
+}));
