@@ -578,6 +578,8 @@ means absent; an explicit empty (`banner: ""`, `tags: []`) means suppressed. `mo
 always writes empties explicitly and never writes a bare key, so an export-then-import round trip
 preserves suppression.
 
+**Implementation notes (plan 2).** Slugs may contain `/` (nested folders) and must be lowercase. `.md` and `.mdx` are both accepted and the extension sets the parse mode. Undeclared front-matter keys are a per-file error. References in front matter are a slug or a UUID. Reference slugs are case-insensitive (normalized like slugs); a null entry where a reference is declared is a per-file error. A whitespace-only body means absent. An unchanged file is skipped, as approved in F5.
+
 ## 10. Left to the builder, and to the owner
 
 **Builder decides** (within the above): database client library and migration runner; exact
