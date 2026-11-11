@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { Sql } from "postgres";
-import { createDocument, getDocument, migrate, publish, saveDraft } from "@mogging/core";
+import { createDocument, deleteDocument, getDocument, migrate, publish, saveDraft } from "@mogging/core";
 import { exportFolder } from "../src/export.js";
 import { importFolder } from "../src/import.js";
 import { withTestDb } from "./db.js";
@@ -119,6 +119,47 @@ describe("exportFolder", () => {
       const r = await exportFolder(ctx, { dir: out });
       expect(r.files).toEqual(["en/docs/page.mdx"]);
       expect(read(out, "en/docs/page.mdx")).toContain("Hello");
+    });
+  });
+
+  test("mdx file with escaped braces: export then import is unchanged", async () => {
+    await setup(async (_sql, ctx) => {
+      const dir = writeTree(null, { "en/docs/page.mdx": "---\ntitle: P\n---\nUse \\{name\\} and <Badge text=\"x\" /> here\n" });
+      await importFolder(ctx, { dir, publish: true });
+      const out = fresh();
+      const r = await exportFolder(ctx, { dir: out });
+      expect(r.files).toEqual(["en/docs/page.mdx"]);
+      expect(r.warnings).toEqual([]);
+      const again = await importFolder(ctx, { dir: out });
+      expect(again.errors).toEqual([]);
+      expect(again.files.map((f) => f.outcome)).toEqual(["unchanged"]);
+    });
+  });
+
+  test("mdx rich-text front matter without a body exports as .mdx", async () => {
+    await setup(async (_sql, ctx) => {
+      const dir = writeTree(null, { "en/docs/page.mdx": "---\ntitle: P\nsummary: \"Hi \\\\{x\\\\}\"\n---\n" });
+      await importFolder(ctx, { dir, publish: true });
+      const out = fresh();
+      const r = await exportFolder(ctx, { dir: out });
+      expect(r.files).toEqual(["en/docs/page.mdx"]);
+      const again = await importFolder(ctx, { dir: out });
+      expect(again.files.map((f) => f.outcome)).toEqual(["unchanged"]);
+    });
+  });
+
+  test("a reference to a deleted target is warned", async () => {
+    await setup(async (_sql, ctx) => {
+      const dir = writeTree(null, { "en/docs/intro.md": INTRO, "en/docs/other.md": OTHER, "en/people/jane.md": JANE });
+      await importFolder(ctx, { dir, publish: true });
+      const jane = (await getDocument(ctx, { collection: "people", slug: "jane" }))!;
+      await deleteDocument(ctx, { docId: jane.id });
+      const out = fresh();
+      const r = await exportFolder(ctx, { dir: out });
+      expect(r.warnings).toEqual([
+        { file: "en/docs/intro.md", message: `author: reference ${jane.id} has no published target; it will not re-import` },
+      ]);
+      expect(read(out, "en/docs/intro.md")).toContain(`author: ${jane.id}`);
     });
   });
 

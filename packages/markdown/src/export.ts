@@ -67,12 +67,44 @@ function cleanData(col: Collection, data: Record<string, unknown>, bad: string[]
   return out;
 }
 
+/** Mode of the first richText tree found in `value` (nested lists and objects included), or null. */
+function treeMode(field: Field, value: unknown): "md" | "mdx" | null {
+  switch (field.kind) {
+    case "richText":
+      return isPlain(value) && (value["mode"] === "mdx" || value["mode"] === "md") ? (value["mode"] as "md" | "mdx") : null;
+    case "list":
+      if (Array.isArray(value)) for (const x of value) { const m = treeMode(field.item, x); if (m !== null) return m; }
+      return null;
+    case "object":
+      if (!isPlain(value)) return null;
+      for (const [k, v] of Object.entries(value)) {
+        const sub = Object.hasOwn(field.fields, k) ? field.fields[k] : undefined;
+        if (sub === undefined) continue;
+        const m = treeMode(sub, v);
+        if (m !== null) return m;
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+
+/** The body tree's mode if there is one, else the mode of any richText tree in the published data; md by default. */
 function bodyMode(col: Collection, ...datas: Array<Record<string, unknown>>): "md" | "mdx" {
   const bodyName = Object.entries(col.fields).find(([, f]) => f.body)?.[0];
-  if (bodyName === undefined) return "md";
+  const entries = Object.entries(col.fields);
+  if (bodyName !== undefined) {
+    for (const d of datas) {
+      const m = treeMode(col.fields[bodyName]!, d[bodyName]);
+      if (m !== null) return m;
+    }
+  }
   for (const d of datas) {
-    const v = d[bodyName];
-    if (isPlain(v) && v["mode"] === "mdx") return "mdx";
+    for (const [name, f] of entries) {
+      if (name === bodyName) continue;
+      const m = treeMode(f, d[name]);
+      if (m !== null) return m;
+    }
   }
   return "md";
 }
@@ -132,15 +164,19 @@ export async function exportFolder(ctx: Ctx, input: ExportInput): Promise<Export
         for (const b of bad) warnings.push({ file: rel, message: `${b}: not a v1 tree; omitted` });
 
         // refToText is synchronous: resolve every referenced id up front.
-        const refs: Array<[string, string]> = [];
         for (const [name, field] of Object.entries(col.fields)) {
+          const refs: Array<[string, string]> = [];
           collectRefIds(field, field.localized ? localized[name] : shared[name], refs);
-        }
-        for (const [refCol, refId] of refs) {
-          if (slugOf.has(refId)) continue;
-          const target = await getDocument(ctx, { collection: refCol, docId: refId });
-          const s = target?.shared.published?.data["slug"];
-          slugOf.set(refId, typeof s === "string" ? s : null);
+          for (const [refCol, refId] of refs) {
+            if (!slugOf.has(refId)) {
+              const target = await getDocument(ctx, { collection: refCol, docId: refId });
+              const s = target === null || target.deletedAt !== null ? undefined : target.shared.published?.data["slug"];
+              slugOf.set(refId, typeof s === "string" && s !== "" ? s : null);
+            }
+            if (slugOf.get(refId) === null) {
+              warnings.push({ file: rel, message: `${name}: reference ${refId} has no published target; it will not re-import` });
+            }
+          }
         }
 
         const text = renderFile(col, { shared, localized }, {

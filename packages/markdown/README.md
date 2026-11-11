@@ -25,7 +25,7 @@ const out = await exportFolder(ctx, { dir: "export" });
   The Markdown body goes to the collection's body field. A whitespace-only body means absent.
 - Shared fields are read from the source-locale file only; shared keys in other locales are ignored with
   a warning.
-- References are written as a slug or a UUID. Slugs are normalized like core slugs (NFC and lower case),
+- References are written as a slug or a UUID (the export writes the id when the target has no published slug). Slugs are normalized like core slugs (NFC and lower case),
   so references are case-insensitive. A `null` entry where a reference is declared is a per-file error.
 - A bare key (`banner:`) means absent. An explicit empty (`banner: ""`, `tags: []`) means suppressed.
 - `.md` and `.mdx` are both accepted; the extension sets the parse mode.
@@ -33,14 +33,17 @@ const out = await exportFolder(ctx, { dir: "export" });
   Each file runs in its own transaction. A file whose content already equals the stored draft is skipped
   and reported as `unchanged`.
 - Re-importing writes a new `DRAFT_HUMAN` version. Over an unpublished human draft it replaces that draft
-  with the warning `replaced unpublished DRAFT_HUMAN draft ...`; older versions stay in history. With
+  with the warning `replaced unpublished DRAFT_HUMAN draft ...`; older versions stay in history. A file equal
+  to the published head leaves a pending `DRAFT_AI` or `APPROVED` draft untouched; when the file differs, it
+  replaces that draft with the warning `replaced pending <state> draft ...`. With
   `publish: true`, drafts that equal the file are published in the same run.
 
 ## Export
 
 `exportFolder` writes the **published** heads to `<dir>/<locale>/<collection>/<slug>.<ext>`, where `ext`
-is `mdx` when the published body tree has mode `mdx`, else `md`. The source-locale file carries the shared
-fields. References are written as slugs. Empties are always written explicitly and a bare key is never
+is `mdx` when the published body tree has mode `mdx` (or, with no body, any published richText tree does), else `md`. The source-locale file carries the shared
+fields. References are written as slugs, or as the id with a warning when the target is deleted or has no
+published slug (such a reference will not re-import). Empties are always written explicitly and a bare key is never
 written, so export followed by import leaves every file `unchanged` (spec 9.4).
 
 ## Supported syntax
