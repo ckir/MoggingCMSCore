@@ -625,12 +625,16 @@ The product is never described as "open source"; the words used are "source-avai
 
 ### 12.2 Keys
 
-A licence key is a signed JSON payload `{ licensee, license_id, expiry, plan }` encoded as one
-token, signed with the owner's Ed25519 private key. `@mogging/core` embeds the matching public key
+A licence key is a signed JSON payload `{ licensee, license_id, expiry, plan, limits? }` encoded as
+one token, signed with the owner's Ed25519 private key. `limits` is an optional object reserved
+from v0.1 for later plans (for example `limits.seats`); an engine ignores limit keys it does not
+know, so an old engine always verifies a newer key. `@mogging/core` embeds the matching public key
 and verifies the token offline with Node's built-in crypto; there is no key server and no network
 call. The key is supplied through `MOGGING_LICENSE_KEY` or a `license` entry in `mogging.config.ts`.
-One key covers one project (one engine database) and every non-production environment of that
-project: developer machines, CI runners, staging.
+One key covers one project (one production engine database) and everything that works against it
+or against copies of it: developer machines, CI runners, staging, and the later review hub, GitOps
+bot and MCP server. A second production database is a second project. Plan values in v0.1 are
+`solo` (paid) and `noncommercial` (zero price, see 12.4).
 
 ### 12.3 Grace and guarded operations
 
@@ -650,6 +654,9 @@ and existing builds still succeed; content updates, compiles and publishing are 
 licence key is set." Both reviewers acknowledge the window is evadable by starting a fresh database;
 the licence clause binds an evader, and the mechanism is designed for honest organisations.
 
+Individuals and noncommercial organisations install a zero-price `noncommercial` key (12.4) and
+never meet the refusal; the evaluation window is for companies deciding whether to buy.
+
 Keys expire; v0.1 has no revocation. A refunded or lapsed licence is simply not renewed, and keys
 are issued for at most one year. The engine accepts a list of public keys so a new signing key can
 be rotated in through a package upgrade while old keys stay valid until their expiry. Expiry is
@@ -659,7 +666,11 @@ compared in UTC at the end of the stated date.
 
 A self-serve checkout page (Stripe or equivalent) collects an email and payment, triggers a small
 hosted signing function holding the private key, and emails the key and an invoice. No account, no
-sales call. Pricing is flat, per project per year. Per seat is impossible before authentication
+sales call. The same page issues a zero-price `noncommercial` key on a self-declaration that the
+use is a permitted noncommercial purpose under the licence; the declaration is recorded with the
+key, and the licence text, not the engine, binds it. Keys can be re-sent to the purchase email on
+request. Refunds are honoured for 14 days; because keys cannot be revoked, a refunded key lapses
+at its expiry, an accepted loss. Pricing is flat, per project per year. Per seat is impossible before authentication
 exists; per AI token contradicts bring-your-own-key. The price is the owner's and is unmeasured;
 the placeholder discussed is a few hundred dollars a year, below common expense-card thresholds,
 to be revised after the first ten purchases.
@@ -818,6 +829,11 @@ notes, all verified against the text:
   rotation through a list of accepted public keys (12.3).
 - FOLDED (plan): signature verified over raw payload bytes; empty migrations table defined;
   `config.ts` added to the files Task 9B modifies.
+
+Roadmap review (builder check and agy panel on the roadmap doc, 2026-11-11) exposed three gaps
+in this document, folded: the key schema gains a reserved optional `limits` object and names the
+plan values (12.2); a zero-price `noncommercial` key is issued by the checkout page so free users
+never meet the refusal (12.3, 12.4); key re-issue and the refund rule are stated (12.4).
 
 ## Stand-downs
 

@@ -52,8 +52,15 @@ owner can act on rather than an opinion.
   registries, documentation traffic, and what customers say.
 - Postgres is the only required service for self-hosted deployments through v1.0. The hosted
   service in v1.0 isolates tenants per database or schema (design 12.7).
-- The licence key schema `{ licensee, license_id, expiry, plan }` is a contract from v0.1; later
-  releases add plan values, never fields that old engines must understand.
+- The licence key schema `{ licensee, license_id, expiry, plan, limits? }` is a contract from v0.1
+  (design 12.2). Later releases add plan values and keys inside the optional `limits` object; an
+  engine ignores limits it does not know, so an old engine always verifies a new key.
+- One key covers one production engine database and everything that works against it or against
+  copies of it: the review hub, the GitOps bot, the MCP server, CI runners, staging. A second
+  production database is a second project and a second key (design 12.2).
+- Every surface that writes stamps a real person's identity as the actor from v0.2 on; no shared
+  secrets, no anonymous actors. Agents act under a named `agent:<name>` actor configured by an
+  identified person and never approve or publish.
 - Every operation added in any release is a function in the SDK before it is a screen or a bot
   (design 9.3), so the MCP server, the GitOps bot and the review hub are projections, not forks.
 
@@ -93,11 +100,21 @@ alone with a CLI.
 the self-serve checkout and key delivery, and one framework template (the design's "announce after
 a template exists" condition). Implementation plans 1 to 4 cover it; plan 1 is written and deferred.
 
-**Plan values:** `solo` (the only plan). One key per project.
+**Plan values:** `solo` (paid, one key per project) and `noncommercial` (zero price, issued by the
+same checkout page on a self-declaration that the use is a permitted noncommercial purpose under the
+licence; one year; the licence text, not the engine, binds the declaration). Individuals and
+nonprofits therefore never hit the 30-day refusal.
 
-**Measurement:** purchases and monthly recurring revenue at checkout; package downloads and
-template installs as reach; every purchaser is asked one question at checkout, "what will you use
-it for", free text.
+**Operations shipped with v0.1,** because paying customers start here: key re-issue from the
+checkout records by email; a 14-day refund policy (money back; the key cannot be revoked and
+simply lapses at expiry, an accepted loss); best-effort email support with a published address;
+documentation that covers evaluation, purchase, key installation, CI and the refusal message. An
+"enterprise and security questionnaires" contact form exists from v0.1 so the signal for later
+gates can be counted from the start.
+
+**Measurement:** purchases and monthly recurring revenue at checkout; noncommercial keys issued;
+package downloads and template installs as reach; every purchaser is asked one question at
+checkout, "what will you use it for", free text; contact-form submissions by category.
 
 **Decision rule for v0.2** (owner writes the numbers before v0.1 ships; placeholders here are
 UNMEASURED): if at least N1 paying projects exist by the deadline D1, build v0.2 as specified. If
@@ -110,35 +127,50 @@ gate once. Price is revised after the first ten purchases regardless.
 **For:** the technical writer and the translator at the same company, who do not use a CLI, and
 the developer who wants translation to run without them.
 
-**Ships:**
+**Ships, in this order, and v0.2 may be cut after any item** (each is independently useful and
+the gate below measures whatever shipped):
 
-- The **GitOps bot**: a GitHub Action and a GitLab equivalent that runs `compile` when source
-  content changes on the default branch, writes AI drafts to a branch, and opens a pull request
-  whose description is the side-by-side diff per field with warnings. Approval is the merge; the
-  bot calls `approve` and `publish` with the merger's identity as the actor. This is the first
-  surface where the actor is a real person's login, taken from the Git host.
-- The **review hub**: the local review page of design 8.6 promoted to a deployable web app, still
-  read-and-approve only, with login. Login in v0.2 is one of: GitHub or GitLab OAuth, or a shared
-  team secret; it sets the actor string and nothing more. Roles come in v0.3.
-- The **MCP server**: every SDK read and every guarded write exposed as tools, with the same
-  licence guard and the same actor rule; agents are operators with a human approval still required
-  for anything AI-produced. No autonomous publish.
-- Second and third framework templates, chosen from what v0.1 purchasers said they use.
+1. **Identity, minimal.** The actor-model interface of design 8.7 in its first form: a pluggable
+   identity provider behind one interface, with GitHub and GitLab OAuth and email magic link
+   shipped. It sets the actor to a real person's identity and nothing more; roles come in v0.3. The
+   interface is shaped so SAML and OIDC in v1.0 plug in without touching callers. This moves up from
+   v0.3 because every v0.2 surface writes on behalf of a person, and an anonymous actor in the
+   history would poison the v0.3 audit ledger for early adopters.
+2. The **GitOps bot**: a GitHub Action and a GitLab equivalent. On a change to source content on the
+   default branch, CI runs `compile` against the project's Postgres (CI must be able to reach it; if
+   it cannot, the hub is the path), then `export --drafts` writes the AI drafts as Markdown files to
+   a branch, and the bot opens a pull request whose diff is the side-by-side per field with warnings
+   in the description. Merging runs `import --approve-drafts`, which maps the merged files back to
+   the draft versions and calls `approve` and `publish` with the merger's Git identity as the actor;
+   editing a file in the pull request is edit-then-approve; deleting a field's change is a per-field
+   reject; closing the pull request rejects all. Export of drafts and import-as-approval are new
+   capabilities of `@mogging/markdown` and the CLI; the core write paths are unchanged.
+3. The **review hub**: the local review page of design 8.6 promoted to a deployable Node service
+   that uses the project's own Postgres (its sessions live in a schema of their own), with the
+   identity from item 1, still read-and-approve only.
+4. **XLIFF 2 export** of a locale's stale and draft fields, so an agency can work outside the
+   product; import and connectors stay in v0.3.
+5. The **MCP server**: SDK reads and draft creation exposed as tools under a named `agent:<name>`
+   actor that an identified person configures; `approve`, `publish` and `publishRelease` are not
+   exposed until roles exist in v0.3. The licence guard applies.
+6. Second and third framework templates, chosen from what v0.1 purchasers said they use.
 
 **Must be true from v0.1:** the SDK is the only way the CLI touches the engine (design 9.3), so
-the bot and the hub add no engine code paths.
+items 2 to 5 add no core write paths; design 8.7's "the MCP server will need a real actor model
+first" is honoured by item 1 preceding item 5 and by the draft-only tool set.
 
 **Plan values:** `team` is introduced but not yet priced differently; v0.2 ships under `solo`
 pricing so the measurement is adoption of the surfaces, not price sensitivity.
 
-**Measurement:** share of paying projects that run the bot or the hub within 30 days of upgrade;
-number of distinct actors per project (the first proxy for team size); the free-text answers at
-checkout re-read for "team", "translator", "agency".
+**Measurement, all without telemetry:** downloads of the hub package and installs of the Action
+(public registry and marketplace counts); contact-form and support requests from paying customers
+that ask for roles, permissions, reviewers or translators; the checkout free text re-read for
+"team", "translator", "agency"; XLIFF exports are not countable and are not a metric.
 
-**Decision rule for v0.3:** if at least N2 paying projects have more than one distinct actor by
-D2, v0.3 is the team release below. If not, v0.3 becomes a depth release for the solo buyer (the
-candidates in section 8 most requested by purchasers) and the team release waits for the gate to
-pass.
+**Decision rule for v0.3:** if at least N2 paying customers have asked for roles, permissions or
+a second reviewer by D2, v0.3 is the team release below. If not, v0.3 becomes a depth release for
+the solo buyer (the candidates in section 8 most requested by purchasers) and the team release
+waits for the gate to pass.
 
 ### v0.3 Team and governance
 
@@ -147,23 +179,27 @@ asks "who approved this and who can publish German".
 
 **Ships:**
 
-- The **actor model** (design 8.7's "real actor model"): pluggable identity behind one interface,
-  with GitHub or GitLab OAuth and email magic link shipped, and the interface shaped so SAML and
-  OIDC in v1.0 plug in without touching callers.
-- **Roles per locale and per collection:** reviewer, publisher, admin; the approval and publish
-  guards check them. Per-field locks for legal copy (design 8's vision).
+- **Roles per locale and per collection** on top of the v0.2 identity: reviewer, publisher, admin;
+  the approval and publish guards check them. Per-field locks for legal copy (design 8's vision).
+  With roles in place the MCP server gains `approve` and `publish` tools, still under a named
+  agent actor and still requiring that the approving identity is a person with the role.
 - The **audit ledger:** an append-only table of every guarded write with actor, before and after
   version, and licence id, exportable as JSON and CSV. Provenance (design 7.1) is unchanged; the
   ledger is the human-facing trail over it.
-- **Localisation interchange:** XLIFF 2 export and import so agencies can work outside the product,
-  and connectors to two translation management systems chosen from what customers name. No
-  home-built translation memory.
+- **Localisation interchange:** XLIFF 2 import (export shipped in v0.2) so agencies' work comes
+  back as drafts with provenance, and connectors to two translation management systems chosen from
+  what customers name. No home-built translation memory.
 - Glossary management in the hub.
 
-**Must be true from v0.2:** the hub and the bot already attribute every write to a login, so roles
-are a check added to existing calls, not a new write path.
+**Must be true from v0.2:** the hub, the bot and the MCP server already attribute every write to
+an identified person or a named agent, so roles are a check added to existing calls, not a new
+write path, and the audit ledger can be back-filled from provenance without anonymous gaps.
 
-**Plan values:** `team` is priced (per project plus a seat count carried in the key); `solo` stays.
+**Plan values:** `team` is priced per project plus seats, with the seat count carried as
+`limits.seats` in the key (reserved in the schema since v0.1). Enforcement: the engine counts
+distinct person actors in the ledger over the trailing 30 days; above the seat count it warns on
+every guarded write, and above the seat count plus two it refuses writes by actors not yet seen,
+never writes by existing ones. `solo` stays.
 
 **Measurement:** upgrades from `solo` to `team`; inbound security questionnaires and single
 sign-on requests counted by company size; first request for an invoice over a stated amount.
@@ -255,3 +291,32 @@ Each is pulled into a depth release only when purchasers ask, and the gate files
 - The hiring threshold after v1.0.
 - Whether to show this roadmap to prospects verbatim or as a summary; the document is written so
   that either is safe.
+
+## Appendix A. Review ledger
+
+Builder check (fresh reviewer, 2026-11-11) and agy panel round 1 (2026-11-11) were run on the same
+draft and converged; all findings verified against the text and folded:
+
+- FOLDED: the v0.2 gate counted "distinct actors", which cannot be measured without telemetry;
+  replaced by registry and marketplace counts plus requests for roles from paying customers.
+- FOLDED: the MCP server shipped before the actor model the design doc requires; minimal identity
+  moved into v0.2 as its first item, MCP limited to reads and drafts until roles exist in v0.3.
+- FOLDED: a shared-secret login would have left anonymous actors in history and poisoned the v0.3
+  audit ledger; removed, every write is attributed to a person or a named agent from v0.2.
+- FOLDED: the GitOps bot had no stated mechanism; export of drafts to a branch and
+  import-as-approval defined, CI reachability of Postgres stated, closing and editing semantics
+  defined; "no engine code paths" corrected to "no core write paths".
+- FOLDED: a seat count would have broken the key-schema contract; an optional `limits` object is
+  reserved in the v0.1 schema (design 12.2) and seat enforcement is defined for v0.3.
+- FOLDED: free noncommercial users would have met the 30-day refusal; a zero-price
+  `noncommercial` plan is issued by the checkout page (design 12.2, 12.3, 12.4).
+- FOLDED: which deployments one key covers was unstated; defined in section 3 and design 12.2.
+- FOLDED: v0.1 had no operations for paying customers; key re-issue, refunds, support and the
+  enterprise contact form added to v0.1.
+- FOLDED: v0.2 had no cut line; items ordered, each independently shippable, gate measures what
+  shipped.
+- FOLDED: XLIFF export moved to v0.2 so agencies can work outside the hub; import stays in v0.3.
+- FOLDED: the review hub had no stated runtime shape; it is a Node service on the project's own
+  Postgres.
+- FOLDED: the v0.3 gate depended on security requests a self-serve product may never see; the
+  contact form exists from v0.1 so the count can exist.
