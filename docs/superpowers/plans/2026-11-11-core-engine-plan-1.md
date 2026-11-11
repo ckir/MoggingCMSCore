@@ -21,7 +21,8 @@
 - Locale codes are BCP 47, stored case-normalized as `language[-Script][-REGION]` (`de-CH`) (spec 6.2).
 - Hash = SHA-256 hex over RFC 8785 canonical JSON of the typed-normalized value (spec 6.4).
 - Top-level field is the unit of localization, fallback, hashing and null stripping (spec 6.1, 7.2).
-- Licence MIT, scope `@mogging` (spec 10).
+- Licence: custom source-available text per spec 12.1, never called "open source"; scope `@mogging` (spec 10, 12).
+- Licence verification is offline (spec 12.2); the engine makes no network call except to the adopter's Postgres and LLM provider (spec 4).
 - Every write takes `actor: string` and records it (spec 8.7).
 - Commit after every green task; conventional commit messages; the attribution trailer from the session.
 
@@ -38,7 +39,7 @@
 ### Task 1: Repository scaffold and test database harness
 
 **Files:**
-- Create: `package.json`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `vitest.workspace.ts`, `LICENSE` (MIT, owner's name), `.gitignore` additions (`node_modules/`, `dist/`, `.env`), `.env.example`
+- Create: `package.json`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `vitest.workspace.ts`, `LICENSE.md` (the custom source-available text of spec 12.1; until the lawyer-reviewed text exists, the file holds the PolyForm Noncommercial 1.0.0 text from `.clavity/scratch/licence/PolyForm-Noncommercial-1.0.0.txt` plus a clearly marked DRAFT evaluation-grant and anti-circumvention section, and `package.json` carries `"license": "SEE LICENSE IN LICENSE.md"`), `CLA.md` (contributor licence agreement per spec 12.5, DRAFT until lawyer-reviewed), `CONTRIBUTING.md` (states that external pull requests are not merged until the CLA tooling exists), `.gitignore` additions (`node_modules/`, `dist/`, `.env`), `.env.example`
 - Create: `packages/core/package.json`, `packages/core/tsconfig.json`, `packages/core/src/index.ts`, `packages/core/test/db.ts`, `packages/core/test/smoke.test.ts`
 - Create: `docs/dev-setup.md`
 
@@ -332,6 +333,42 @@ test("listDocuments paginates by keyset and excludes soft-deleted docs by defaul
 
 ---
 
+### Task 9B: Licence keys, evaluation window and guarded operations
+
+**Files:**
+- Create: `packages/core/src/licence/key.ts`, `packages/core/src/licence/guard.ts`, `packages/core/src/licence/publicKey.ts`
+- Modify: `packages/core/src/documents/saveDraft.ts`, `packages/core/src/documents/approve.ts`, `packages/core/src/documents/publish.ts`, `packages/core/src/releases/releases.ts` (each guarded write calls `assertLicensed(ctx)` first)
+- Test: `packages/core/test/licence.test.ts`
+- Create (tooling, not shipped in the package): `tools/licence/sign.ts` (signs a payload with a private key from `MOGGING_LICENSE_PRIVATE_KEY`; used by the checkout function later and by tests)
+
+**Interfaces:**
+- Consumes: `Ctx` (Task 5), the `migrations` table (Task 5), `MoggingError` (Task 3).
+- Produces `type LicencePayload = { licensee: string; license_id: string; expiry: string /* ISO date */; plan: string }` and `encodeKey(payload, privateKeyPem): string` / `verifyKey(token: string, publicKeyPem?: string): LicencePayload` (spec 12.2). Token format: `mog1.` + base64url(JSON payload) + `.` + base64url(Ed25519 signature over the payload bytes). `verifyKey` throws `LicenceError` (new error class, code `LICENCE_INVALID` or `LICENCE_EXPIRED`) on bad signature, malformed token or expiry in the past. The embedded public key in `publicKey.ts` is the owner's; tests use a test key pair and pass `publicKeyPem` explicitly.
+- Produces `getLicenceState(ctx): Promise<{ state: "licensed" | "evaluation" | "expired"; daysLeft?: number; payload?: LicencePayload }>` (spec 12.3): reads `process.env.MOGGING_LICENSE_KEY` or `ctx.config.license`; if a valid key is present, `licensed`; otherwise evaluation window = 30 days from `min(applied_at)` in `migrations`; `evaluation` with `daysLeft` inside the window, `expired` after.
+- Produces `assertLicensed(ctx): Promise<void>`: throws `LicenceError` with code `LICENCE_REQUIRED` and a message containing the purchase URL from `ctx.config.purchaseUrl` (default `https://mogging.dev/buy`, owner's call) and the sentence "Reads keep working; content updates, compiles and publishing are paused until a licence key is set." when state is `expired`. Reads never call it.
+- Produces `license?: string` and `purchaseUrl?: string` fields on `MoggingConfig` (Task 3's `defineConfig` accepts them).
+
+- [ ] **Step 1: Write failing tests**:
+
+```ts
+test("encodeKey then verifyKey round-trips the payload", ...);
+test("a token signed with a different key is LICENCE_INVALID", ...);
+test("an expired token is LICENCE_EXPIRED", ...);
+test("a tampered payload with the original signature is LICENCE_INVALID", ...);
+test("fresh database is in evaluation with 30 days left", async () => withTestDb(async (sql) => {
+  const s = await getLicenceState(ctxWithoutKey);
+  expect(s).toMatchObject({ state: "evaluation", daysLeft: 30 });
+}));
+test("evaluation expires 30 days after the first migration", ...);   // update migrations.applied_at to 31 days ago
+test("expired without key: saveDraft, approve, publish, publishRelease throw LICENCE_REQUIRED naming the purchase URL; resolve and getDocument still work", ...);
+test("expired with a valid key: everything works and state is licensed", ...);
+```
+- [ ] **Step 2: Run** `pnpm --filter @mogging/core test licence`. Expected: FAIL.
+- [ ] **Step 3: Implement** `key.ts`, `guard.ts`, `publicKey.ts`, add `assertLicensed(ctx)` as the first statement of each guarded write, extend `defineConfig`. **Step 4: Run** the licence tests and the whole suite. Expected: PASS.
+- [ ] **Step 5: Commit** `feat(core): offline licence keys, evaluation window and guarded writes`.
+
+---
+
 ### Task 10: Public API surface and package check
 
 **Files:**
@@ -340,7 +377,7 @@ test("listDocuments paginates by keyset and excludes soft-deleted docs by defaul
 - Test: `packages/core/test/api.test.ts`
 
 **Interfaces:**
-- Produces the exported surface named in spec 9.3: `defineConfig`, `defineCollection`, field builders, `normalizeLocale`, `chainFor`, `migrate`, `createDocument`, `deleteDocument`, `getDocument`, `listDocuments`, `saveDraft`, `publish`, `unpublish`, `recordAiDraft`, `approve`, `approveClean`, `resolve`, `resolveReference`, `getSyncState`, `trackFields`, `createRelease`, `addToRelease`, `publishRelease`, `hashValue`, `normalizeValue`, the error classes, and the `Ctx`, `MoggingConfig`, `Field`, `DocumentRecord` and `Snapshot` types.
+- Produces the exported surface named in spec 9.3: `defineConfig`, `defineCollection`, field builders, `normalizeLocale`, `chainFor`, `migrate`, `createDocument`, `deleteDocument`, `getDocument`, `listDocuments`, `saveDraft`, `publish`, `unpublish`, `recordAiDraft`, `approve`, `approveClean`, `resolve`, `resolveReference`, `getSyncState`, `trackFields`, `createRelease`, `addToRelease`, `publishRelease`, `hashValue`, `normalizeValue`, `verifyKey`, `getLicenceState`, `assertLicensed`, the error classes including `LicenceError`, and the `Ctx`, `MoggingConfig`, `Field`, `DocumentRecord`, `Snapshot` and `LicencePayload` types. `encodeKey` is NOT exported from the package; it lives in `tools/licence/`.
 
 - [ ] **Step 1: Write the failing test** that imports each name from `@mogging/core` and asserts `typeof === "function"` (or class).
 - [ ] **Step 2: Run** (FAIL). **Step 3: Export everything from `index.ts`; write the README** (install, `DATABASE_URL`, a 15-line example that defines a collection, migrates, saves, publishes and resolves). **Step 4: Run the whole suite and typecheck**: `pnpm test && pnpm typecheck`. Expected: all PASS, no type errors.
@@ -374,3 +411,11 @@ Agy panel round 1 on this plan (2026-11-11), five seats, 5 findings, all verifie
   dropped (Task 1).
 - DISCARDED-BELOW-FLOOR, accepted: `required` validation ergonomics (spec 10 leaves field-builder
   ergonomics to the builder).
+
+Revision after the owner's ruling "every company pays" (spec section 12, 2026-11-11): Global
+Constraints licence lines replaced; Task 1 ships `LICENSE.md` (draft custom text), `CLA.md` and
+`CONTRIBUTING.md` instead of MIT; new Task 9B adds offline Ed25519 key verification, the 30-day
+evaluation window from the migrations table, and `assertLicensed` as the first statement of every
+guarded write; Task 10 exports the licence functions and types. Agy's round-8 amendment named
+"Task 2" and "Task 6" for this work; those were the spike and the publish task, so the work is a
+task of its own.

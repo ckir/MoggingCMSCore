@@ -1,7 +1,9 @@
 # MoggingCMSCore design
 
-Date: 2026-11-11. Status: APPROVED by the owner on 2026-11-11 (licence MIT, scope `@mogging`,
-bulk approval allowed, announce after a template exists). Repo state at writing: empty (README and
+Date: 2026-11-11. Status: APPROVED by the owner on 2026-11-11; REVISED the same day after the
+owner's ruling "every company pays" (section 12 replaces the MIT decision; sections 2, 4, 8.7 and 10
+updated; the revision is the jointly agreed recommendation of both reviewers). Scope `@mogging`,
+bulk approval allowed, announce after a template exists. Repo state at writing: empty (README and
 .gitignore).
 
 This document is the design a builder plans from. It records what the owner decided, what Claude
@@ -23,18 +25,23 @@ AI-produced reaches production without a recorded human approval.
 
 ## 2. Who it is for
 
-**First adopter:** a developer running a content-heavy multilingual site, with technical documentation
-and knowledge bases as the showcase use. They write Markdown, live in Git, need two or more locales,
-and are comfortable with a CLI and a typed SDK. They do not need a visual editor to get value.
+**First adopter:** a technical lead or documentation engineer at a company of roughly 20 to 500
+people, running a content-heavy multilingual site with technical documentation and knowledge bases as
+the showcase use. They write Markdown, live in Git, need two or more locales, are comfortable with a
+CLI and a typed SDK, can evaluate locally in ten minutes, and can expense a licence of a few hundred
+dollars a year without a purchasing process. They do not need a visual editor to get value.
+Individuals and noncommercial organisations use the product free (section 12) and are welcome, but
+they are not who v0.1 is designed to win.
 
 **Why this adopter:** every existing docs framework leaves translation sync to the user (Docusaurus
 says so in its own docs; Starlight has fallback only), yet docs sites need several locales as a matter
 of course. The CMS products that do have AI translation (for example Sanity AI Assist) lack staleness
-tracking, glossaries, and bring-your-own-key. This adopter can be reached through GitHub, templates
-and framework integrations rather than sales.
+tracking, glossaries, and bring-your-own-key. This adopter is reached through framework templates and
+integrations, a self-serve evaluation that needs no conversation, and a self-serve purchase that needs
+no sales call.
 
-**Success criterion:** within twelve months of first public release, an organisation the owner does
-not know keeps two or more locales current in production with the product's AI assistance, and
+**Success criterion:** within twelve months of first public release, a paying organisation the owner
+does not know keeps two or more locales current in production with the product's AI assistance, and
 arrived through a channel that scales.
 
 ## 3. Goals, non-goals, anti-goals
@@ -87,7 +94,10 @@ arrived through a channel that scales.
 - No LLM call inside a database transaction or request handler; all generation runs in background
   jobs.
 - Prompts, model ids and token counts never live in content tables.
-- Open source under the MIT licence, self-hostable.
+- Source-available, self-hostable, paid for every commercial user (section 12). The product is
+  never described as "open source".
+- The engine must work with no network access other than the adopter's own Postgres and their own
+  LLM provider: licence verification is offline (section 12).
 
 ## 5. Approaches considered
 
@@ -115,6 +125,17 @@ a sixth: document-locale snapshots split into shared and localized tables with a
 vector for staleness. Claude built it on Postgres 18 at the target scale and measured it (section
 7.5). **Picked:** the snapshot layout, with one correction (null handling) and three deferrals
 (SQLite, branching, a staleness marker for dashboards).
+
+**Fork 4, licence and business model** (decided later the same day, after the owner's ruling "every
+company pays"). Options: MIT core with commercial extensions; a source-available licence that permits
+commercial use but forbids competing hosted offerings (Functional Source License or Elastic 2.0
+class); PolyForm Noncommercial alone; a dual licence of PolyForm Noncommercial plus a commercial
+licence on the honour system; the same with an in-engine licence key; closed source hosted only.
+Two agy-first rounds read the licence texts from the SPDX list. PolyForm Noncommercial alone blocks
+the first adopter at work; the free-commercial-use licences contradict the ruling; honour-system dual
+licensing produces neither revenue nor adoption; hosted-only discards the self-hosted architecture.
+**Picked:** the dual licence with an in-engine offline key and a built-in evaluation period
+(section 12), agreed point by point by both reviewers.
 
 ## 6. The content model
 
@@ -491,6 +512,10 @@ not authentication. The engine guarantees that no AI text is published without a
 naming an actor; making sure that actor is a real person is the deployment's responsibility, and the
 documentation says so plainly. The MCP server, when it comes, will need a real actor model first.
 
+Licensing (section 12) is separate from this trust model: the licence key says whether the
+deployment may run guarded writes at all; the actor string says who ran them. Neither authenticates
+a person.
+
 ## 9. Interfaces
 
 ### 9.1 Packages
@@ -561,7 +586,8 @@ The peer also noted that translatable text inside admonitions is lost to the opa
 spike measures how common that is for the showcase docs before v0.1 decides whether to parse
 admonition bodies.
 
-**Owner decided (2026-11-11):** licence MIT; npm scope `@mogging`; v0.1 is announced only after a
+**Owner decided (2026-11-11):** every company pays (section 12 is the agreed execution; the MIT
+decision taken earlier the same day is withdrawn); npm scope `@mogging`; v0.1 is announced only after a
 framework template exists; and bulk approval is allowed as `mogging review --approve-clean`, which
 approves only drafts with zero warnings and records a single bulk-approval provenance row naming
 the actor and the count (section 8.6). The review peer had predicted that strict per-document review
@@ -578,6 +604,74 @@ side-by-side diff per document and approves each, adds the approved drafts to a 
 two locales, compile again, and the bill is cents. A typed `resolve` call from their Astro or Next
 site returns the German page with Swiss-German overrides and English fallback for the one field no
 one translated, and says which fields fell back.
+
+## 12. Licensing and enforcement
+
+This section executes the owner's ruling "every company pays". It is the jointly agreed
+recommendation of both reviewers (agy-first rounds 7 and 8, 2026-11-11).
+
+### 12.1 Licence text
+
+The source is published under a custom source-available licence composed of three parts: the
+permitted purposes of PolyForm Noncommercial 1.0.0 for individuals and noncommercial organisations
+(its "Noncommercial Purposes", "Personal Uses" and "Noncommercial Organizations" clauses); a written
+commercial evaluation grant of 30 days for any organisation, royalty-free, for internal testing; and
+an anti-circumvention clause modelled on Elastic License 2.0's "Limitations" ("you may not move,
+change, disable, or circumvent the license key functionality"). Commercial use beyond the evaluation
+requires a paid licence key. The combined text is reviewed by a lawyer before first publication.
+The product is never described as "open source"; the words used are "source-available".
+
+### 12.2 Keys
+
+A licence key is a signed JSON payload `{ licensee, license_id, expiry, plan }` encoded as one
+token, signed with the owner's Ed25519 private key. `@mogging/core` embeds the matching public key
+and verifies the token offline with Node's built-in crypto; there is no key server and no network
+call. The key is supplied through `MOGGING_LICENSE_KEY` or a `license` entry in `mogging.config.ts`.
+One key covers one project (one engine database) and every non-production environment of that
+project: developer machines, CI runners, staging.
+
+### 12.3 Grace and guarded operations
+
+First run needs no key. The engine computes a 30-day evaluation window from the earliest
+`applied_at` in its own `migrations` table. Inside the window everything works and the CLI prints
+the days remaining. After the window, without a valid key, the guarded operations `saveDraft`,
+`approve`, `publish`, `publishRelease` and `compile` (and therefore every CLI command that calls
+them) refuse with a message that names the purchase address and says plainly what is affected:
+content updates, translation compiles and publishing stop; nothing already published is removed.
+`resolve`, `getDocument`, `listDocuments`, `getSyncState` and every read keep working. Because the
+showcase adopter builds a static site, an expired key stops builds and compiles, not the live
+site, and the message says so. Both reviewers acknowledge the window is evadable by starting a
+fresh database; the licence clause binds an evader, and the mechanism is designed for honest
+organisations.
+
+### 12.4 Buying
+
+A self-serve checkout page (Stripe or equivalent) collects an email and payment, triggers a small
+hosted signing function holding the private key, and emails the key and an invoice. No account, no
+sales call. Pricing is flat, per project per year. Per seat is impossible before authentication
+exists; per AI token contradicts bring-your-own-key. The price is the owner's and is unmeasured;
+the placeholder discussed is a few hundred dollars a year, below common expense-card thresholds,
+to be revised after the first ten purchases.
+
+### 12.5 Contributions
+
+A contributor licence agreement is required from the first external pull request, granting the
+owner a perpetual, irrevocable, sublicensable right to commercially license the contribution. Until
+the agreement tooling exists, external pull requests are not merged.
+
+### 12.6 Measurement
+
+The engine carries no telemetry. The business metrics are purchases and recurring revenue measured
+at checkout, against top-of-funnel reach (package downloads, documentation visits). "Trial-to-paid"
+is not computable from keys, because evaluation needs no key; both reviewers initially wrote that it
+was and corrected it.
+
+### 12.7 What this supersedes
+
+The MIT decision and the open-core roadmap and measurement-gate discussions of 2026-11-11 are
+withdrawn. Managed cloud and enterprise governance remain later releases on the paid path, sequenced
+after the first paying customers; a hosted service, when it comes, isolates tenants per database or
+schema and never retrofits a tenant column onto the v0.1 indexes.
 
 ## Appendix A. Review ledger
 
@@ -688,6 +782,17 @@ Agy panel round 5 (2026-11-11), fold audit, schema census (92 names, all declare
 Claude), consistency pass, cascade: **CLEAN, no live challenge.** Post-clean fold of one item the
 peer discarded: `acknowledged_warnings` added to provenance so the 8.4 record has a column (7.1).
 Areas the peer examined least: 6.6 references and 6.7 migrations, checked for consistency only.
+
+Revision after the owner's ruling "every company pays" (2026-11-11, agy-first rounds 6, 7, 8):
+
+- Round 6 read PolyForm Noncommercial 1.0.0 and the Functional Source License and Elastic 2.0 texts
+  from the SPDX list; the owner then ruled every company pays.
+- Round 7 proposed the in-engine key with a built-in evaluation window; Claude measured that Node's
+  crypto provides Ed25519 and that the Elastic 2.0 anti-circumvention clause reads as cited.
+- Round 8 produced the agreed text: 7 points agreed, 2 amended (key payload uses `license_id`; the
+  plan tasks that change), 1 dissent accepted (trial-to-paid is not computable from keys), and one
+  both-wrong fold (an expired key stops builds, not a static live site). Sections 2, 4, 5, 8.7, 10
+  and 12 carry the result.
 
 ## Stand-downs
 
