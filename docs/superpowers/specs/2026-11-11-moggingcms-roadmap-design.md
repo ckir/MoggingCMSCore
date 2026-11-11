@@ -1,6 +1,6 @@
 # MoggingCMS release roadmap: from the v0.1 engine to an enterprise product
 
-Date: 2026-11-11. Status: DRAFT for owner approval. Companion to the approved v0.1 design
+Date: 2026-11-11. Status: APPROVED by the owner on 2026-11-11. Companion to the approved v0.1 design
 (`docs/superpowers/specs/2026-11-11-moggingcms-core-design.md`, "the design doc"), which this
 document does not restate. Section numbers in the form "design 12.3" refer to it.
 
