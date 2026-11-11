@@ -32,7 +32,8 @@ describe("treeToMarkdown", () => {
     }
   });
 
-  test.each(["a**b**c", "***x***", "*a*__b__", "**a *b* c**", "~~*x*~~ y", '[**a** b](u "t")', "`x` **`y`**", "a  \nb"])(
+  test.each(["a**b**c", "***x***", "*a*__b__", "**a *b* c**", "~~*x*~~ y", '[**a** b](u "t")', "`x` **`y`**", "a  \nb",
+    "*a.*__b__", "*`y`*__b__", "*<b>*__c__", "__a.__*b*", "~~a.~~**b**", "*a*__.b__"])(
     "idempotent on mark edge case %j",
     (src) => {
       const t1 = markdownToTree(src);

@@ -1,4 +1,5 @@
-import { toMarkdown } from "mdast-util-to-markdown";
+import { toMarkdown, defaultHandlers } from "mdast-util-to-markdown";
+import type { Handle } from "mdast-util-to-markdown";
 import { gfmToMarkdown } from "mdast-util-gfm";
 import { directiveToMarkdown } from "mdast-util-directive";
 import type { PhrasingContent, RootContent, Root } from "mdast";
@@ -78,9 +79,62 @@ function blocks(list: readonly Block[]): any[] {
   return list.map(block);
 }
 
+type Attn = { type: string };
+const isAttn = (n: Attn | undefined): boolean => n?.type === "emphasis" || n?.type === "strong";
+const WORD = /[\p{L}\p{N}]/u;
+
+/**
+ * Adjacent emphasis/strong siblings must use different marker characters. With one character the closing run of
+ * the first and the opening run of the second merge into one delimiter run (e.g. `*a.***b**`), which flanks the
+ * wrong way and reparses as literal stars. `_` is only allowed where it is not intraword.
+ */
+function markers(parent: { children: any[] }): Map<unknown, "*" | "_"> {
+  const out = new Map<unknown, "*" | "_">();
+  const kids = parent.children;
+  const underscoreOk = (i: number): boolean => {
+    const prev = kids[i - 1], next = kids[i + 1];
+    if (prev?.type === "text" && WORD.test(Array.from(prev.value as string).pop() ?? "")) return false;
+    if (next?.type === "text" && WORD.test(Array.from(next.value as string)[0] ?? "")) return false;
+    return true;
+  };
+  let i = 0;
+  while (i < kids.length) {
+    if (!isAttn(kids[i])) { i++; continue; }
+    let j = i;
+    while (j < kids.length && isAttn(kids[j])) j++;
+    const chainOk = (first: "*" | "_") => kids.slice(i, j).every((_, k) => (k % 2 === 0 ? first : first === "*" ? "_" : "*") === "*" || underscoreOk(i + k));
+    const first: "*" | "_" = chainOk("*") || !chainOk("_") ? "*" : "_";
+    for (let k = i; k < j; k++) out.set(kids[k], (k - i) % 2 === 0 ? first : first === "*" ? "_" : "*");
+    i = j;
+  }
+  return out;
+}
+
+const cache = new WeakMap<object, Map<unknown, "*" | "_">>();
+function markerOf(node: unknown, parent: any): "*" | "_" {
+  if (!parent) return "*";
+  let m = cache.get(parent);
+  if (!m) { m = markers(parent); cache.set(parent, m); }
+  return m.get(node) ?? "*";
+}
+
+function attention(kind: "emphasis" | "strong"): Handle {
+  const base = defaultHandlers[kind] as Handle;
+  const h: Handle = (node, parent, state, info) => {
+    const saved = state.options[kind];
+    state.options[kind] = markerOf(node, parent);
+    try { return base(node, parent, state, info); } finally { state.options[kind] = saved; }
+  };
+  (h as any).peek = (node: unknown, parent: unknown) => markerOf(node, parent);
+  return h;
+}
+
 /** Portable rich-text tree to Markdown (or MDX source). Validates first. Idempotent through markdownToTree. */
 export function treeToMarkdown(root: RichTextRoot): string {
   validateTree(root);
   const mdast = { type: "root", children: blocks(root.children) } as Root;
-  return toMarkdown(mdast, { extensions: [gfmToMarkdown(), directiveToMarkdown()] });
+  return toMarkdown(mdast, {
+    extensions: [gfmToMarkdown(), directiveToMarkdown()],
+    handlers: { emphasis: attention("emphasis"), strong: attention("strong") },
+  });
 }
