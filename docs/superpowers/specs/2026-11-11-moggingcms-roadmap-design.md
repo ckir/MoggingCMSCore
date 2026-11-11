@@ -97,8 +97,12 @@ alone with a CLI.
 
 **Ships:** everything in the design doc: `@mogging/core`, `@mogging/markdown`, `@mogging/ai`,
 `@mogging/cli` with the local read-and-approve review page, licence keys and the evaluation window,
-the self-serve checkout and key delivery, and one framework template (the design's "announce after
-a template exists" condition). Implementation plans 1 to 4 cover it; plan 1 is written and deferred.
+the self-serve checkout and key delivery, and the first framework integration in two forms: a
+drop-in integration package for an existing docs site (for example `npx astro add @mogging/starlight`
+class), because the adopter already has a repository and will not migrate to a sample, and a
+cloneable starter template for new sites (the design's "announce after a template exists"
+condition). Both READMEs state the licence terms and the zero-price noncommercial key before the
+install command, so no one discovers the 30-day window by surprise. Implementation plans 1 to 4 cover it; plan 1 is written and deferred.
 
 **Plan values:** `solo` (paid, one key per project) and `noncommercial` (zero price, issued by the
 same checkout page on a self-declaration that the use is a permitted noncommercial purpose under the
@@ -137,8 +141,11 @@ the gate below measures whatever shipped):
    v0.3 because every v0.2 surface writes on behalf of a person, and an anonymous actor in the
    history would poison the v0.3 audit ledger for early adopters.
 2. The **GitOps bot**: a GitHub Action and a GitLab equivalent. On a change to source content on the
-   default branch, CI runs `compile` against the project's Postgres (CI must be able to reach it; if
-   it cannot, the hub is the path), then `export --drafts` writes the AI drafts as Markdown files to
+   default branch, CI runs `compile` against the project's Postgres. Company databases usually sit
+   in a private network that hosted CI cannot reach, so v0.2 documents exactly three supported
+   topologies and the bot refuses to guess: a self-hosted CI runner inside the customer's network;
+   a database exposed to CI through the customer's own tunnel or allow-list; or no bot at all and
+   the hub run on the internal network. Then `export --drafts` writes the AI drafts as Markdown files to
    a branch, and the bot opens a pull request whose diff is the side-by-side per field with warnings
    in the description. Merging runs `import --approve-drafts`, which maps the merged files back to
    the draft versions and calls `approve` and `publish` with the merger's Git identity as the actor;
@@ -218,7 +225,10 @@ whether the enterprise segment is this product's market at all.
 
 - **Managed service:** the engine, worker and hub hosted by the owner, one database per tenant,
   bring-your-own-key for AI preserved, with backups and upgrades handled. Priced as a hosting fee on
-  top of the plan.
+  top of the plan. Customers' LLM provider keys are held in a secrets manager and injected into the
+  worker at run time, never stored as plaintext database fields; a lapsed or revoked provider key
+  surfaces as a named job failure in `mogging jobs`, not as a hosting incident, and the support
+  contract says so.
 - **Enterprise identity:** SAML and OIDC single sign-on and SCIM provisioning through the v0.3 actor
   interface.
 - **Governance:** audit log streaming to the customer's SIEM, retention settings, data residency
@@ -320,3 +330,15 @@ draft and converged; all findings verified against the text and folded:
   Postgres.
 - FOLDED: the v0.3 gate depended on security requests a self-serve product may never see; the
   contact form exists from v0.1 so the count can exist.
+
+Decisions review (agy-first round 9, 2026-11-11): all eight owner decisions agreed as executed;
+two tensions, one improvement and two shared blind spots folded:
+
+- FOLDED: the first framework integration ships as a drop-in package for existing sites as well
+  as a starter template, and both READMEs disclose the licence before the install command (v0.1).
+- FOLDED: the GitOps bot names the three supported network topologies instead of assuming hosted
+  CI can reach a company database (v0.2).
+- FOLDED: hosted customers' LLM keys live in a secrets manager; a lapsed provider key is a named
+  job failure, not a hosting incident (v1.0).
+- FOLDED (design 12.4): a noncommercial key is visibly noncommercial on every CLI run and in the
+  hub, so a company cannot deploy a free key silently.

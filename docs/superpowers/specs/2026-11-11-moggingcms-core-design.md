@@ -668,7 +668,11 @@ A self-serve checkout page (Stripe or equivalent) collects an email and payment,
 hosted signing function holding the private key, and emails the key and an invoice. No account, no
 sales call. The same page issues a zero-price `noncommercial` key on a self-declaration that the
 use is a permitted noncommercial purpose under the licence; the declaration is recorded with the
-key, and the licence text, not the engine, binds it. Keys can be re-sent to the purchase email on
+key, and the licence text, not the engine, binds it. Because a noncommercial key unlocks the same
+operations as a paid one, the engine makes the plan visible: with a `noncommercial` key every CLI
+command prints one line, "MoggingCMS noncommercial licence: commercial use is not permitted", the
+review hub shows the same line in its footer, and the licensee name from the key is printed with
+it. A company cannot deploy a free key silently. Keys can be re-sent to the purchase email on
 request. Refunds are honoured for 14 days; because keys cannot be revoked, a refunded key lapses
 at its expiry, an accepted loss. Pricing is flat, per project per year. Per seat is impossible before authentication
 exists; per AI token contradicts bring-your-own-key. The price is the owner's and is unmeasured;
