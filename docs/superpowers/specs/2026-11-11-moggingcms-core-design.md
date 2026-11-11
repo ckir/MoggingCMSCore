@@ -283,8 +283,10 @@ published_at) for time-travel. `state` is one of PUBLISHED, DRAFT_HUMAN, DRAFT_A
 
 `content_provenance(id, doc_id, locale, version int null, field_path text null, job_id null,
 model_id, prompt_version, prompt_tokens, completion_tokens, cost_micros, edited bool, discarded bool,
-discard_reason text null, acknowledged_warnings text[] null, bulk_id uuid null, approved_by,
-approved_at, created_at)`. `version` and `field_path` are null
+discard_reason text null, warnings text[] not null default '{}', acknowledged_warnings text[] null,
+bulk_id uuid null, approved_by, approved_at, created_at)`. `warnings` holds the validator warnings
+of section 8.4 for that field; `approve-clean` (8.6) considers only drafts whose rows all have an
+empty `warnings`. `version` and `field_path` are null
 on a discarded-cost row, which records a provider call whose result was never stored (section 8.2).
 Every provider call produces exactly one provenance row per field it covered, or one discarded row.
 
