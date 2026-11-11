@@ -115,3 +115,4 @@ dist
 # MoggingCMSCore working dirs
 .superpowers/
 .clavity/
+spikes/rich-text-sentinel/out/
