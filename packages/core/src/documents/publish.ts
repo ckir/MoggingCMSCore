@@ -26,7 +26,7 @@ export async function publish(ctx: Ctx, input: PublishInput): Promise<void> {
   });
 }
 
-/** Clears the published head and stamps unpublished_at; no-op when nothing is published. Draft head untouched. */
+/** Clears the published head and stamps unpublished_at and unpublished_by; no-op when nothing is published. Draft head untouched. */
 export async function unpublish(ctx: Ctx, input: UnpublishInput): Promise<void> {
   const { sql } = ctx;
   const { isShared, locale } = resolveLocale(ctx, input.locale);
@@ -41,7 +41,7 @@ export async function unpublish(ctx: Ctx, input: UnpublishInput): Promise<void> 
     const stamp = t.toISOString();
     const table = isShared ? tx`document_shared` : tx`document_localized`;
     const scope = isShared ? tx`` : tx`and locale = ${locale}`;
-    await tx`update ${table} set is_head_published = false, unpublished_at = ${stamp}::timestamptz
+    await tx`update ${table} set is_head_published = false, unpublished_at = ${stamp}::timestamptz, unpublished_by = ${ctx.actor}
       where doc_id = ${input.docId} ${scope} and is_head_published`;
   });
 }

@@ -66,8 +66,8 @@ export async function addToRelease(ctx: Ctx, input: AddToReleaseInput): Promise<
       );
     }
     const itemLocale = isShared ? null : locale;
-    const inserted = await tx`insert into release_items (release_id, doc_id, locale, draft_version)
-      values (${releaseId}, ${input.docId}, ${itemLocale}, ${input.version})
+    const inserted = await tx`insert into release_items (release_id, doc_id, locale, draft_version, added_by)
+      values (${releaseId}, ${input.docId}, ${itemLocale}, ${input.version}, ${ctx.actor})
       on conflict do nothing returning 1 as x`;
     if (inserted.length === 0) throw new ValidationError(`${label} is already in release ${releaseId}`);
   });

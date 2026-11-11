@@ -90,7 +90,7 @@ export async function runResolve(
       ) pk
       where d.collection = ${collection} and ${docVisible} ${idPred}
     ) t
-    where t.shared is not null or t.n > 0
+    where ${plan.fields.length > 0 ? sql`t.n > 0` : sql`(t.shared is not null or t.n > 0)`}
     order by t.created_at, t.id
     ${limitFrag}`;
   return rows as unknown as ResolveRow[];

@@ -3,7 +3,7 @@ import postgres from "postgres";
 import type { Sql } from "postgres";
 import {
   NotFoundError, ValidationError, createDocument, getDocument, listDocuments, migrate, publish, resolve,
-  resolveReference, saveDraft, unpublish, deleteDocument,
+  resolveReference, saveDraft, unpublish, deleteDocument, defineCollection, defineConfig, number, richText, slug,
 } from "../src/index.js";
 import { ctxFor, insertPublishedLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
@@ -195,7 +195,9 @@ test("asOf applies the window to unpublished rows and to fallback locales", asyn
   expect(d!.fellBack.title).toBe("en");
   await sql`update document_localized set is_head_published = false, unpublished_at = ${new Date(Date.now() - 10_000).toISOString()}::timestamptz where doc_id = ${ids[0]!} and locale = 'en'`;
   expect(await resolve(ctx, { collection: "posts", locale: "en", ids: [ids[0]!], asOf: mid }).then((r) => r[0]!.data.title)).toBe("T1 en");
-  expect((await resolve(ctx, { collection: "posts", locale: "en", ids: [ids[0]!], asOf: new Date() })).length).toBe(1); // shared + de still visible
+  // en is unpublished and posts has localized fields: shared alone does not make the document visible (R9).
+  expect((await resolve(ctx, { collection: "posts", locale: "en", ids: [ids[0]!], asOf: new Date() })).length).toBe(0);
+  expect((await resolve(ctx, { collection: "posts", locale: "de", ids: [ids[0]!], asOf: new Date() })).length).toBe(1); // de head visible
 }));
 
 test("soft-deleted document is absent from resolve, absent asOf after deletion, present asOf before", async () => withTestDb(async (sql) => {
@@ -345,9 +347,7 @@ test("resolveReference reports the locale the target resolved in", async () => w
   await sql`update document_localized set is_head_published = false where doc_id = ${ids[1]!} and locale = 'de'`;
   expect(await resolveReference(ctx, { docId: ids[1]!, locale: "de-CH" })).toEqual({ id: ids[1], resolvedLocale: "en" });
   await sql`update document_localized set is_head_published = false where doc_id = ${ids[1]!}`;
-  // shared head is still published (R9): resolves in the requested locale
-  expect(await resolveReference(ctx, { docId: ids[1]!, locale: "de" })).toEqual({ id: ids[1], resolvedLocale: "de" });
-  await sql`update document_shared set is_head_published = false where doc_id = ${ids[1]!}`;
+  // the shared head is still published, but posts has localized fields and none is published: not resolvable
   expect(await resolveReference(ctx, { docId: ids[1]!, locale: "de" })).toBeNull();
   await sql`update documents set deleted_at = now() where id = ${ids[2]!}`;
   expect(await resolveReference(ctx, { docId: ids[2]!, locale: "en" })).toBeNull();
@@ -355,15 +355,37 @@ test("resolveReference reports the locale the target resolved in", async () => w
   expect(await resolveReference(ctx, { docId: "bogus", locale: "en" })).toBeNull();
 }));
 
-test("resolveReference resolves a shared-only target in the requested locale; null without any published data or when deleted", async () => withTestDb(async (sql) => {
+test("a document with only its shared head published is omitted when the collection has localized fields", async () => withTestDb(async (sql) => {
   await migrate(sql);
   const ctx = ctxFor(sql);
   const { id } = await createDocument(ctx, { collection: "posts" });
-  expect(await resolveReference(ctx, { docId: id, locale: "de-CH" })).toBeNull(); // nothing published
   await saveDraft(ctx, { docId: id, locale: "shared", data: { slug: "a" } });
-  expect(await resolveReference(ctx, { docId: id, locale: "de-CH" })).toBeNull(); // draft only
   await publish(ctx, { docId: id, locale: "shared" });
-  expect(await resolveReference(ctx, { docId: id, locale: "de-ch" })).toEqual({ id, resolvedLocale: "de-CH" });
+  expect(await resolve(ctx, { collection: "posts", locale: "de-CH" })).toEqual([]);
+  expect(await resolveReference(ctx, { docId: id, locale: "de-CH" })).toBeNull();
+  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "T", body: "B" } });
+  await publish(ctx, { docId: id, locale: "en" });
+  const out = await resolve(ctx, { collection: "posts", locale: "de-CH" });
+  expect(out.map((d) => d.id)).toEqual([id]);
+  expect(out[0]!.data).toMatchObject({ slug: "a", title: "T" });
+  expect(await resolveReference(ctx, { docId: id, locale: "de-CH" })).toEqual({ id, resolvedLocale: "en" });
   await deleteDocument(ctx, { docId: id });
   expect(await resolveReference(ctx, { docId: id, locale: "de-CH" })).toBeNull();
+}));
+
+test("a collection with only shared fields still resolves on its shared head", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const cfg = defineConfig({
+    collections: [defineCollection("pages", { slug: slug(), order: number(), body: richText({ body: true }) })],
+    locales: { source: "en", chains: { de: ["en"] } },
+  });
+  const ctx = { sql, config: cfg, actor: "t" };
+  const { id } = await createDocument(ctx, { collection: "pages" });
+  expect(await resolve(ctx, { collection: "pages", locale: "de" })).toEqual([]); // nothing published
+  await saveDraft(ctx, { docId: id, locale: "shared", data: { slug: "home", order: 1, body: "x" } });
+  await publish(ctx, { docId: id, locale: "shared" });
+  const out = await resolve(ctx, { collection: "pages", locale: "de" });
+  expect(out).toHaveLength(1);
+  expect(out[0]).toMatchObject({ id, data: { slug: "home", order: 1, body: "x" }, missing: [] });
+  expect(await resolveReference(ctx, { docId: id, locale: "de" })).toEqual({ id, resolvedLocale: "de" });
 }));

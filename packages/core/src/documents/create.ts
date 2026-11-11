@@ -7,7 +7,7 @@ export async function createDocument(ctx: Ctx, input: { collection: string }): P
   if (!ctx.config.collections.some((c) => c.name === input.collection)) {
     throw new NotFoundError(`Unknown collection "${input.collection}"`);
   }
-  const [row] = await ctx.sql`insert into documents (collection) values (${input.collection}) returning id`;
+  const [row] = await ctx.sql`insert into documents (collection, created_by) values (${input.collection}, ${ctx.actor}) returning id`;
   return { id: row!.id as string };
 }
 
@@ -18,6 +18,6 @@ export async function deleteDocument(ctx: Ctx, input: { docId: string }): Promis
     const [doc] = await tx`select id from documents where id = ${input.docId} and deleted_at is null for update`;
     if (!doc) throw new NotFoundError(`Document "${input.docId}" not found`);
     const [{ t }] = (await tx`select date_trunc('milliseconds', clock_timestamp()) as t`) as unknown as [{ t: Date }];
-    await tx`update documents set deleted_at = ${t.toISOString()}::timestamptz where id = ${input.docId}`;
+    await tx`update documents set deleted_at = ${t.toISOString()}::timestamptz, deleted_by = ${ctx.actor} where id = ${input.docId}`;
   });
 }

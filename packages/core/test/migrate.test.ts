@@ -11,7 +11,7 @@ test("migrate applies 0001 once and is idempotent", async () => withTestDb(async
 
 test("second published head for a (doc, locale) is rejected by the index", async () => withTestDb(async (sql) => {
   await migrate(sql);
-  const [d] = await sql`insert into documents (collection) values ('posts') returning id`;
+  const [d] = await sql`insert into documents (collection, created_by) values ('posts', 't') returning id`;
   await sql`insert into document_localized (doc_id, locale, version, state, is_head_published, created_by)
             values (${d!.id}, 'en', 1, 'PUBLISHED', true, 't')`;
   await expect(sql`insert into document_localized (doc_id, locale, version, state, is_head_published, created_by)
@@ -20,7 +20,7 @@ test("second published head for a (doc, locale) is rejected by the index", async
 
 test("second draft head per (doc, locale) and per shared doc is rejected", async () => withTestDb(async (sql) => {
   await migrate(sql);
-  const [d] = await sql`insert into documents (collection) values ('posts') returning id`;
+  const [d] = await sql`insert into documents (collection, created_by) values ('posts', 't') returning id`;
   await sql`insert into document_localized (doc_id, locale, version, state, is_head_draft, created_by)
             values (${d!.id}, 'de', 1, 'DRAFT_HUMAN', true, 't')`;
   await expect(sql`insert into document_localized (doc_id, locale, version, state, is_head_draft, created_by)
@@ -33,7 +33,7 @@ test("second draft head per (doc, locale) and per shared doc is rejected", async
 
 test("document_localized state accepts APPROVED and rejects unknown states", async () => withTestDb(async (sql) => {
   await migrate(sql);
-  const [d] = await sql`insert into documents (collection) values ('posts') returning id`;
+  const [d] = await sql`insert into documents (collection, created_by) values ('posts', 't') returning id`;
   await sql`insert into document_localized (doc_id, locale, version, state, created_by) values (${d!.id}, 'de', 1, 'APPROVED', 't')`;
   await expect(sql`insert into document_localized (doc_id, locale, version, state, created_by) values (${d!.id}, 'de', 2, 'BOGUS', 't')`)
     .rejects.toMatchObject({ code: "23514" });

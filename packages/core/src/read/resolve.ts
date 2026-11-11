@@ -38,8 +38,10 @@ function checkLimit(limit: number | undefined): void {
 /**
  * Resolves published content for a locale with per-field fallback (spec 6.2, 7.3), optionally as of a
  * past instant (spec 6.3). One SQL statement regardless of the number of documents.
- * A document is returned when it has at least one visible published snapshot (shared, or any locale in
- * the union of the chains); fields no snapshot supplies are simply absent (localized ones are listed in `missing`).
+ * A document is returned when it has a visible published snapshot in any locale of the union of the chains;
+ * a collection with no localized fields is returned on its shared head alone. A document of a collection with
+ * localized fields whose only published snapshot is the shared one is omitted (spec 6.6). Fields no snapshot
+ * supplies are simply absent (localized ones are listed in `missing`).
  */
 export async function resolve(ctx: Ctx, input: ResolveInput): Promise<ResolvedDocument[]> {
   const col = collectionOf(ctx, input.collection);
@@ -96,13 +98,16 @@ export async function resolveReference(
         where l.doc_id = d.id and l.is_head_published
         order by k.ord
         limit 1) as resolved,
-      exists (select 1 from document_shared s where s.doc_id = d.id and s.is_head_published) as has_shared
+      exists (select 1 from document_shared s where s.doc_id = d.id and s.is_head_published) as has_shared,
+      d.collection
     from documents d
     where d.id = ${input.docId} and d.deleted_at is null`;
   if (!row) return null;
   if (row.resolved) return { id: input.docId, resolvedLocale: row.resolved as string };
-  // No localized head in the chain: a published shared head still makes the target resolvable (6.6).
-  return row.has_shared ? { id: input.docId, resolvedLocale: locale } : null;
+  // No localized head in the chain. A collection with localized fields has nothing to render, so the target
+  // does not resolve; a shared-only collection (no localized fields) resolves on its shared head.
+  const hasLocalized = Object.values(collectionOf(ctx, row.collection as string).fields).some((f) => f.localized);
+  return !hasLocalized && row.has_shared ? { id: input.docId, resolvedLocale: locale } : null;
 }
 
 export type Snapshot = {

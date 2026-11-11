@@ -51,10 +51,29 @@ export async function publishWithinTx(tx: Tx, ctx: Ctx, input: PublishInput, sta
   }
 
   // Clear the old published head first: the partial unique index allows only one.
-  await tx`update ${table} set is_head_published = false, unpublished_at = ${stamp}::timestamptz
+  await tx`update ${table} set is_head_published = false, unpublished_at = ${stamp}::timestamptz, unpublished_by = ${actor}
     where doc_id = ${input.docId} ${scope} and is_head_published`;
-  // Draft head: becomes the published head. Republish: draft head (if any) is left untouched.
+  if (isRepublish) {
+    // Republishing an earlier version inserts a COPY as a new version, so the original row keeps its own
+    // publication window and `asOf` reads inside that window stay exact. The draft head (if any) is untouched.
+    const [{ next }] = (await tx`select coalesce(max(version), 0) + 1 as next from ${table}
+      where doc_id = ${input.docId} ${scope}`) as unknown as [{ next: number }];
+    if (isShared) {
+      await tx`insert into document_shared
+          (doc_id, version, state, data, is_head_published, created_at, created_by, published_at, published_by)
+        select doc_id, ${next}, 'PUBLISHED', data, true, ${stamp}::timestamptz, ${actor}, ${stamp}::timestamptz, ${actor}
+        from document_shared where doc_id = ${input.docId} and version = ${target.version}`;
+    } else {
+      await tx`insert into document_localized
+          (doc_id, locale, version, state, data, source_hashes, is_head_published, created_at, created_by, published_at, published_by)
+        select doc_id, locale, ${next}, 'PUBLISHED', data, source_hashes, true, ${stamp}::timestamptz, ${actor},
+               ${stamp}::timestamptz, ${actor}
+        from document_localized where doc_id = ${input.docId} and locale = ${locale} and version = ${target.version}`;
+    }
+    return;
+  }
+  // Draft head: becomes the published head (flip, no copy: spec 6.3).
   await tx`update ${table} set state = 'PUBLISHED', is_head_published = true, is_head_draft = false,
-      published_at = ${stamp}::timestamptz, published_by = ${actor}, unpublished_at = null
+      published_at = ${stamp}::timestamptz, published_by = ${actor}, unpublished_at = null, unpublished_by = null
     where doc_id = ${input.docId} ${scope} and version = ${target.version}`;
 }

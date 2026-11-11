@@ -8,7 +8,9 @@ create table documents (
   id uuid primary key default gen_random_uuid(),
   collection text not null,
   created_at timestamptz not null default clock_timestamp(),
-  deleted_at timestamptz null
+  created_by text not null,
+  deleted_at timestamptz null,
+  deleted_by text null
 );
 create index idx_documents_collection on documents (collection) where deleted_at is null;
 
@@ -25,6 +27,7 @@ create table document_shared (
   published_at timestamptz null,
   published_by text null,
   unpublished_at timestamptz null,
+  unpublished_by text null,
   constraint uq_document_shared_version unique (doc_id, version)
 );
 create unique index uq_doc_shared_head_published on document_shared (doc_id) where is_head_published;
@@ -45,6 +48,7 @@ create table document_localized (
   published_at timestamptz null,
   published_by text null,
   unpublished_at timestamptz null,
+  unpublished_by text null,
   constraint uq_document_localized_version unique (doc_id, locale, version)
 );
 create unique index uq_doc_loc_head_published on document_localized (doc_id, locale) where is_head_published;
@@ -98,6 +102,7 @@ create table content_provenance (
   created_at timestamptz not null default clock_timestamp()
 );
 create index idx_provenance_doc_ver on content_provenance (doc_id, locale, version);
+create index idx_provenance_bulk on content_provenance (bulk_id) where bulk_id is not null;
 
 create table releases (
   id bigint generated always as identity primary key,
@@ -113,7 +118,9 @@ create table release_items (
   release_id bigint not null references releases (id) on delete cascade,
   doc_id uuid not null references documents (id) on delete cascade,
   locale text null,
-  draft_version int not null
+  draft_version int not null,
+  added_by text not null,
+  added_at timestamptz not null default clock_timestamp()
 );
 create unique index uq_release_items on release_items (release_id, doc_id, coalesce(locale, ''));
 

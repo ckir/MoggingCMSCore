@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { NotFoundError, NotPublishableError, createDocument, deleteDocument, migrate, publish, saveDraft, unpublish } from "../src/index.js";
+import { NotFoundError, NotPublishableError, createDocument, deleteDocument, migrate, publish, resolve, saveDraft, unpublish } from "../src/index.js";
 import { ctxFor, extraConnection, insertAiDraftLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 import type { Sql } from "postgres";
@@ -51,19 +51,35 @@ test("a historical draft version cannot be published", async () => withTestDb(as
   expect(rows.map(r => [r.version, r.is_head_draft, r.is_head_published])).toEqual([[1, false, false], [2, true, false]]);
 }));
 
-test("unpublish then publish by version republishes the same row and clears unpublished_at", async () => withTestDb(async (sql) => {
+test("republish by version inserts a copy; the original row keeps its own publication window", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
   await saveDraft(ctx, { docId, locale: "en", data: { title: "A" } });
   await publish(ctx, { docId, locale: "en" });
-  const [before] = await sql`select id from document_localized where doc_id = ${docId}`;
+  const [before] = await sql`select id, published_at from document_localized where doc_id = ${docId}`;
   await unpublish(ctx, { docId, locale: "en" });
-  const [mid] = await sql`select is_head_published, unpublished_at, state from document_localized where doc_id = ${docId}`;
-  expect(mid).toMatchObject({ is_head_published: false, state: "PUBLISHED" });
+  const [mid] = await sql`select is_head_published, unpublished_at, unpublished_by, state from document_localized where doc_id = ${docId}`;
+  expect(mid).toMatchObject({ is_head_published: false, state: "PUBLISHED", unpublished_by: "publisher" });
   expect(mid!.unpublished_at).toBeInstanceOf(Date);
+  await new Promise((r) => setTimeout(r, 5)); // keep the republish instant strictly after the unpublish instant
   await publish(ctx, { docId, locale: "en", version: 1 });
-  const rows = await sql`select id, is_head_published, unpublished_at from document_localized where doc_id = ${docId}`;
-  expect(rows).toHaveLength(1);
-  expect(rows[0]).toMatchObject({ id: before!.id, is_head_published: true, unpublished_at: null });
+  const rows = await sql`select id, version, state, data, source_hashes, is_head_published, is_head_draft, published_at, published_by,
+      unpublished_at from document_localized where doc_id = ${docId} order by version`;
+  expect(rows).toHaveLength(2);
+  // The original keeps its id, its window and its flags; republishing did not touch it.
+  expect(rows[0]).toMatchObject({ id: before!.id, version: 1, is_head_published: false, unpublished_at: mid!.unpublished_at });
+  expect(rows[0]!.published_at).toEqual(before!.published_at);
+  // The copy is the new published head with the same content.
+  expect(rows[1]).toMatchObject({
+    version: 2, state: "PUBLISHED", data: { title: "A" }, is_head_published: true, is_head_draft: false,
+    published_by: "publisher", unpublished_at: null,
+  });
+  expect(Object.keys(rows[1]!.source_hashes as object)).toEqual(["title"]);
+  expect(rows[1]!.source_hashes).toEqual(rows[0]!.source_hashes);
+  // Time travel inside the original window still sees the original publication.
+  const inside = await resolve(ctx, { collection: "posts", locale: "en", ids: [docId], asOf: before!.published_at as Date });
+  expect(inside.map((d) => d.data.title)).toEqual(["A"]);
+  const gap = await resolve(ctx, { collection: "posts", locale: "en", ids: [docId], asOf: new Date((mid!.unpublished_at as Date).getTime() + 0) });
+  expect(gap).toEqual([]);
 }));
 
 test("republish leaves an existing draft head untouched", async () => withTestDb(async (sql) => {
@@ -74,10 +90,11 @@ test("republish leaves an existing draft head untouched", async () => withTestDb
   await publish(ctx, { docId, locale: "en" });
   await saveDraft(ctx, { docId, locale: "en", data: { title: "C" } });
   await publish(ctx, { docId, locale: "en", version: 1 });
-  const rows = await sql`select version, state, is_head_draft, is_head_published from document_localized where doc_id = ${docId} order by version`;
+  const rows = await sql`select version, state, data, is_head_draft, is_head_published from document_localized where doc_id = ${docId} order by version`;
   expect(rows.map(r => [r.version, r.state, r.is_head_draft, r.is_head_published])).toEqual([
-    [1, "PUBLISHED", false, true], [2, "PUBLISHED", false, false], [3, "DRAFT_HUMAN", true, false],
+    [1, "PUBLISHED", false, false], [2, "PUBLISHED", false, false], [3, "DRAFT_HUMAN", true, false], [4, "PUBLISHED", false, true],
   ]);
+  expect(rows[3]!.data).toEqual({ title: "A" });
 }));
 
 test("unpublish leaves the draft head alone and is a no-op when nothing is published", async () => withTestDb(async (sql) => {
@@ -104,11 +121,12 @@ test("shared snapshot follows the same lifecycle", async () => withTestDb(async 
   expect(rows[0]!.unpublished_at).toBeInstanceOf(Date);
   expect(rows[1]).toMatchObject({ version: 2, state: "PUBLISHED", is_head_published: true, published_by: "publisher", unpublished_at: null });
   await unpublish(ctx, { docId, locale: "shared" });
-  await publish(ctx, { docId, locale: "shared", version: 2 });
+  await publish(ctx, { docId, locale: "shared", version: 2 }); // republish: inserts v3 as a copy
   await saveDraft(ctx, { docId, locale: "shared", data: { slug: "three" } });
-  await expect(publish(ctx, { docId, locale: "shared", version: 2 })).rejects.toThrow(NotPublishableError);
-  rows = await sql`select version, is_head_draft, is_head_published from document_shared where doc_id = ${docId} order by version`;
-  expect(rows.map(r => [r.version, r.is_head_draft, r.is_head_published])).toEqual([[1, false, false], [2, false, true], [3, true, false]]);
+  await expect(publish(ctx, { docId, locale: "shared", version: 3 })).rejects.toThrow(NotPublishableError); // already the head
+  rows = await sql`select version, data, is_head_draft, is_head_published from document_shared where doc_id = ${docId} order by version`;
+  expect(rows.map(r => [r.version, r.is_head_draft, r.is_head_published])).toEqual([[1, false, false], [2, false, false], [3, false, true], [4, true, false]]);
+  expect(rows[2]!.data).toEqual({ slug: "two" });
 }));
 
 test("APPROVED draft head can be published", async () => withTestDb(async (sql) => {

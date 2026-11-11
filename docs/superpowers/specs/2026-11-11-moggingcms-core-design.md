@@ -191,7 +191,11 @@ Rules:
 - **Publishing flips, it does not copy.** Publishing a draft sets `state = PUBLISHED`,
   `is_head_published = true`, `is_head_draft = false`, `published_at`, `published_by` on that row, and
   sets `is_head_published = false`, `unpublished_at` on the previous published row, in one
-  transaction. No new row is created by publishing.
+  transaction. No new row is created by publishing a draft.
+- **Republishing an earlier version inserts a copy.** `publish` with an explicit `version` of a
+  previously published row sets the current published head's `is_head_published = false` and
+  `unpublished_at`, then inserts a new `PUBLISHED` row (next version number, same content) as the head.
+  The original row is never modified, so its own publication window stays exact for time-travel reads.
 - The pipeline never overwrites a `DRAFT_HUMAN` head. If a human draft exists for a (document,
   locale), the AI job for it is cancelled and reported. The partial unique index on the draft head is
   the guard: the draft insert fails rather than racing.
@@ -267,7 +271,10 @@ recorded.
 
 A reference field stores the target document id only. Resolving a reference in locale L applies
 the same fallback rule to the target document, and reports whether the target resolved in L or
-through fallback, so a renderer can decide what to do with a cross-locale link.
+through fallback, so a renderer can decide what to do with a cross-locale link. A target whose collection
+has localized fields and that has no published localized head anywhere in the chain does not resolve (and
+`resolve` omits it from listings), even when its shared head is published; a collection with only shared
+fields resolves on its shared head.
 
 ### 6.7 Schema as code and migrations
 
@@ -287,17 +294,17 @@ and fallback chains, the provider and model settings, and the budgets.
 
 ### 7.1 Tables
 
-`documents(id uuid pk, collection text, created_at, deleted_at)`.
+`documents(id uuid pk, collection text, created_at, created_by, deleted_at, deleted_by)`.
 
 `document_shared(id bigint identity pk, doc_id, version int, state text, data jsonb,
 is_head_published bool, is_head_draft bool, created_at, created_by, published_at, published_by,
-unpublished_at)`; unique (doc_id, version); partial unique (doc_id) where is_head_published; partial
+unpublished_at, unpublished_by)`; unique (doc_id, version); partial unique (doc_id) where is_head_published; partial
 unique (doc_id) where is_head_draft. Same states and lifecycle as the localized table minus
 `DRAFT_AI` (shared fields are never AI-generated).
 
 `document_localized(id bigint identity pk, doc_id, locale text, version int, state text, data jsonb,
 source_hashes jsonb, is_head_published bool, is_head_draft bool, created_at, created_by,
-published_at timestamptz null, published_by text null, unpublished_at timestamptz null)`; unique
+published_at timestamptz null, published_by text null, unpublished_at timestamptz null, unpublished_by text null)`; unique
 (doc_id, locale, version); partial unique (doc_id, locale) where is_head_published; partial unique
 (doc_id, locale) where is_head_draft; index (doc_id, locale, version); index (doc_id, locale,
 published_at) for time-travel. `state` is one of PUBLISHED, DRAFT_HUMAN, DRAFT_AI, APPROVED.
@@ -305,7 +312,7 @@ published_at) for time-travel. `state` is one of PUBLISHED, DRAFT_HUMAN, DRAFT_A
 `content_provenance(id, doc_id, locale, version int null, field_path text null, job_id null,
 model_id, prompt_version, prompt_tokens, completion_tokens, cost_micros, edited bool, discarded bool,
 discard_reason text null, warnings text[] not null default '{}', acknowledged_warnings text[] null,
-bulk_id uuid null, approved_by, approved_at, created_at)`. `warnings` holds the validator warnings
+bulk_id uuid null, approved_by, approved_at, created_at)`, with a partial index on `bulk_id` where not null. `warnings` holds the validator warnings
 of section 8.4 for that field; `approve-clean` (8.6) considers only drafts whose rows all have an
 empty `warnings`. `version` and `field_path` are null
 on a discarded-cost row, which records a provider call whose result was never stored (section 8.2).
@@ -318,7 +325,7 @@ RUNNING); index (run_after, id) where state = QUEUED; index (locked_until) where
 the reaper. A job covers all stale fields of one (document, locale) at one source version.
 
 `releases(id, name, created_by, created_at, published_at, published_by, allow_stale bool)` and `release_items(release_id,
-doc_id, locale, draft_version)`; publishing a release flips every item's head in one transaction.
+doc_id, locale, draft_version, added_by, added_at)`; publishing a release flips every item's head in one transaction.
 
 `glossary(id, source_locale, target_locale, term, translation, accepted_forms text[], do_not_translate
 bool, note)`.
@@ -499,7 +506,7 @@ reject, and edit-then-approve per (document, locale). There is no unconditional 
 owner-approved bulk path is `mogging review --approve-clean [--collection] [--locale]`: it approves
 every `DRAFT_AI` head in scope that has zero warnings and passed every validator, skips the rest
 and lists them, and writes one bulk-approval provenance row per approved draft carrying the actor,
-a shared `bulk_id` and the count, so a later audit can see which approvals were individual and which
+a shared `bulk_id` (the count of a bulk approval is the number of rows sharing that `bulk_id`), so a later audit can see which approvals were individual and which
 were bulk. The CLI can also serve a minimal local web page with the same side-by-side view for people
 who prefer a browser; it is read-and-approve only and is not a CMS editor. This is Claude's call to
 keep the "no UI" boundary while still making review humane.
@@ -550,7 +557,7 @@ connection, schema, actor). Reads: `getDocument`, `listDocuments`, `resolve` (lo
 `addToRelease`, `publishRelease`. Pipeline: `enqueueStale`, `runWorker`. Licensing (section 12):
 `verifyKey`, `getLicenceState`, `assertLicensed`, the `LicenceError` class and the `LicencePayload`
 type; key signing is a separate tool, not part of the SDK. Every write takes an actor and is
-recorded. The worker logs one line per job with job id, model, tokens, cost and outcome.
+recorded (the migrations bootstrap, which has no human actor, is the one exception). The worker logs one line per job with job id, model, tokens, cost and outcome.
 
 ### 9.4 Wire and file formats that are contracts
 
@@ -591,8 +598,8 @@ admonition bodies.
 **Owner decided (2026-11-11):** every company pays (section 12 is the agreed execution; the MIT
 decision taken earlier the same day is withdrawn); npm scope `@mogging`; v0.1 is announced only after a
 framework template exists; and bulk approval is allowed as `mogging review --approve-clean`, which
-approves only drafts with zero warnings and records a single bulk-approval provenance row naming
-the actor and the count (section 8.6). The review peer had predicted that strict per-document review
+approves only drafts with zero warnings and records one bulk-approval provenance row per approved draft naming
+the actor, with the count derived from the rows sharing the `bulk_id` (section 8.6). The review peer had predicted that strict per-document review
 of a first import would be bypassed with shell loops; a sanctioned bulk path with a record beats an
 unsanctioned script with none.
 

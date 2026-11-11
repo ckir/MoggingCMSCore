@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  approve, createDocument, deleteDocument, getDocument, getSyncState, migrate, publish, recordAiDraft, resolve,
+  addToRelease, approve, createDocument, createRelease, deleteDocument, getDocument, getSyncState, migrate, publish, recordAiDraft, resolve,
   saveDraft, unpublish,
 } from "../src/index.js";
 import { ctxFor } from "./fixtures.js";
@@ -114,4 +114,42 @@ test("regression pin: AI re-translation after unpublish keeps the sibling field 
   expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "current" });
   const [doc] = await resolve(ctx, { collection: "posts", locale: "de" });
   expect(doc).toMatchObject({ data: { title: "Hallo", body: "Neue Welt" }, fellBack: {} });
+}));
+
+test("every lifecycle write records its actor (spec 8.7)", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const maker = ctxFor(sql, "maker");
+  const pub = ctxFor(sql, "publisher");
+  const un = ctxFor(sql, "unpublisher");
+  const del = ctxFor(sql, "deleter");
+  const rel = ctxFor(sql, "releaser");
+  const { id: docId } = await createDocument(maker, { collection: "posts" });
+  await saveDraft(maker, { docId, locale: "shared", data: { slug: "a" } });
+  await publish(pub, { docId, locale: "shared" });
+  await saveDraft(maker, { docId, locale: "shared", data: { slug: "b" } });
+  await publish(ctxFor(sql, "second"), { docId, locale: "shared" }); // supersedes v1: the superseding actor is recorded
+  await saveDraft(maker, { docId, locale: "en", data: { title: "T", body: "B" } });
+  await publish(pub, { docId, locale: "en" });
+  await unpublish(un, { docId, locale: "en" });
+  await saveDraft(maker, { docId, locale: "shared", data: { slug: "c" } });
+  const { id: rid } = await createRelease(rel, { name: "r" });
+  await addToRelease(rel, { releaseId: rid, docId, locale: "shared", version: 3 });
+  await deleteDocument(del, { docId });
+
+  const [d] = await sql`select created_by, deleted_by from documents where id = ${docId}`;
+  expect(d).toMatchObject({ created_by: "maker", deleted_by: "deleter" });
+  const sh = await sql`select version, unpublished_by from document_shared where doc_id = ${docId} order by version`;
+  expect(sh.map((r) => [r.version, r.unpublished_by])).toEqual([[1, "second"], [2, null], [3, null]]);
+  const [loc] = await sql`select unpublished_by from document_localized where doc_id = ${docId} and locale = 'en'`;
+  expect(loc!.unpublished_by).toBe("unpublisher");
+  const [item] = await sql`select added_by, added_at from release_items where release_id = ${rid}`;
+  expect(item!.added_by).toBe("releaser");
+  expect(item!.added_at).toBeInstanceOf(Date);
+}));
+
+test("content_provenance has a partial index on bulk_id", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const rows = await sql`select indexdef from pg_indexes where schemaname = current_schema() and indexname = 'idx_provenance_bulk'`;
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.indexdef).toMatch(/\(bulk_id\) WHERE \(bulk_id IS NOT NULL\)/);
 }));
