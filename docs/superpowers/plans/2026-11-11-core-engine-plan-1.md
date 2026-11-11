@@ -337,15 +337,15 @@ test("listDocuments paginates by keyset and excludes soft-deleted docs by defaul
 
 **Files:**
 - Create: `packages/core/src/licence/key.ts`, `packages/core/src/licence/guard.ts`, `packages/core/src/licence/publicKey.ts`
-- Modify: `packages/core/src/documents/saveDraft.ts`, `packages/core/src/documents/approve.ts`, `packages/core/src/documents/publish.ts`, `packages/core/src/releases/releases.ts` (each guarded write calls `assertLicensed(ctx)` first)
+- Modify: `packages/core/src/schema/config.ts` (adds `license?: string` and `purchaseUrl?: string` to `MoggingConfig` and `defineConfig`), `packages/core/src/documents/saveDraft.ts`, `packages/core/src/documents/recordAiDraft.ts`, `packages/core/src/documents/approve.ts`, `packages/core/src/documents/publish.ts` (only the `publish` function; `unpublish` is NOT guarded), `packages/core/src/releases/releases.ts` (only `publishRelease`; `createRelease` and `addToRelease` are NOT guarded). The guarded set is exactly spec 12.3's: `saveDraft`, `recordAiDraft`, `approve`, `publish`, `publishRelease`; `trackFields` and every read are not guarded.
 - Test: `packages/core/test/licence.test.ts`
 - Create (tooling, not shipped in the package): `tools/licence/sign.ts` (signs a payload with a private key from `MOGGING_LICENSE_PRIVATE_KEY`; used by the checkout function later and by tests)
 
 **Interfaces:**
 - Consumes: `Ctx` (Task 5), the `migrations` table (Task 5), `MoggingError` (Task 3).
-- Produces `type LicencePayload = { licensee: string; license_id: string; expiry: string /* ISO date */; plan: string }` and `encodeKey(payload, privateKeyPem): string` / `verifyKey(token: string, publicKeyPem?: string): LicencePayload` (spec 12.2). Token format: `mog1.` + base64url(JSON payload) + `.` + base64url(Ed25519 signature over the payload bytes). `verifyKey` throws `LicenceError` (new error class, code `LICENCE_INVALID` or `LICENCE_EXPIRED`) on bad signature, malformed token or expiry in the past. The embedded public key in `publicKey.ts` is the owner's; tests use a test key pair and pass `publicKeyPem` explicitly.
-- Produces `getLicenceState(ctx): Promise<{ state: "licensed" | "evaluation" | "expired"; daysLeft?: number; payload?: LicencePayload }>` (spec 12.3): reads `process.env.MOGGING_LICENSE_KEY` or `ctx.config.license`; if a valid key is present, `licensed`; otherwise evaluation window = 30 days from `min(applied_at)` in `migrations`; `evaluation` with `daysLeft` inside the window, `expired` after.
-- Produces `assertLicensed(ctx): Promise<void>`: throws `LicenceError` with code `LICENCE_REQUIRED` and a message containing the purchase URL from `ctx.config.purchaseUrl` (default `https://mogging.dev/buy`, owner's call) and the sentence "Reads keep working; content updates, compiles and publishing are paused until a licence key is set." when state is `expired`. Reads never call it.
+- Produces `type LicencePayload = { licensee: string; license_id: string; expiry: string /* ISO date */; plan: string }` and `encodeKey(payload, privateKeyPem): string` / `verifyKey(token: string, publicKeyPem?: string): LicencePayload` (spec 12.2). Token format: `mog1.` + base64url(JSON payload) + `.` + base64url(Ed25519 signature over the payload bytes). The signature is verified over the raw base64url-decoded bytes of the payload segment, never over re-serialized JSON, so key order cannot break verification. `verifyKey` throws `LicenceError` (new error class, code `LICENCE_INVALID` or `LICENCE_EXPIRED`) on bad signature, malformed token or expiry in the past; expiry is compared in UTC at the end of the stated date. `publicKey.ts` exports an ARRAY of accepted public keys (the owner's current key first) so a key can be rotated in by a package upgrade; `verifyKey` accepts a token signed by any listed key, and tests pass their own list explicitly.
+- Produces `getLicenceState(ctx): Promise<{ state: "licensed" | "evaluation" | "expired"; daysLeft?: number; payload?: LicencePayload }>` (spec 12.3): reads `process.env.MOGGING_LICENSE_KEY` or `ctx.config.license`; if a valid key is present, `licensed`; otherwise evaluation window = 30 days from `min(applied_at)` in `migrations` (an empty table counts as day one; `warn: boolean` is true when `daysLeft <= 7`); `evaluation` with `daysLeft` inside the window, `expired` after. The CLI (plan 4) prints days left on every command and the warning on stderr when `warn` is true.
+- Produces `assertLicensed(ctx): Promise<void>`: throws `LicenceError` with code `LICENCE_REQUIRED` and a message containing the purchase URL from `ctx.config.purchaseUrl` (default `https://mogging.dev/buy`, owner's call) and the sentence "Reads keep working and existing builds still succeed; content updates, compiles and publishing are paused until a licence key is set." when state is `expired`. Reads never call it.
 - Produces `license?: string` and `purchaseUrl?: string` fields on `MoggingConfig` (Task 3's `defineConfig` accepts them).
 
 - [ ] **Step 1: Write failing tests**:
@@ -419,3 +419,9 @@ evaluation window from the migrations table, and `assertLicensed` as the first s
 guarded write; Task 10 exports the licence functions and types. Agy's round-8 amendment named
 "Task 2" and "Task 6" for this work; those were the spike and the publish task, so the work is a
 task of its own.
+
+Agy panel over the licensing revision, round 1 (2026-11-11), folded into Task 9B: `config.ts` and
+`recordAiDraft.ts` added to the files modified; the guarded set spelled out and `unpublish`,
+`createRelease`, `addToRelease` explicitly unguarded; signature verified over raw payload bytes;
+empty migrations table defined as day one; `warn` flag from seven days left; a list of accepted
+public keys for rotation; refusal message aligned with spec 12.3.

@@ -547,8 +547,10 @@ spend rose without a draft appearing), `mogging query` (ad hoc reads).
 Every CLI command is a function in `@mogging/core` or `@mogging/ai` taking a typed context (database
 connection, schema, actor). Reads: `getDocument`, `listDocuments`, `resolve` (locale chain applied),
 `getSyncState`. Writes: `saveDraft`, `approve`, `publish`, `unpublish`, `createRelease`,
-`addToRelease`, `publishRelease`. Pipeline: `enqueueStale`, `runWorker`. Every write takes an actor
-and is recorded. The worker logs one line per job with job id, model, tokens, cost and outcome.
+`addToRelease`, `publishRelease`. Pipeline: `enqueueStale`, `runWorker`. Licensing (section 12):
+`verifyKey`, `getLicenceState`, `assertLicensed`, the `LicenceError` class and the `LicencePayload`
+type; key signing is a separate tool, not part of the SDK. Every write takes an actor and is
+recorded. The worker logs one line per job with job id, model, tokens, cost and outcome.
 
 ### 9.4 Wire and file formats that are contracts
 
@@ -633,16 +635,25 @@ project: developer machines, CI runners, staging.
 ### 12.3 Grace and guarded operations
 
 First run needs no key. The engine computes a 30-day evaluation window from the earliest
-`applied_at` in its own `migrations` table. Inside the window everything works and the CLI prints
-the days remaining. After the window, without a valid key, the guarded operations `saveDraft`,
-`approve`, `publish`, `publishRelease` and `compile` (and therefore every CLI command that calls
-them) refuse with a message that names the purchase address and says plainly what is affected:
-content updates, translation compiles and publishing stop; nothing already published is removed.
-`resolve`, `getDocument`, `listDocuments`, `getSyncState` and every read keep working. Because the
-showcase adopter builds a static site, an expired key stops builds and compiles, not the live
-site, and the message says so. Both reviewers acknowledge the window is evadable by starting a
-fresh database; the licence clause binds an evader, and the mechanism is designed for honest
-organisations.
+`applied_at` in its own `migrations` table (an empty table, which cannot occur after `migrate`,
+counts as day one). Inside the window everything works; every CLI command prints the days remaining,
+and from seven days left prints a warning line on stderr, so a CI log shows the expiry coming. After
+the window, without a valid key, the **guarded operations** refuse with a message that names the
+purchase address and says plainly what is affected. The guarded set is exactly: `saveDraft`,
+`recordAiDraft`, `approve` (and therefore `approveClean`), `publish`, `publishRelease`, and `compile`
+(the pipeline's enqueue and worker). **Not guarded**, by decision: every read (`resolve`,
+`getDocument`, `listDocuments`, `getSyncState`), `unpublish` (an emergency takedown must always
+work), `createRelease`, `addToRelease` and `trackFields` (metadata, no content). Because reads stay
+free, a static-site build that only reads keeps succeeding after the window; what stops is editing,
+translating and publishing new content. The refusal message says exactly that: "Reads keep working
+and existing builds still succeed; content updates, compiles and publishing are paused until a
+licence key is set." Both reviewers acknowledge the window is evadable by starting a fresh database;
+the licence clause binds an evader, and the mechanism is designed for honest organisations.
+
+Keys expire; v0.1 has no revocation. A refunded or lapsed licence is simply not renewed, and keys
+are issued for at most one year. The engine accepts a list of public keys so a new signing key can
+be rotated in through a package upgrade while old keys stay valid until their expiry. Expiry is
+compared in UTC at the end of the stated date.
 
 ### 12.4 Buying
 
@@ -793,6 +804,20 @@ Revision after the owner's ruling "every company pays" (2026-11-11, agy-first ro
   plan tasks that change), 1 dissent accepted (trial-to-paid is not computable from keys), and one
   both-wrong fold (an expired key stops builds, not a static live site). Sections 2, 4, 5, 8.7, 10
   and 12 carry the result.
+
+Agy panel over the licensing revision, round 1 (2026-11-11), 4 material findings and 5 design
+notes, all verified against the text:
+
+- FOLDED: the guarded set was ambiguous across files; 12.3 now lists guarded and not-guarded
+  operations exactly, `recordAiDraft` added, `unpublish` deliberately free.
+- FOLDED: 9.3 did not name the licensing functions the plan exports; added.
+- FOLDED: the round-8 "both wrong" sentence was itself wrong: reads are free, so a build that only
+  reads keeps succeeding; 12.3 and the refusal message now say so.
+- FOLDED: evaluation expiry gave CI no warning; days-left on every command, warning from 7 days.
+- FOLDED: no revocation and no rotation path were stated; one-year keys, no revocation in v0.1,
+  rotation through a list of accepted public keys (12.3).
+- FOLDED (plan): signature verified over raw payload bytes; empty migrations table defined;
+  `config.ts` added to the files Task 9B modifies.
 
 ## Stand-downs
 
