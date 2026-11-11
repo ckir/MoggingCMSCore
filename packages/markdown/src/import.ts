@@ -71,6 +71,33 @@ function collectRefs(field: Field, value: unknown): RefPlaceholder[] {
   return out;
 }
 
+/** Collection of the first `reference` slot holding null, or null when there is none. */
+function nullRefCollection(field: Field, value: unknown): string | null {
+  switch (field.kind) {
+    case "reference":
+      return value === null ? field.collection : null;
+    case "list":
+      if (!Array.isArray(value)) return null;
+      for (const x of value) { const c = nullRefCollection(field.item, x); if (c !== null) return c; }
+      return null;
+    case "object": {
+      if (!isPlain(value)) return null;
+      for (const [k, v] of Object.entries(value)) {
+        const sub = Object.hasOwn(field.fields, k) ? field.fields[k] : undefined;
+        if (sub === undefined) continue;
+        const c = nullRefCollection(sub, v);
+        if (c !== null) return c;
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** Slug-form references match the way core normalizes slugs (NFC, lower case). */
+const slugKey = (ref: string): string => ref.normalize("NFC").toLowerCase();
+
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 function fieldOf(col: Collection, name: string): Field {
@@ -151,6 +178,8 @@ export async function importFolder(ctx: Ctx, input: ImportInput): Promise<Import
           e.localized = mapped.localized;
           for (const scope of [e.shared, e.localized]) {
             for (const [k, v] of Object.entries(scope)) {
+              const nc = nullRefCollection(fieldOf(col, k), v);
+              if (nc !== null) throw new ValidationError(`${k}: unresolved reference null in collection ${nc}`);
               normalizeValue(fieldOf(col, k), mapRefs(fieldOf(col, k), v, (ph) => ph.$ref), k);
             }
           }
@@ -189,7 +218,7 @@ export async function importFolder(ctx: Ctx, input: ImportInput): Promise<Import
     return d !== null && d.deletedAt === null;
   };
   const sourceFile = (collection: string, ref: string): Entry | undefined =>
-    entries.find((x) => x.isSource && x.error === null && x.col.name === collection && x.slug === ref.normalize("NFC"));
+    entries.find((x) => x.isSource && x.error === null && x.col.name === collection && x.slug === slugKey(ref));
 
   const refsOf = (e: Entry): Array<{ field: string; ph: RefPlaceholder }> => {
     const out: Array<{ field: string; ph: RefPlaceholder }> = [];
@@ -212,7 +241,7 @@ export async function importFolder(ctx: Ctx, input: ImportInput): Promise<Import
           ok = await live(ph.collection, { docId: ph.$ref });
           why = `${field}: dangling reference "${ph.$ref}" in collection ${ph.collection}`;
         } else {
-          ok = sourceFile(ph.collection, ph.$ref) !== undefined || await live(ph.collection, { slug: ph.$ref.normalize("NFC") });
+          ok = sourceFile(ph.collection, ph.$ref) !== undefined || await live(ph.collection, { slug: slugKey(ph.$ref) });
           why = `${field}: unresolved reference "${ph.$ref}" in collection ${ph.collection}`;
         }
         if (!ok) { e.error = why; changed = true; break; }
@@ -262,7 +291,7 @@ export async function importFolder(ctx: Ctx, input: ImportInput): Promise<Import
 
   // Pass 2: content, source locale first.
   const pass2 = [...entries.filter((e) => e.isSource), ...entries.filter((e) => !e.isSource)];
-  const needs = (a: HeadPair | undefined, hash: string): "unchanged" | { replaced: { state: string; version: number } | null } => {
+  const needs = (a: HeadPair | undefined, hash: string, created: boolean): "unchanged" | { replaced: { state: string; version: number } | null } => {
     const draft = a?.draft ?? null;
     const pub = a?.published ?? null;
     const pubEq = pub !== null && hashValue(pub.data) === hash;
@@ -270,22 +299,30 @@ export async function importFolder(ctx: Ctx, input: ImportInput): Promise<Import
     if (draft === null && pubEq) return "unchanged";
     if (draft !== null && (draft.state === "DRAFT_AI" || draft.state === "APPROVED") && pubEq) return "unchanged";
     const pending = draft !== null && (draft.state === "DRAFT_AI" || draft.state === "APPROVED");
-    return { replaced: pending ? { state: draft.state, version: draft.version } : null };
+    // An unpublished human draft is lost work too; skip our own pass-1 draft of a document created in this run.
+    const unpublishedHuman = draft !== null && draft.state === "DRAFT_HUMAN" && !created && (pub === null || draft.version > pub.version);
+    return { replaced: pending || unpublishedHuman ? { state: draft.state, version: draft.version } : null };
   };
 
   for (const e of pass2) {
     if (e.error !== null || outcomes.has(e.rel)) continue;
     const local: FileMessage[] = [];
+    let foundDocId: string | null = null;
     try {
       const result = await inTx(async (tctx) => {
         // (a) resolve references
         const resolved = new Map<string, string>();
         for (const { field, ph } of refsOf(e)) {
           if (UUID.test(ph.$ref)) { resolved.set(`${ph.collection}\0${ph.$ref}`, ph.$ref); continue; }
-          const slug = ph.$ref.normalize("NFC");
+          const slug = slugKey(ph.$ref);
           let id = runMap.get(mapKey(ph.collection, slug));
           if (id === undefined) {
-            const d = await lookup(ph.collection, { slug });
+            // A scan-time hit is still valid; a miss is re-read inside this transaction and never memoized
+            // (the pool may hold a single connection, and a rolled-back read must not leak into the memo).
+            const memo = lookups.get(`slug\0${ph.collection}\0${slug}`);
+            const d = memo !== undefined && (await memo) !== null
+              ? await memo
+              : await getDocument(tctx, { collection: ph.collection, slug });
             if (d !== null && d.deletedAt === null) id = d.id;
           }
           if (id === undefined) throw new Error(`${field}: unresolved reference "${ph.$ref}" in collection ${ph.collection}`);
@@ -306,6 +343,7 @@ export async function importFolder(ctx: Ctx, input: ImportInput): Promise<Import
           const d = await getDocument(tctx, { collection: e.col.name, slug: e.slug });
           if (d !== null && d.deletedAt === null) docId = d.id;
         }
+        foundDocId = docId;
         if (docId === null) throw new Error(`no source document for ${e.col.name}/${e.slug}`);
 
         // (c) scopes
@@ -321,10 +359,10 @@ export async function importFolder(ctx: Ctx, input: ImportInput): Promise<Import
         for (const s of scopes) {
           const p = pair(rec, s.locale);
           if (Object.keys(s.data).length === 0 && !p?.draft && !p?.published) continue;
-          const n = needs(p, hashValue(s.data));
+          const n = needs(p, hashValue(s.data), e.created);
           if (n === "unchanged") continue;
           if (n.replaced) {
-            local.push({ file: e.rel, message: `replaced pending ${n.replaced.state} draft v${n.replaced.version} for ${s.locale}` });
+            local.push({ file: e.rel, message: `replaced ${n.replaced.state === "DRAFT_HUMAN" ? "unpublished" : "pending"} ${n.replaced.state} draft v${n.replaced.version} for ${s.locale}` });
           }
           await saveDraft(tctx, { docId, locale: s.locale, data: s.data });
           saved = true;
@@ -348,6 +386,7 @@ export async function importFolder(ctx: Ctx, input: ImportInput): Promise<Import
       warnings.push(...local);
       setOutcome(e, e.created ? "created" : result.saved ? "updated" : "unchanged", result.published);
     } catch (err) {
+      e.docId ??= foundDocId;
       fail(e, err);
     }
   }

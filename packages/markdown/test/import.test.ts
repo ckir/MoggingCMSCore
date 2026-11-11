@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { Sql } from "postgres";
-import { ValidationError, getDocument, listDocuments, migrate, recordAiDraft } from "@mogging/core";
+import { LicenceError, ValidationError, defineCollection, defineConfig, richText, text, getDocument, listDocuments, migrate, recordAiDraft } from "@mogging/core";
 import { importFolder } from "../src/import.js";
 import { isSafeSlug } from "../src/slug.js";
 import { withTestDb } from "./db.js";
-import { ctxFor, writeTree } from "./fixtures.js";
+import { ctxFor, docs, writeTree } from "./fixtures.js";
 
 async function setup(fn: (sql: Sql, ctx: ReturnType<typeof ctxFor>) => Promise<void>) {
   await withTestDb(async (sql) => {
@@ -254,13 +254,96 @@ describe("importFolder", () => {
 
   test("a YAML null nested in a list is stored as core stores it (measured: core accepts it)", async () => {
     await setup(async (_sql, ctx) => {
-      const dir = writeTree(null, { "en/docs/a.md": "---\nrelated: [~]\ntags: [x, ~]\n---\nx\n" });
+      const dir = writeTree(null, { "en/docs/a.md": "---\ntags: [x, ~]\n---\nx\n" });
       const r = await importFolder(ctx, { dir });
       expect(r.errors).toEqual([]);
       const a = (await getDocument(ctx, { collection: "docs", slug: "a" }))!;
-      expect(a.shared.draft!.data["related"]).toEqual([null]);
       expect(a.locales["en"]!.draft!.data["tags"]).toEqual(["x", null]);
       expect(outcome(await importFolder(ctx, { dir }), "en/docs/a.md")).toBe("unchanged");
+    });
+  });
+
+  test("reference to a source file that failed pass 1 is an error, not a hang", async () => {
+    await withTestDb(async (sql) => {
+      await migrate(sql);
+      // people has no slug field, so the pass-1 save of { slug } fails for every people file.
+      const noSlug = defineCollection("people", { name: text(), body: richText({ localized: true, body: true }) });
+      const cfg = defineConfig({ collections: [docs, noSlug], locales: { source: "en", chains: { de: ["en"] } } });
+      const ctx = { sql, config: cfg, actor: "tester" };
+      const dir = writeTree(null, { "en/docs/a.md": "---\nauthor: jane\n---\nx\n", "en/people/jane.md": "---\nname: J\n---\nx\n" });
+      const r = await importFolder(ctx, { dir });
+      expect(outcome(r, "en/people/jane.md")).toBe("error");
+      expect(outcome(r, "en/docs/a.md")).toBe("error");
+      expect(r.errors.find((e) => e.file === "en/docs/a.md")!.message).toContain("unresolved reference");
+    });
+  });
+
+  test("null in a reference list is an error", async () => {
+    await setup(async (_sql, ctx) => {
+      const dir = writeTree(null, { "en/docs/a.md": "---\nrelated: [~]\n---\nx\n", "en/docs/ok.md": "x\n" });
+      const r = await importFolder(ctx, { dir });
+      expect(r.errors).toEqual([{ file: "en/docs/a.md", message: "related: unresolved reference null in collection docs" }]);
+      expect(outcome(r, "en/docs/ok.md")).toBe("created");
+    });
+  });
+
+  test("reference slugs are case-insensitive", async () => {
+    await setup(async (_sql, ctx) => {
+      const dir = writeTree(null, { "en/docs/a.md": "---\nauthor: Jane\n---\nx\n", "en/people/jane.md": JANE });
+      const r = await importFolder(ctx, { dir });
+      expect(r.errors).toEqual([]);
+      const a = (await getDocument(ctx, { collection: "docs", slug: "a" }))!;
+      const jane = (await getDocument(ctx, { collection: "people", slug: "jane" }))!;
+      expect(a.shared.draft!.data["author"]).toBe(jane.id);
+    });
+  });
+
+  test("target-file error keeps the docId", async () => {
+    await setup(async (_sql, ctx) => {
+      // A NUL character passes normalization but the database refuses it in jsonb: a pass-2 failure.
+      const dir = writeTree(null, { "en/docs/a.md": "x\n", "de/docs/a.md": '---\ntitle: "a\\0b"\n---\nx\n' });
+      const r = await importFolder(ctx, { dir });
+      const a = (await getDocument(ctx, { collection: "docs", slug: "a" }))!;
+      const de = r.files.find((f) => f.file === "de/docs/a.md")!;
+      expect(de.outcome).toBe("error");
+      expect(de.docId).toBe(a.id);
+      const missing = await importFolder(ctx, { dir: writeTree(null, { "de/docs/zz.md": "x\n" }) });
+      expect(missing.files[0]!.docId).toBeNull();
+    });
+  });
+
+  test("overwriting an unpublished human draft warns", async () => {
+    await setup(async (_sql, ctx) => {
+      const dir = writeTree(null, { "en/docs/a.md": "---\ntitle: One\nauthor: jane\n---\nx\n", "en/people/jane.md": JANE });
+      const first = await importFolder(ctx, { dir });
+      expect(first.warnings).toEqual([]);
+      fs.writeFileSync(path.join(dir, "en/docs/a.md"), "---\ntitle: Two\nauthor: jane\n---\nx\n");
+      const second = await importFolder(ctx, { dir });
+      expect(second.warnings.map((w) => w.message)).toEqual([expect.stringMatching(/^replaced unpublished DRAFT_HUMAN draft v\d+ for en$/)]);
+    });
+  });
+
+  test("LicenceError is rethrown", async () => {
+    await setup(async (sql, ctx) => {
+      const saved = process.env.MOGGING_LICENSE_KEY;
+      delete process.env.MOGGING_LICENSE_KEY;
+      try {
+        await sql`update migrations set applied_at = now() - interval '60 days'`;
+        const dir = writeTree(null, { "en/docs/a.md": "x\n", "en/docs/b.md": "x\n" });
+        await expect(importFolder(ctx, { dir })).rejects.toBeInstanceOf(LicenceError);
+      } finally {
+        if (saved !== undefined) process.env.MOGGING_LICENSE_KEY = saved;
+      }
+    });
+  });
+
+  test("wrong-collection UUID is a dangling reference", async () => {
+    await setup(async (_sql, ctx) => {
+      await importFolder(ctx, { dir: writeTree(null, { "en/people/jane.md": JANE }) });
+      const jane = (await getDocument(ctx, { collection: "people", slug: "jane" }))!;
+      const r = await importFolder(ctx, { dir: writeTree(null, { "en/docs/b.md": `---\nrelated: ["${jane.id}"]\n---\nx\n` }) });
+      expect(r.errors).toHaveLength(1);
+      expect(r.errors[0]!.message).toContain("dangling reference");
     });
   });
 
