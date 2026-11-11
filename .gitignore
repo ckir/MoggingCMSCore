@@ -111,3 +111,7 @@ dist
 
 # TernJS port file
 .tern-port
+
+# MoggingCMSCore working dirs
+.superpowers/
+.clavity/

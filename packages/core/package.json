@@ -1,0 +1,19 @@
+{
+  "name": "@mogging/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "engines": { "node": ">=22" },
+  "main": "./src/index.ts",
+  "dependencies": {
+    "canonicalize": "^5",
+    "postgres": "^4"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4",
+    "typescript": "^5",
+    "vitest": "^5"
+  }
+}

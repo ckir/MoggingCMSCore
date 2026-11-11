@@ -1,0 +1,13 @@
+{
+  "name": "moggingcmscore",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -b packages/core"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "vitest": "^5"
+  }
+}
