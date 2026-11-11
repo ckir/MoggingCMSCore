@@ -31,8 +31,8 @@ export async function extraConnection(sql: Sql): Promise<Sql> {
 }
 
 /**
- * Task 6A (publish) is not built yet: this inserts a PUBLISHED head directly, exactly as the
- * publish flip will leave it (state PUBLISHED, is_head_published true, no draft head).
+ * Inserts a PUBLISHED head directly, exactly as the publish flip leaves it
+ * (state PUBLISHED, is_head_published true, no draft head).
  */
 export async function insertPublishedLocalized(
   sql: Sql, docId: string, locale: string, version: number, data: Record<string, unknown>,

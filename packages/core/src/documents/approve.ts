@@ -3,6 +3,7 @@ import type { Sql } from "postgres";
 import type { Ctx } from "../ctx.js";
 import { NotFoundError, NotPublishableError, ValidationError } from "../errors.js";
 import { normalizeLocale } from "../schema/locale.js";
+import { hashValue } from "../values/hash.js";
 import { normalizeValue, stripTopLevelNulls } from "../values/normalize.js";
 
 type Json = Parameters<Sql["json"]>[0];
@@ -99,9 +100,14 @@ async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): P
       if (Object.hasOwn(pubHashes, key)) hashes[key] = pubHashes[key]!;
       else delete hashes[key];
     }
+    // A reviewer edit asserts "in sync with the source as of now" (spec 6.4), as saveDraft does.
+    const [srcHead] = await tx`select data from document_localized
+      where doc_id = ${input.docId} and locale = ${config.locales.source} and is_head_published`;
+    const srcData = (srcHead?.data ?? {}) as Record<string, unknown>;
     for (const [key, value] of Object.entries(edits)) {
       data[key] = value;
-      if (value === null) delete hashes[key];
+      if (value !== null && Object.hasOwn(srcData, key)) hashes[key] = hashValue(srcData[key]);
+      else delete hashes[key];
     }
     const finalData = stripTopLevelNulls(data);
 
@@ -126,10 +132,18 @@ async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): P
            completion_tokens, cost_micros, edited, discarded, discard_reason, warnings,
            acknowledged_warnings, bulk_id, approved_by, approved_at, created_at)
         values (${input.docId}, ${locale}, ${version}, ${path}, ${r.job_id as number | null},
-                ${r.model_id as string}, ${r.prompt_version as string}, ${r.prompt_tokens as number},
-                ${r.completion_tokens as number}, ${r.cost_micros as number}, ${isEdited},
+                ${r.model_id as string}, ${r.prompt_version as string}, 0,
+                0, 0, ${isEdited},
                 ${isRejected}, ${isRejected ? "rejected by reviewer" : null},
                 ${r.warnings as string[]}, ${ack}, ${input.bulkId ?? null}, ${actor}, ${t}, ${t})`;
+    }
+    if (cleanOnly) {
+      // Bulk-approval marker (spec 8.6): one row per approved draft; consumers count rows per bulk_id.
+      await tx`insert into content_provenance
+          (doc_id, locale, version, field_path, job_id, model_id, prompt_version, prompt_tokens,
+           completion_tokens, cost_micros, bulk_id, approved_by, approved_at, created_at)
+        values (${input.docId}, ${locale}, ${version}, null, null, 'human:bulk-approve', '', 0, 0, 0,
+                ${input.bulkId ?? null}, ${actor}, ${t}, ${t})`;
     }
     return { version };
   });

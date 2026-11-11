@@ -275,7 +275,7 @@ test("approveClean approves only drafts without warnings and shares one bulk_id"
 
   const bulk = await sql`select distinct bulk_id, approved_by from content_provenance where bulk_id is not null`;
   expect(bulk).toHaveLength(2); // one shared id per approveClean run
-  const a = await sql`select doc_id, locale, bulk_id from content_provenance where bulk_id is not null order by locale`;
+  const a = await sql`select doc_id, locale, bulk_id from content_provenance where model_id = 'human:bulk-approve' order by locale`;
   expect(a).toHaveLength(2);
   expect(a.every((x) => /^[0-9a-f-]{36}$/.test(x.bulk_id as string))).toBe(true);
   expect((await heads(sql, docB, "de")).map((x) => x.state)).toEqual(["DRAFT_AI"]);
@@ -297,6 +297,80 @@ test("approveClean shares a single bulk_id across several approvals", async () =
   expect(await approveClean(ctx, {})).toEqual({ approved: 2, skipped: [] });
   const ids = await sql`select distinct bulk_id from content_provenance where bulk_id is not null`;
   expect(ids).toHaveLength(1);
-  const n = await sql`select count(*)::int as n from content_provenance where bulk_id is not null`;
+  const n = await sql`select count(*)::int as n from content_provenance where model_id = 'human:bulk-approve' and bulk_id = ${ids[0]!.bulk_id as string}`;
   expect(n[0]!.n).toBe(2);
+}));
+
+test("approveClean writes exactly one bulk-approval marker per approved draft, including one with no provenance rows", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  const { id: docB } = await createDocument(ctx, { collection: "posts" });
+  await saveDraft(ctx, { docId: docB, locale: "en", data: { title: "Hello" } });
+  await publish(ctx, { docId: docB, locale: "en" });
+  const h = { title: hashValue("Hello") };
+  await recordAiDraft(ctx, { docId, locale: "de", fields: { title: "T" }, sourceVersion: 1, sourceHashes: h, provenance: [prov("title"), prov("body")] });
+  await recordAiDraft(ctx, { docId: docB, locale: "de", fields: { title: "T" }, sourceVersion: 1, sourceHashes: h, provenance: [] });
+  const r = await approveClean(ctx, {});
+  expect(r.approved).toBe(2);
+  const markers = await sql`select * from content_provenance where model_id = 'human:bulk-approve' order by doc_id`;
+  expect(markers).toHaveLength(2);
+  expect(new Set(markers.map((m) => m.bulk_id)).size).toBe(1);
+  for (const m of markers) {
+    expect(m).toMatchObject({
+      version: 2, field_path: null, job_id: null, prompt_version: "", prompt_tokens: 0, completion_tokens: 0,
+      cost_micros: "0", approved_by: "reviewer", edited: false, discarded: false,
+    });
+    expect(m.approved_at).toBeInstanceOf(Date);
+  }
+  expect(markers.map((m) => m.doc_id).sort()).toEqual([docId, docB].sort());
+  const [{ n }] = await sql`select count(*)::int as n from content_provenance where model_id = 'human:bulk-approve' and bulk_id = ${markers[0]!.bulk_id as string}`;
+  expect(n).toBe(r.approved);
+  // Copied field rows carry the bulk id too.
+  const copied = await sql`select bulk_id from content_provenance where doc_id = ${docId} and version = 2 and field_path is not null`;
+  expect(copied.every((c) => c.bulk_id === markers[0]!.bulk_id)).toBe(true);
+}));
+
+test("direct approve writes no bulk marker", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  await recordAiDraft(ctx, { docId, locale: "de", fields: { title: "T" }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("title")] });
+  await approve(ctx, { docId, locale: "de", bulkId: "22222222-2222-4222-8222-222222222222" });
+  const [{ n }] = await sql`select count(*)::int as n from content_provenance where model_id = 'human:bulk-approve'`;
+  expect(n).toBe(0);
+}));
+
+test("copied provenance rows carry zero tokens and cost; the AI version stays the single cost record", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { title: "T", body: "B" }, sourceVersion: 1, sourceHashes: hashes,
+    provenance: [prov("title"), prov("body")],
+  });
+  await approve(ctx, { docId, locale: "de", edits: { title: "E" } });
+  const ai = await sql`select prompt_tokens, completion_tokens, cost_micros from content_provenance where doc_id = ${docId} and version = 1`;
+  expect(ai.map((x) => [x.prompt_tokens, x.completion_tokens, Number(x.cost_micros)])).toEqual([[10, 20, 300], [10, 20, 300]]);
+  const approved = await sql`select model_id, prompt_version, prompt_tokens, completion_tokens, cost_micros from content_provenance where doc_id = ${docId} and version = 2`;
+  expect(approved).toHaveLength(2);
+  for (const x of approved) expect(x).toMatchObject({ model_id: "m1", prompt_version: "p1", prompt_tokens: 0, completion_tokens: 0 });
+  expect(approved.every((x) => Number(x.cost_micros) === 0)).toBe(true);
+  const [{ total }] = await sql`select sum(cost_micros)::int as total from content_provenance where doc_id = ${docId}`;
+  expect(total).toBe(600);
+}));
+
+test("an edited field hashes the current source published value even when the source moved; non-edited keep the AI hash", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { title: "T", body: "B" }, sourceVersion: 1, sourceHashes: hashes,
+    provenance: [prov("title"), prov("body")],
+  });
+  // Move the source head directly (publish flip by SQL): title changes, body is dropped.
+  await sql`update document_localized set is_head_published = false where doc_id = ${docId} and locale = 'en'`;
+  await sql`insert into document_localized (doc_id, locale, version, state, data, is_head_published, created_by)
+    values (${docId}, 'en', 2, 'PUBLISHED', ${sql.json({ title: "Hello 2" })}, true, 'fixture')`;
+  await approve(ctx, { docId, locale: "de", edits: { title: "E" } });
+  let [head] = await sql`select source_hashes from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
+  expect(head!.source_hashes).toEqual({ title: hashValue("Hello 2"), body: hashes.body });
+
+  // Edited field the source has no published value for: no hash stored.
+  await recordAiDraft(ctx, { docId, locale: "de", fields: { title: "T" }, sourceVersion: 2, sourceHashes: { title: hashValue("Hello 2") }, provenance: [prov("title")] });
+  await approve(ctx, { docId, locale: "de", edits: { body: "Neu" } });
+  [head] = await sql`select source_hashes from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
+  expect(head!.source_hashes).toEqual({ title: hashValue("Hello 2") });
 }));
