@@ -1,6 +1,7 @@
 {
   "name": "moggingcmscore",
   "private": true,
+  "type": "module",
   "license": "SEE LICENSE IN LICENSE.md",
   "scripts": {
     "test": "vitest run",
