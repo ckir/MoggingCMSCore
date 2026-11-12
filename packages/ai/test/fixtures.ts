@@ -3,10 +3,12 @@ import postgres from "postgres";
 import type { Sql } from "postgres";
 import {
   createDocument, defineCollection, defineConfig, list, migrate, number, publish, richText, saveDraft, slug, text,
+  type DocumentRecord, type Snapshot,
 } from "@mogging/core";
 import { markdownToTree } from "@mogging/markdown";
 import { defineAiConfig } from "../src/config.js";
 import type { AiConfigInput, AiCtx } from "../src/config.js";
+import type { JobRow } from "../src/jobs.js";
 
 const posts = defineCollection("posts", {
   slug: slug(),
@@ -74,4 +76,47 @@ export async function migrateAndSeed(sql: Sql): Promise<string> {
   });
   await publish(ctx, { docId, locale: "en" });
   return docId;
+}
+
+const headFixture = (data: Record<string, unknown>): Snapshot => ({
+  version: 1, state: "PUBLISHED", data, sourceHashes: {}, createdAt: new Date(0), createdBy: "seed",
+  publishedAt: new Date(0), publishedBy: "seed",
+});
+
+/**
+ * An in-memory `posts` record (no database): a published `en` head (version 1) holding title, body (a tree), legal,
+ * tags and price, no `de` heads, not deleted. `overrides` replace top-level keys.
+ */
+export function docFixture(overrides: Partial<DocumentRecord> = {}): DocumentRecord {
+  return {
+    id: "00000000-0000-4000-8000-000000000001",
+    collection: "posts",
+    createdAt: new Date(0),
+    deletedAt: null,
+    shared: { published: headFixture({ slug: "hello" }), draft: null },
+    locales: {
+      en: {
+        published: headFixture({
+          title: "Hello",
+          body: markdownToTree("# Hi\n\nHello `x` {name}\n"),
+          legal: "Terms apply",
+          tags: ["a", "b"],
+          price: 5,
+        }),
+        draft: null,
+      },
+    },
+    ...overrides,
+  };
+}
+
+/** A RUNNING in-memory `posts` job for `de` over title, body, legal and tags at source version 1. */
+export function jobFixture(overrides: Partial<JobRow> = {}): JobRow {
+  return {
+    id: 1, docId: "00000000-0000-4000-8000-000000000001", collection: "posts", locale: "de",
+    fieldPaths: ["title", "body", "legal", "tags"], sourceVersion: 1, state: "RUNNING", attempts: 1, maxAttempts: 3,
+    runAfter: new Date(0), lockedUntil: new Date(0), lockedBy: "w#1", costEstimateMicros: 0, budgetScope: "global",
+    errorMessage: null, createdAt: new Date(0), updatedAt: new Date(0),
+    ...overrides,
+  };
 }
