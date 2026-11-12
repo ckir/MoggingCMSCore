@@ -228,16 +228,34 @@ threw (outcome `ERROR`; the job stays `RUNNING` until the reaper takes it).
   `fallback_failed=<message> calls=<ids>`.
 - **Aborted calls record no spend.** A provider call that is aborted or times out (the provider timeout, or a lease
   lost mid-call) returns no usage, so it records no spend, writes no provenance row and is not seen by the monthly cap.
-  The provider does bill such a call for the work done before it noticed the disconnect. Measured on 2026-11-13
-  against `openai/gpt-4o-mini` through OpenRouter with non-streaming calls (three aborted calls per run, the key's usage
-  read before and after): aborting after 1.5 s billed about the input tokens only, and aborting after 9 s, roughly
-  halfway through generating 800 tokens, billed about 44 percent of a full call. So the unseen cost grows with how long
-  the call ran before it was aborted, up to a full call. OpenRouter's documentation says a non-streaming request that is
-  cancelled is billed for the complete response; this measurement showed less for this model, but it is one model and a
-  few samples. A job can make up to `maxAttempts` such calls before it fails.
+  Whether the provider bills such a call, and how much, depends on the route. Measured on 2026-11-13 through OpenRouter
+  with non-streaming calls (three aborted calls per run, the key's usage read before and after; the key's usage posts
+  10 to 40 seconds late, so each run waited for it to settle):
+  - `openai/gpt-4o-mini`, aborted after 1.5 s: billed about the input tokens only (about 28 tokens each).
+  - `openai/gpt-4o-mini`, aborted after 9 s of a 14 to 17 s generation: billed about 44 percent of a full call each.
+  - `meta-llama/llama-3.1-8b-instruct`, aborted after 4 s of a 47 s generation: no visible charge at all, not even
+    for the input tokens.
+  OpenRouter's documentation says a non-streaming request that is cancelled is billed for the complete response; neither
+  route showed that. So billing on a client abort varies by route, from nothing visible to proportional to the time
+  the call ran, and any fixed accounting rule would over-charge on some routes and under-charge on others. These are
+  two models and a few samples, not a guarantee. A job can make up to `maxAttempts` such calls before it fails.
   This is an accepted limit of v0.1 (owner decision, 2026-11-13): when calls abort, the monthly cap and the per-run
-  budget are not a hard bound on provider spend. To limit the exposure, keep `providerTimeoutSeconds` and `maxAttempts`
-  modest, and compare the provider's own usage page with `listProvenance` if aborts are frequent.
+  budget are not a hard bound on provider spend. What to do about it:
+  - **Set a spend limit on the provider API key.** That limit is the real financial circuit breaker (OpenRouter keys
+    carry a credit limit; `GET /api/v1/key` shows `usage`, `limit` and `limit_remaining`). The application cap is a
+    quota on recorded spend, not a bound on the bill.
+  - **Reconcile by hand when aborts are frequent.** Compare the key's `usage` over a period with the sum of
+    `costMicros` from `listProvenance` for the same period; a gap that keeps growing means aborted calls are being
+    billed. Allow for the delay with which the key's usage updates.
+  - **Make aborts rarer.** Keep `maxAttempts` low (a call that timed out once often times out again) and set
+    `providerTimeoutSeconds` from the expected output size. A transient database error while renewing the lease no
+    longer aborts a call (see "The lease is kept with retries" below).
+- **The lease is kept with retries.** While a provider call runs, the worker renews the lease every third of its
+  length. A renewal the database refuses (the lease is gone) aborts the call at once. A renewal that throws, for example
+  during a short database outage, is retried after 5 seconds and does not abort the call, so a call that finishes is
+  still recorded. The call is aborted if no renewal has succeeded for the lease length minus a margin
+  (`max(30 s, 20 percent of the lease)`, at most half the lease), so a long outage still ends the call before the lease
+  can lapse unnoticed.
 - **Lock order.** Every transaction takes locks in one order: `ai_budgets` rows (`global` first, then
   `collection:<name>`), then the `ai_jobs` row, then `documents` (taken by core's `recordAiDraft`). The reaper runs in
   its own committed transaction before each claim, and candidates are tried in short transactions, so the budget lock is

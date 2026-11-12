@@ -41,3 +41,12 @@ MOGGING_LIVE=1 OPENROUTER_API_KEY=... DATABASE_URL=postgres://mogging:mogging@lo
 reads it; the test never prints or stores it. Keep the key in your shell or an untracked `.env`, never in a tracked file.
 Expected: one passing test. A `FAILED` job whose provenance rows all say `validation:` also passes, because the model
 is rejected by the validator about one time in ten.
+
+### Spend limit on the key
+
+Give the OpenRouter key a credit limit in the OpenRouter dashboard, for the live test and above all in production.
+The application's monthly cap only counts calls that returned usage; calls the worker aborted may still be billed
+(see the `@mogging/ai` README, Known limits). The key's own limit is the real circuit breaker. `GET /api/v1/key`
+(bearer auth) returns `usage`, `limit` and `limit_remaining` for the key, which is also how to reconcile the bill with
+`listProvenance`. Run such a check from your shell with the key in the environment; never write the key into a file or a
+command line that is logged.
