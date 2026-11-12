@@ -296,7 +296,9 @@ Each is pulled into a depth release only when purchasers ask, and the gate files
 ## 10. Left to the owner
 
 - The numbers N1 to N3, S3 and the deadlines D1 to D3, written before each release ships.
-- Prices for `team`, `enterprise` and hosting.
+- Prices for `solo`, `team`, `enterprise` and hosting. The `solo` price (flat, per project per year, core design
+  12.4) was deferred to this roadmap by the owner on 2026-11-13; the placeholder discussed is a few hundred dollars
+  a year, to be revised after the first ten purchases. It is not blocking v0.1 development.
 - Which two translation management systems get connectors in v0.3.
 - The hiring threshold after v1.0.
 - Whether to show this roadmap to prospects verbatim or as a summary; the document is written so
