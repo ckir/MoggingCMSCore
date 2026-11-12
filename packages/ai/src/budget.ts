@@ -17,7 +17,10 @@ const toBudgetRow = (r: Row): BudgetRow => ({
 
 /** ["global"], plus `collection:<name>` when that collection has its own cap. */
 export function scopesFor(ai: AiConfig, collection: string): string[] {
-  return ai.budgets.collections?.[collection] !== undefined ? ["global", `collection:${collection}`] : ["global"];
+  // An own key only: a collection named like an Object.prototype member ("constructor") has no phantom cap.
+  const own = ai.budgets.collections !== undefined && Object.hasOwn(ai.budgets.collections, collection)
+    && ai.budgets.collections[collection] !== undefined;
+  return own ? ["global", `collection:${collection}`] : ["global"];
 }
 
 /** "YYYY-MM-01" of the UTC month of `now`. Only labels rows the database selected; never selects a period itself. */
@@ -45,6 +48,8 @@ export async function lockBudgets(tx: TransactionSql, ai: AiConfig, collection: 
   const caps = configuredCaps(ai, scopesFor(ai, collection));
   const scopes = caps.map((c) => c.scope);
   // Global sorts first, so concurrent claimers take the row locks in the same order and cannot deadlock.
+  // Do not simplify away: the upsert's `do update` takes each row lock in THIS statement, and the in-flight sum in the
+  // next statement relies on it (a concurrent claimer is already serialized here, so the sum it reads is current).
   await tx`insert into ai_budgets (scope, period_start, cap_micros)
     select s.scope, date_trunc('month', clock_timestamp() at time zone 'UTC')::date, s.cap
     from unnest(${scopes}::text[], ${caps.map((c) => String(c.cap))}::bigint[]) as s(scope, cap)

@@ -29,10 +29,11 @@ test("updated_at moves forward on update", async () => withTestDb(async (sql) =>
   await migrate(sql);
   const ctx = ctxFor(sql, model);
   await upsertGlossary(ctx, [entry()]);
-  const [a] = await sql`select updated_at from glossary`;
+  // Compared in SQL at microsecond precision: a JS Date truncates to milliseconds, and both writes can share one.
+  const [a] = await sql`select updated_at::text as t from glossary`;
   await upsertGlossary(ctx, [entry({ translation: "X" })]);
-  const [b] = await sql`select updated_at from glossary`;
-  expect((b!.updated_at as Date).getTime()).toBeGreaterThan((a!.updated_at as Date).getTime());
+  const [b] = await sql`select updated_at > ${a!.t as string}::timestamptz as moved from glossary`;
+  expect(b!.moved).toBe(true);
 }));
 
 test("listGlossary filters by locale pair and normalizes DE to de", async () => withTestDb(async (sql) => {

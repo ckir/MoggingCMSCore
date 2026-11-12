@@ -24,6 +24,14 @@ async function insertJob(
   return Number(r!.id);
 }
 
+test("scopesFor gives no phantom collection scope to a collection named like a prototype member", () => {
+  const ai = ctxFor({} as Sql, model, { budgets: { monthlyCapUsd: 1, collections: { posts: 0.5 } } }).ai;
+  expect(scopesFor(ai, "posts")).toEqual(["global", "collection:posts"]);
+  expect(scopesFor(ai, "constructor")).toEqual(["global"]);
+  expect(scopesFor(ai, "toString")).toEqual(["global"]);
+  expect(scopesFor(ai, "pages")).toEqual(["global"]);
+});
+
 test("periodStart is the first day of the UTC month", () => {
   expect(periodStart(new Date("2026-11-12T23:59:59Z"))).toBe("2026-11-01");
   expect(periodStart(new Date("2026-12-31T23:59:59Z"))).toBe("2026-12-01");
@@ -159,24 +167,35 @@ test("getBudgets synthesizes absent rows with the in-flight sum, writes nothing,
   ]);
   expect(await sql`select 1 from ai_budgets`).toHaveLength(0);
 
-  // No lock: a writer holding the rows does not block getBudgets.
+  // No lock: a writer holding the rows does not block getBudgets. Deterministic: the writer holds its locks until
+  // getBudgets has resolved, and getBudgets runs under a lock_timeout, so a lock wait fails with 55P03 instead of
+  // hanging (no wall-clock threshold).
   await sql.begin((tx) => lockBudgets(tx, ctx.ai, "posts"));
   const other = await extraConnection(sql);
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
   try {
     let locked!: () => void;
     const holding = new Promise<void>((r) => { locked = r; });
     const writer = other.begin(async (tx) => {
       await lockBudgets(tx, ctx.ai, "posts");
       locked();
-      await new Promise((r) => setTimeout(r, 1500));
+      await gate;
     });
     await holding;
-    const t0 = Date.now();
-    const got = await getBudgets(ctx);
-    expect(Date.now() - t0).toBeLessThan(1000);
-    expect(got.map((r) => r.inFlightMicros)).toEqual([42, 40]);
+    await sql`set lock_timeout = '100ms'`;
+    try {
+      const got = await getBudgets(ctx);
+      expect(got.map((r) => r.inFlightMicros)).toEqual([42, 40]);
+      // The probe can fail: the same connection waiting on the held rows does time out.
+      await expect(sql.begin((tx) => lockBudgets(tx, ctx.ai, "posts"))).rejects.toMatchObject({ code: "55P03" });
+    } finally {
+      await sql`reset lock_timeout`;
+    }
+    release();
     await writer;
   } finally {
+    release();
     await other.end();
   }
 }));

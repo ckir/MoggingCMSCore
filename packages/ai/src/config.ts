@@ -109,12 +109,17 @@ export function usdToMicros(usd: number): number {
 
 /** The model and price that translate `collection`: its override, else the default. */
 export function priceFor(ai: AiConfig, collection: string): { modelId: string; price: ModelPrice } {
-  const modelId = ai.collections?.[collection]?.translate ?? ai.models.translate;
-  const price = ai.prices[modelId];
+  const modelId = collectionOptions(ai, collection)?.translate ?? ai.models.translate;
+  const price = Object.hasOwn(ai.prices, modelId) ? ai.prices[modelId] : undefined;
   if (!price) throw new ValidationError(`model "${modelId}" has no entry in prices`);
   return { modelId, price };
 }
 
 export function glossaryModeFor(ai: AiConfig, collection: string): GlossaryMode {
-  return ai.collections?.[collection]?.glossary ?? ai.glossary;
+  return collectionOptions(ai, collection)?.glossary ?? ai.glossary;
+}
+
+/** The collection's own override entry: an own key only, so a name like "constructor" never reads the prototype. */
+function collectionOptions(ai: AiConfig, collection: string): { translate?: string; glossary?: GlossaryMode } | undefined {
+  return ai.collections !== undefined && Object.hasOwn(ai.collections, collection) ? ai.collections[collection] : undefined;
 }

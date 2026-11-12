@@ -3,7 +3,7 @@ import type { Sql, TransactionSql } from "postgres";
 import { normalizeLocale, recordAiDraft, type AiProvenanceInput } from "@mogging/core";
 import type { AiCtx } from "./config.js";
 import { debitBudgets, lockBudgets, scopesFor } from "./budget.js";
-import type { JobRow } from "./jobs.js";
+import { toJobRow, type JobRow, type Row } from "./jobs.js";
 import { writeDiscardedRow } from "./provenance.js";
 
 // Time: every comparison and every stored timestamp in this file uses the DATABASE clock (`clock_timestamp()`), never
@@ -27,20 +27,6 @@ export type CompleteResult = "COMPLETED" | "CANCELLED" | "FAILED" | "QUEUED" | "
 const MAX_CANDIDATES = 10;
 const BUDGET_RETRY_SECONDS = 300;
 const STRICT_RETRY = "validation: retried with strict";
-
-type Row = {
-  id: string; doc_id: string; collection: string; locale: string; field_paths: string[]; source_version: number; state: string;
-  attempts: number; max_attempts: number; run_after: Date; locked_until: Date | null; locked_by: string | null;
-  cost_estimate_micros: string; budget_scope: string | null; error_message: string | null; created_at: Date; updated_at: Date;
-};
-
-// Same mapping as jobs.ts `toJobRow` (not exported there). bigint columns arrive as strings from postgres.js.
-const toJobRow = (r: Row): JobRow => ({
-  id: Number(r.id), docId: r.doc_id, collection: r.collection, locale: r.locale, fieldPaths: [...r.field_paths],
-  sourceVersion: r.source_version, state: r.state, attempts: r.attempts, maxAttempts: r.max_attempts, runAfter: r.run_after,
-  lockedUntil: r.locked_until, lockedBy: r.locked_by, costEstimateMicros: Number(r.cost_estimate_micros),
-  budgetScope: r.budget_scope, errorMessage: r.error_message, createdAt: r.created_at, updatedAt: r.updated_at,
-});
 
 /**
  * The SET list of the back-off transition shared by reap, release and a `retry` completion: QUEUED with
@@ -147,7 +133,8 @@ const errorMessage = (err: unknown): string => (err instanceof Error ? err.messa
 
 /**
  * Records a finished job (spec 8.2): debit, the fence, the provenance rows and the transition in one transaction. When
- * that transaction throws, a cost-only fallback records the spend unless the first one did commit, then rethrows.
+ * that transaction throws, a cost-only fallback records the spend unless the first one did commit, then rethrows. When
+ * the fallback throws too, the original error is rethrown with a `fallbackError` property (see `fallbackFailure`).
  */
 export async function complete(ctx: AiCtx, job: JobRow, lease: string, c: Completion): Promise<CompleteResult> {
   const scopes = scopesFor(ctx.ai, job.collection);
@@ -212,9 +199,31 @@ export async function complete(ctx: AiCtx, job: JobRow, lease: string, c: Comple
       return r!.state as "QUEUED" | "FAILED";
     });
   } catch (err) {
-    await recordSpendOnly(ctx, job, c.calls, scopes, total, discard, errorMessage(err)).catch(() => undefined);
+    try {
+      await recordSpendOnly(ctx, job, c.calls, scopes, total, discard, errorMessage(err));
+    } catch (fallbackErr) {
+      // The spend of these calls is now recorded nowhere: say so on the ORIGINAL error (its class is kept).
+      attachFallbackFailure(err, { error: fallbackErr, message: errorMessage(fallbackErr), callIds: c.calls.map((x) => x.callId) });
+    }
     throw err;
   }
+}
+
+/** Why the cost-only fallback failed, and the ids of the calls whose spend it could not record. */
+export type FallbackFailure = { error: unknown; message: string; callIds: string[] };
+
+/** Attaches `f` to `err` as the non-enumerable `fallbackError` property (a non-object error cannot carry it). */
+function attachFallbackFailure(err: unknown, f: FallbackFailure): void {
+  if ((typeof err !== "object" && typeof err !== "function") || err === null) return;
+  try {
+    Object.defineProperty(err, "fallbackError", { value: f, enumerable: false, configurable: true, writable: false });
+  } catch { /* a frozen error object: the original still propagates */ }
+}
+
+/** The fallback failure `complete` attached to an error it rethrew, if any. */
+export function fallbackFailure(err: unknown): FallbackFailure | undefined {
+  if ((typeof err !== "object" && typeof err !== "function") || err === null) return undefined;
+  return Object.hasOwn(err, "fallbackError") ? (err as { fallbackError: FallbackFailure }).fallbackError : undefined;
 }
 
 /**

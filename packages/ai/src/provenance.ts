@@ -42,17 +42,22 @@ const toProvenanceRow = (r: Row): ProvenanceRow => ({
 
 /**
  * Provenance rows ordered by created_at, id. Without `docId` it lists across documents, so an operator can see the
- * spend that produced no draft (`discardedOnly`) for the whole project. Not licence-guarded: a read.
+ * spend that produced no draft (`discardedOnly`) for the whole project. `afterId` is the cursor: only rows with a
+ * greater id, so pass the last id of a page to read the next one. Not licence-guarded: a read.
  */
 export async function listProvenance(
-  ctx: Ctx, input: { docId?: string; locale?: string; discardedOnly?: boolean; limit?: number },
+  ctx: Ctx, input: { docId?: string; locale?: string; discardedOnly?: boolean; limit?: number; afterId?: number },
 ): Promise<ProvenanceRow[]> {
   const limit = listLimit(input.limit);
+  if (input.afterId !== undefined && !(Number.isSafeInteger(input.afterId) && input.afterId >= 0)) {
+    throw new ValidationError(`afterId must be a non-negative integer, got ${input.afterId}`);
+  }
   const locale = input.locale === undefined ? undefined : normalizeLocale(input.locale);
   if (input.docId !== undefined && !UUID.test(input.docId)) return [];
   const { sql } = ctx;
   const rows = (await sql`select * from content_provenance
     where true
+      ${input.afterId === undefined ? sql`` : sql`and id > ${input.afterId}`}
       ${input.docId === undefined ? sql`` : sql`and doc_id = ${input.docId}`}
       ${locale === undefined ? sql`` : sql`and locale = ${locale}`}
       ${input.discardedOnly ? sql`and discarded` : sql``}

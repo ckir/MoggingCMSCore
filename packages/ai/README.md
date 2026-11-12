@@ -83,8 +83,9 @@ spent plus in-flight plus its estimate fits every scope it belongs to. A refused
 completes, from the cost that was actually reported. The cap is a bound built on an estimate with a 1.5 safety factor
 (spec 8.5), not an exact guarantee: a single call may cost more than its estimate.
 
-A cap of `0` is the pause switch: every job with a cost estimate above zero is refused in that scope. The cap is read from the configuration on every
-claim, so changing it takes effect at once. ("Pausable per scope" in spec 8.2 is otherwise not implemented.)
+A cap of `0` is the pause switch: every job with a cost estimate above zero is refused in that scope, and once anything
+has been spent (or is in flight) in that scope this month, even a job with a zero estimate is refused. The cap is read
+from the configuration on every claim, so changing it takes effect at once. ("Pausable per scope" in spec 8.2 is otherwise not implemented.)
 
 The per-run budget (`budgetUsd` in `compile`, `runBudgetMicros` in `runWorker`) is separate: an in-memory tally for one
 run. A job whose estimate no longer fits what is left of it is not claimed, and the run ends with `runBudgetStop: true`.
@@ -97,8 +98,8 @@ translatable fields. `docIds` needs `collection`. The report counts `enqueued`, 
 source version already exists), `cancelledStale` and the total `estimateMicros`, and lists `skipped` pairs and fields
 with a reason:
 
-- `not translatable`: only localized `text` and `richText` fields, and lists or objects whose leaves are text, are sent
-  to the model. Other stale or missing localized fields (numbers, dates, references, a rich-text tree nested in a list)
+- `not translatable`: only localized `text` and `richText` fields, and lists or objects with at least one text leaf and
+  no rich-text leaf, are sent to the model. Other stale or missing localized fields (numbers, dates, references, a rich-text tree nested in a list)
   are reported and never copied.
 - `human draft pending`: a `DRAFT_HUMAN` is never overwritten, and a `QUEUED` job for that pair is cancelled.
 - `draft already current`: a pending `DRAFT_AI` or `APPROVED` draft already covers the field at the current source
@@ -120,10 +121,13 @@ jobs with an expired lease to `QUEUED` with a back-off of 30 seconds times 2 to 
 at `maxAttempts`. A provider error or a job that could not be loaded goes back the same way. When a lease is lost, the
 late result is not stored: its cost is debited and recorded as a discarded row (`lease lost`).
 
-`listJobs(ctx, { state?, collection?, limit? })` returns jobs and the current budgets. `retryJobs(ctx, { ids })` puts
+`listJobs(ctx, { state?, collection?, limit?, afterId? })` returns jobs, oldest first, and the current budgets. `limit`
+is 200 by default and at most 1000; to read further, pass the last `id` of a page as `afterId` (only jobs with a greater
+id are returned). `retryJobs(ctx, { ids })` puts
 `FAILED` and `CANCELLED` jobs back to `QUEUED` with zero attempts, under the same gates as enqueue: it skips (with a
-reason) a job whose source moved, whose document is gone, that has an active twin, whose draft is human, or whose
-fields a pending draft already covers. `cancelJobs(ctx, { ids })` cancels `QUEUED` and `RUNNING` jobs; a running worker
+reason) a job whose source moved, whose document is gone, that has an active twin (also when the twin is queued while
+the retry runs), whose draft is human, or whose fields a pending draft or the published translation already covers at
+the current source hash (`draft already current`). A job only partly covered is narrowed to its other fields. `cancelJobs(ctx, { ids })` cancels `QUEUED` and `RUNNING` jobs; a running worker
 then fails its fence and its result is discarded.
 
 By default `locked_by` reads `<actor>@<hostname>#<pid>#<8 hex>`: the actor and the process, plus a suffix that is unique per claim,
@@ -131,8 +135,11 @@ so a reclaimed job can never pass an earlier worker's fence.
 
 ## Provenance
 
-Every provider call is recorded, so the money spent is always explainable. `listProvenance(ctx, { docId?, locale?,
-discardedOnly?, limit? })` lists `content_provenance` rows:
+Every provider call that reports its usage is recorded, so the money spent is explainable (see Known limits for the
+exceptions). `listProvenance(ctx, { docId?, locale?, discardedOnly?, limit?, afterId? })` lists `content_provenance`
+rows ordered by creation time, then id; `limit` is 200 by default and at most 1000, and `afterId` returns only rows
+with a greater id (pass the last `id` of a page). Rows written by concurrent transactions can be created in a different
+order than their ids, so treat `afterId` as a way to reach rows beyond the cap, not as an exact page boundary:
 
 - A kept row per translated field of an accepted draft: model, prompt version, tokens, cost, warnings, `job_id`, and
   `superseded_version` when the draft replaced an earlier AI draft. A call translates several fields at once, so its
@@ -151,7 +158,8 @@ A draft is stored only if every field passes (spec 8.4):
 1. The shape is right: a list keeps its length, an object its keys, non-text leaves are unchanged, and rich text comes
    back as Markdown that restores into a valid tree. Code and opaque nodes were replaced by sentinels before the call and
    are put back from the source, so the model can never alter them.
-2. Placeholders such as `{name}` appear as often as in the source.
+2. Placeholders such as `{name}` are the same multiset as in the source: each one exactly as often, so a dropped and
+   an added placeholder are both rejected.
 3. Do-not-translate glossary terms still appear at least as often as in the source.
 4. A glossary term that has a translation shows that translation or an accepted form. In `warn` mode a miss is a
    warning stored on the provenance row (for `approveClean`); in `strict` mode it rejects the draft. The mode can be set
@@ -164,7 +172,8 @@ is `FAILED` with the reasons, and no draft is written. The SDK's own retries are
 attempt is one counted call.
 
 The glossary is per locale pair: `upsertGlossary(ctx, entries)` and `listGlossary(ctx, { sourceLocale, targetLocale })`
-take `GlossaryEntry` values (`term`, `translation`, `acceptedForms`, `doNotTranslate`, `note`).
+take `GlossaryEntry` values (`sourceLocale`, `targetLocale`, `term`, `translation`, `acceptedForms`, `doNotTranslate`,
+`note`).
 
 ## Running a worker
 
@@ -177,6 +186,8 @@ default) until `signal` aborts. `filter` limits it by collection, document ids a
 `compile(ctx, { locales, budgetUsd, collection?, docIds?, log? })` is `enqueueStale` followed by one `runWorker` pass
 over the same scope with `budgetUsd` as the run budget. `budgetUsd` must be above zero. `pendingJobs` is the number of
 jobs still `QUEUED` in that scope afterwards: jobs over the run budget or a cap, and jobs backed off after an error.
+A missing API key or a model that cannot be resolved makes `compile` reject only AFTER `enqueueStale` has committed
+its jobs: they stay `QUEUED`, and the next `compile` counts them as duplicates instead of queueing them again.
 
 The worker logs one line per job, and one extra line when something went wrong:
 
@@ -212,7 +223,12 @@ threw (outcome `ERROR`; the job stays `RUNNING` until the reaper takes it).
   the cost (rows marked `commit_failed:`). It first locks the budget rows and then checks whether the first transaction
   committed after all, so a commit that was only reported as failed is never debited twice. If that second transaction
   fails too (for example the database is down), or the process dies between the call and the completion, that call's
-  cost is not recorded; the job is re-run when its lease expires.
+  cost is not recorded; the job is re-run when its lease expires. The original error is still the one thrown, with
+  the second failure and the lost call ids attached as its `fallbackError` property, and the worker's error line adds
+  `fallback_failed=<message> calls=<ids>`.
+- **Aborted calls record no spend.** A provider call that is aborted or times out (the provider timeout, or a lease
+  lost mid-call) returns no usage, so it records no spend, writes no provenance row and is not seen by the monthly cap.
+  Whether the provider bills such a call is unverified. A job can make up to `maxAttempts` such calls per compile.
 - **Lock order.** Every transaction takes locks in one order: `ai_budgets` rows (`global` first, then
   `collection:<name>`), then the `ai_jobs` row, then `documents` (taken by core's `recordAiDraft`). The reaper runs in
   its own committed transaction before each claim, and candidates are tried in short transactions, so the budget lock is
@@ -226,6 +242,6 @@ threw (outcome `ERROR`; the job stays `RUNNING` until the reaper takes it).
 and `OPENROUTER_API_KEY` are set; see [docs/dev-setup.md](../../docs/dev-setup.md). Never put a key in a file that is
 tracked.
 
-## Licence
+## Source-available licence
 
 MoggingCMSCore is source-available, not open source; the terms are in [LICENSE.md](../../LICENSE.md).

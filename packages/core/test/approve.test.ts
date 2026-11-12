@@ -472,6 +472,18 @@ test("superseding a DRAFT_AI head records superseded_version on the new provenan
   expect(v2.map((r) => r.superseded_version)).toEqual([1, 1]);
 }));
 
+test("superseding an APPROVED head records the APPROVED version as superseded_version", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  const input = { docId, locale: "de", sourceVersion: 1, sourceHashes: hashes };
+  expect(await recordAiDraft(ctx, { ...input, fields: { title: "Hallo" }, provenance: [prov("title")] })).toEqual({ version: 1 });
+  expect(await approve(ctx, { docId, locale: "de" })).toEqual({ version: 2 });
+  expect(await recordAiDraft(ctx, { ...input, fields: { title: "Hallo!", body: "Welt" }, provenance: [prov("title"), prov("body")] }))
+    .toEqual({ version: 3 });
+  const v3 = await sql`select superseded_version from content_provenance where doc_id = ${docId} and version = 3`;
+  expect(v3).toHaveLength(2);
+  expect(v3.map((r) => r.superseded_version)).toEqual([2, 2]);
+}));
+
 test("a first AI draft over a published head records superseded_version null", async () => withTestDb(async (sql) => {
   const { ctx, docId, hashes } = await setup(sql);
   await insertPublishedLocalized(sql, docId, "de", 1, { title: "Pub" }, { title: hashes.title });

@@ -3,10 +3,11 @@ import { NoObjectGeneratedError, NoOutputGeneratedError, Output, generateText, t
 import type { AiProvenanceInput, Collection, DocumentRecord, Field } from "@mogging/core";
 import { glossaryModeFor, type AiCtx, type ModelPrice } from "./config.js";
 import type { CallCost } from "./claim.js";
+import { jobContext } from "./context.js";
 import { actualCostMicros, apportion, planRequests, type RequestPlan } from "./estimate.js";
 import { outputSchema } from "./fields.js";
 import type { JobRow } from "./jobs.js";
-import { buildPrompt, contextValues, maxTemplateTokens, type PromptVariant } from "./prompt.js";
+import { buildPrompt, maxTemplateTokens, type PromptVariant } from "./prompt.js";
 import { prepareField, validateField, type GlossaryEntry, type PreparedField } from "./validate.js";
 
 export type TranslateOutcome =
@@ -24,10 +25,6 @@ export type TranslateArgs = {
 const VARIANTS: readonly PromptVariant[] = ["standard", "strict"];
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
-
-/** The JSON rendering of the non-translate part of the user message, as buildPrompt renders it (jobs.ts payloadChars). */
-const payloadChars = (siblings: Record<string, unknown>, shared: Record<string, unknown>, glossary: unknown[]): number =>
-  JSON.stringify({ siblings, shared, glossary }, null, 1).length;
 
 const wireChars = (p: PreparedField): number => (JSON.stringify(p.wire) ?? "").length;
 
@@ -77,24 +74,15 @@ async function run(
     return { ok: false, kind: "failed", reason: `source: ${errorMessage(err)}`, calls: [] };
   }
 
-  // Context, derived exactly as the enqueue estimate derives it (jobs.ts estimateJob).
-  const inJob = new Set(job.fieldPaths);
-  const siblingFields: Record<string, Field> = {};
-  const sharedFields: Record<string, Field> = {};
-  for (const [name, f] of Object.entries(collection.fields)) {
-    if (!f.localized) sharedFields[name] = f;
-    else if (!inJob.has(name)) siblingFields[name] = f;
-  }
-  const siblings = contextValues(siblingFields, (target?.draft ?? target?.published)?.data ?? {}, ctx.ai.contextCharLimit);
-  const shared = contextValues(sharedFields, doc.shared.published?.data ?? {}, ctx.ai.contextCharLimit);
-  const glossary = args.glossary.map((e) => ({ term: e.term, translation: e.translation, doNotTranslate: e.doNotTranslate }));
+  // Context: the same helper as the enqueue estimate (jobs.ts estimateJob), so the two cannot drift.
+  const { siblings, shared, glossary, contextChars, glossaryChars } =
+    jobContext(ctx.ai, collection, doc, targetLocale, job.fieldPaths, args.glossary);
 
   // (c) the requests
   const plan = planRequests({
     ai: ctx.ai, price, sourceLocale, targetLocale,
     fields: [...prepared.values()].map((p) => ({ name: p.prepared.field, wire: p.prepared.wire })),
-    contextChars: payloadChars(siblings, shared, glossary), glossaryChars: payloadChars({}, {}, glossary),
-    templateTokens: maxTemplateTokens(),
+    contextChars, glossaryChars, templateTokens: maxTemplateTokens(),
   });
   if ("tooLarge" in plan) {
     return { ok: false, kind: "failed", reason: `field "${plan.tooLarge}" exceeds the model context window`, calls: [] };

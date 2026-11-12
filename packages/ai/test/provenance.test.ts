@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, test } from "vitest";
 import type { LanguageModel } from "ai";
-import { createDocument, getDocument, publish, recordAiDraft, saveDraft } from "@mogging/core";
+import { ValidationError, createDocument, getDocument, publish, recordAiDraft, saveDraft } from "@mogging/core";
 import { listProvenance, writeDiscardedRow } from "../src/provenance.js";
 import { ctxFor, migrateAndSeed } from "./fixtures.js";
 import { withTestDb } from "./db.js";
@@ -61,5 +61,22 @@ test("listProvenance without docId lists discarded rows across documents", async
     expect(all.map((r) => r.discarded)).toEqual([false, true, true]); // ordered by created_at, id
     expect(await listProvenance(ctx, { docId: second })).toHaveLength(1);
     expect(await listProvenance(ctx, { limit: 1 })).toHaveLength(1);
+  });
+});
+
+test("listProvenance afterId returns the next page with no overlap", async () => {
+  await withTestDb(async (sql) => {
+    const docId = await migrateAndSeed(sql);
+    const ctx = ctxFor(sql, model);
+    const ids = [randomUUID(), randomUUID(), randomUUID()];
+    for (const id of ids) await sql.begin((tx) => writeDiscardedRow(tx, discarded(docId, id, "lease lost")));
+    const all = await listProvenance(ctx, {});
+    expect(all.map((r) => r.callId)).toEqual(ids);
+    const first = await listProvenance(ctx, { limit: 2 });
+    expect(first.map((r) => r.callId)).toEqual(ids.slice(0, 2));
+    const next = await listProvenance(ctx, { limit: 2, afterId: first.at(-1)!.id });
+    expect(next.map((r) => r.callId)).toEqual(ids.slice(2));
+    expect(await listProvenance(ctx, { afterId: all.at(-1)!.id })).toEqual([]);
+    await expect(listProvenance(ctx, { afterId: 1.5 })).rejects.toBeInstanceOf(ValidationError);
   });
 });

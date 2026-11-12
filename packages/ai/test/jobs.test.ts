@@ -10,7 +10,7 @@ import { estimateRequest, planRequests } from "../src/estimate.js";
 import { maxTemplateTokens } from "../src/prompt.js";
 import { priceFor } from "../src/config.js";
 import type { AiCtx } from "../src/config.js";
-import { ctxFor, migrateAndSeed } from "./fixtures.js";
+import { ctxFor, extraConnection, migrateAndSeed } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 const model = {} as unknown as LanguageModel;
@@ -157,6 +157,33 @@ test("a new source version cancels the old QUEUED job and enqueues a new one", a
     expect(old).toMatchObject({ state: "CANCELLED", error_message: "source moved before claim (test)" });
     expect(fresh!.state).toBe("QUEUED");
     expect(fresh!.source_version).toBe(old!.source_version + 1);
+  });
+});
+
+test("a sweep never cancels a QUEUED job of a NEWER source version; a later sweep still cancels the older one", async () => {
+  await withTestDb(async (sql) => {
+    const docId = await migrateAndSeed(sql);
+    const ctx = ctxFor(sql, model);
+    const v = (await sourceHead(ctx, docId)).version;
+    // A concurrent sweep that read the next source version queued its job first.
+    const [{ id: newerRaw }] = (await sql`insert into ai_jobs (doc_id, locale, field_paths, source_version, state)
+      values (${docId}, 'de', ${FIELDS}::text[], ${v + 1}, 'QUEUED') returning id`) as unknown as [{ id: string }];
+    const newer = Number(newerRaw);
+
+    // This sweep read version v: it queues its own job and leaves the newer one alone.
+    const report = await enqueueStale(ctx, { locales: ["de"] });
+    expect(report).toMatchObject({ enqueued: 1, duplicates: 0, cancelledStale: 0 });
+    const [first, second] = await jobs(sql);
+    expect(first).toMatchObject({ id: newer, state: "QUEUED", source_version: v + 1 });
+    expect(second).toMatchObject({ state: "QUEUED", source_version: v });
+
+    // The source reaches v + 1: a sweep there cancels the job at v and finds the newer one already queued.
+    await republishSource(ctx, docId, "Hello again");
+    expect((await sourceHead(ctx, docId)).version).toBe(v + 1);
+    const next = await enqueueStale(ctx, { locales: ["de"] });
+    expect(next).toMatchObject({ enqueued: 0, duplicates: 1, cancelledStale: 1 });
+    const after = await jobs(sql);
+    expect(after.map((j) => [j.id, j.state])).toEqual([[newer, "QUEUED"], [second!.id, "CANCELLED"]]);
   });
 });
 
@@ -312,5 +339,108 @@ test("retryJobs narrows field_paths to the fields a pending draft does not alrea
     await aiDraft(ctx, docId, { title: "Hallo", legal: "AGB gelten" });
     expect(await retryJobs(ctx, { ids: [job!.id] })).toEqual({ retried: 1, skipped: [] });
     expect((await jobs(sql))[0]).toMatchObject({ state: "QUEUED", field_paths: ["body", "tags"] });
+  });
+});
+
+test("retryJobs skips a job whose translation was meanwhile approved and published at the same source version", async () => {
+  await withTestDb(async (sql) => {
+    const docId = await migrateAndSeed(sql);
+    const ctx = ctxFor(sql, model);
+    await enqueueStale(ctx, { locales: ["de"] });
+    const [job] = await jobs(sql);
+    await sql`update ai_jobs set state = 'FAILED', error_message = 'boom'`;
+    await aiDraft(ctx, docId, allDe());
+    await approve(ctx, { docId, locale: "de" });
+    await publish(ctx, { docId, locale: "de" });
+    const doc = await getDocument(ctx, { collection: "posts", docId });
+    expect(doc!.locales.de!.draft).toBeNull(); // only the published head can tell the retry it is current
+
+    expect(await retryJobs(ctx, { ids: [job!.id] })).toEqual({
+      retried: 0, skipped: [{ id: job!.id, reason: "draft already current" }],
+    });
+    expect((await jobs(sql))[0]).toMatchObject({ state: "FAILED", error_message: "boom" });
+  });
+});
+
+test("retryJobs narrows field_paths to the fields the published target head does not already cover", async () => {
+  await withTestDb(async (sql) => {
+    const docId = await migrateAndSeed(sql);
+    const ctx = ctxFor(sql, model);
+    await enqueueStale(ctx, { locales: ["de"] });
+    const [job] = await jobs(sql);
+    await sql`update ai_jobs set state = 'FAILED', error_message = 'boom'`;
+    await aiDraft(ctx, docId, { title: "Hallo", legal: "AGB gelten" });
+    await approve(ctx, { docId, locale: "de" });
+    await publish(ctx, { docId, locale: "de" });
+    expect(await retryJobs(ctx, { ids: [job!.id] })).toEqual({ retried: 1, skipped: [] });
+    expect((await jobs(sql))[0]).toMatchObject({ state: "QUEUED", field_paths: ["body", "tags"] });
+  });
+});
+
+test("retryJobs reports active job exists when a sibling is queued between its check and its update (23505)", async () => {
+  await withTestDb(async (sql) => {
+    const docId = await migrateAndSeed(sql);
+    const ctx = ctxFor(sql, model);
+    await enqueueStale(ctx, { locales: ["de"] });
+    const [job] = await jobs(sql);
+    await cancelJobs(ctx, { ids: [job!.id] });
+    const other = await extraConnection(sql);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    try {
+      let inserted!: () => void;
+      const holding = new Promise<void>((r) => { inserted = r; });
+      // An uncommitted QUEUED sibling: invisible to retryOne's active check, but its UPDATE to QUEUED waits on the
+      // unique index entry and fails with 23505 once the sibling commits.
+      const sibling = other.begin(async (tx) => {
+        await tx`insert into ai_jobs (doc_id, locale, field_paths, source_version, state)
+          values (${docId}, 'de', ${FIELDS}::text[], ${job!.source_version}, 'QUEUED')`;
+        inserted();
+        await gate;
+      });
+      await holding;
+      // A third connection, opened while `sql` is still free: both others are busy below.
+      const probe = await extraConnection(sql);
+      const retry = retryJobs(ctx, { ids: [job!.id, 999_999] });
+      // Wait until the retry's UPDATE is blocked on the sibling's transaction.
+      try {
+        for (let i = 0; ; i++) {
+          const [w] = await probe`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()
+            and query like '%update ai_jobs set state = ''QUEUED''%'`;
+          if (w) break;
+          if (i > 500) throw new Error("the retry never waited on the sibling");
+          await new Promise((r) => setTimeout(r, 10));
+        }
+      } finally {
+        await probe.end();
+      }
+      release();
+      await sibling;
+      expect(await retry).toEqual({
+        retried: 0, skipped: [{ id: job!.id, reason: "active job exists" }, { id: 999_999, reason: "not found" }],
+      });
+      expect((await jobs(sql))[0]).toMatchObject({ id: job!.id, state: "CANCELLED" });
+    } finally {
+      release();
+      await other.end();
+    }
+  });
+});
+
+test("listJobs afterId returns the next page with no overlap", async () => {
+  await withTestDb(async (sql) => {
+    await migrateAndSeed(sql);
+    const ctx = ctxFor(sql, model);
+    await seedPost(ctx);
+    await seedPost(ctx);
+    await enqueueStale(ctx, { locales: ["de"] });
+    const all = (await listJobs(ctx)).jobs.map((j) => j.id);
+    expect(all).toHaveLength(3);
+    const first = (await listJobs(ctx, { limit: 2 })).jobs.map((j) => j.id);
+    expect(first).toEqual(all.slice(0, 2));
+    const second = (await listJobs(ctx, { limit: 2, afterId: first.at(-1)! })).jobs.map((j) => j.id);
+    expect(second).toEqual(all.slice(2));
+    expect((await listJobs(ctx, { afterId: all.at(-1)! })).jobs).toEqual([]);
+    await expect(listJobs(ctx, { afterId: -1 })).rejects.toBeInstanceOf(ValidationError);
   });
 });

@@ -4,7 +4,9 @@ import type { Sql } from "postgres";
 import type { LanguageModel } from "ai";
 import { NotFoundError, ValidationError, createDocument, deleteDocument, publish, saveDraft, type AiProvenanceInput } from "@mogging/core";
 import { markdownToTree } from "@mogging/markdown";
-import { claim, complete, reap, release, renewLease, type CallCost, type ClaimResult, type Completion } from "../src/claim.js";
+import {
+  claim, complete, fallbackFailure, reap, release, renewLease, type CallCost, type ClaimResult, type Completion,
+} from "../src/claim.js";
 import { cancelJobs, enqueueStale, type JobRow } from "../src/jobs.js";
 import type { AiConfigInput, AiCtx } from "../src/config.js";
 import { ctxFor, extraConnection, migrateAndSeed } from "./fixtures.js";
@@ -627,6 +629,35 @@ test("a throwing completion still records the spend", async () => withTestDb(asy
   expect(await spent(sql)).toBe(before + 500);
   expect(await jobState(sql, job.id)).toMatchObject({ state: "RUNNING", locked_by: lease });
   expect(await sql`select 1 from document_localized where locale = 'de'`).toHaveLength(0);
+}));
+
+test("a failing fallback rethrows the original error with the fallback failure and the lost call ids attached", async () => withTestDb(async (sql) => {
+  const { ctx } = await setup(sql);
+  const { job, lease } = await claimed(ctx);
+  const before = await spent(sql);
+  const c1 = call(120, false);
+  const c2 = call(380, true);
+  // An undeclared field makes the first transaction throw; every later transaction (the fallback) fails to start.
+  const d = await draft(sql, job, [c1, c2], { title: "Hallo", nope: "x" });
+  let begins = 0;
+  const down = new Error("fallback down");
+  const flaky = new Proxy(sql, {
+    get(target, prop, receiver) {
+      if (prop !== "begin") return Reflect.get(target, prop, receiver);
+      return (...args: unknown[]) => (begins++ === 0
+        ? (target.begin as (...a: unknown[]) => Promise<unknown>)(...args)
+        : Promise.reject(down));
+    },
+  });
+  const err = await complete({ ...ctx, sql: flaky }, job, lease, d).catch((e: unknown) => e);
+  expect(begins).toBe(2);
+  expect(err).toBeInstanceOf(ValidationError); // the ORIGINAL error, class kept
+  expect((err as Error).message).toMatch(/undeclared field/);
+  expect(fallbackFailure(err)).toEqual({ error: down, message: "fallback down", callIds: [c1.callId, c2.callId] });
+  expect(Object.keys(err as object)).not.toContain("fallbackError"); // non-enumerable
+  expect(await provenance(sql)).toEqual([]);
+  expect(await spent(sql)).toBe(before);
+  expect(fallbackFailure(new Error("plain"))).toBeUndefined();
 }));
 
 // ---- per-collection scope -----------------------------------------------------------------------------

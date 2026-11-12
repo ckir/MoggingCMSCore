@@ -22,19 +22,21 @@ test.skipIf(!process.env.MOGGING_LIVE || !process.env.OPENROUTER_API_KEY)(
     const report = await compile(ctx, { locales: ["de"], budgetUsd: 0.05 });
     expect(report.enqueue.enqueued).toBe(1);
 
-    const [job] = await sql`select state from ai_jobs where doc_id = ${docId} and locale = 'de'`;
+    const [job] = await sql`select state, error_message from ai_jobs where doc_id = ${docId} and locale = 'de'`;
+    // The job's own error_message names the cause (a provider or validation message; it never holds the key).
+    const why = `job state ${String(job!.state)}, error_message: ${String(job!.error_message)}`;
     // The spike measured about 10 percent validation rejections for this model, so FAILED is an accepted outcome.
-    expect(["COMPLETED", "FAILED"]).toContain(job!.state);
+    expect(["COMPLETED", "FAILED"], why).toContain(job!.state);
     const rows = await listProvenance(ctx, { docId, locale: "de" });
-    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length, why).toBeGreaterThan(0);
     if (job!.state === "COMPLETED") {
-      expect(rows.some((r) => !r.discarded)).toBe(true);
+      expect(rows.some((r) => !r.discarded), why).toBe(true);
     } else {
-      expect(rows.every((r) => r.discarded && r.discardReason?.startsWith("validation:"))).toBe(true);
+      expect(rows.every((r) => r.discarded && r.discardReason?.startsWith("validation:")), why).toBe(true);
     }
     const micros = rows.reduce((n, r) => n + r.costMicros, 0);
     expect(micros).toBeGreaterThan(0);
     expect(micros).toBeLessThan(2000);
   }),
-  120_000,
+  300_000,
 );

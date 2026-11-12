@@ -527,6 +527,42 @@ test("a throwing completion is counted in errors and the run continues to the ne
   }
 }));
 
+test("a completion whose fallback fails too logs fallback_failed with the lost call ids", async () => withTestDb(async (sql) => {
+  await migrateAndSeed(sql);
+  const extra = await extraConnection(sql);
+  try {
+    const model = mockModel([identity]);
+    // After the call, the document is deleted (complete's first transaction throws) and the next transaction (the
+    // cost-only fallback) fails to start; every other transaction runs normally.
+    let armed = false;
+    let begins = 0;
+    const flaky = new Proxy(sql, {
+      get(target, prop, receiver) {
+        if (prop !== "begin") return Reflect.get(target, prop, receiver);
+        return (...args: unknown[]) => (armed && begins++ === 1
+          ? Promise.reject(new Error("fallback down"))
+          : (target.begin as (...a: unknown[]) => Promise<unknown>)(...args));
+      },
+    });
+    const ctx = ctxFor(flaky, model);
+    await enqueueStale(ctx, { locales: ["de"] });
+    const beforeComplete = async (job: { docId: string }) => {
+      await deleteDocument(other(extra), { docId: job.docId });
+      armed = true;
+    };
+    const lines: string[] = [];
+    const r = await run(ctx, { hooks: { beforeComplete }, log: (l) => lines.push(l) });
+    expect(r).toEqual(report({ errors: 1, spentMicros: CALL_MICROS }));
+    const [job] = await jobs(sql);
+    expect(job!.state).toBe("RUNNING");
+    expect(await provenance(sql)).toEqual([]); // the spend is recorded nowhere: the log line is the only trace
+    const errorLine = lines.find((l) => l.startsWith(`job=${job!.id} error=`));
+    expect(errorLine).toMatch(/ error=Document .* not found fallback_failed=fallback down calls=[0-9a-f-]{36}$/);
+  } finally {
+    await extra.end();
+  }
+}));
+
 /** Ends the evaluation window (no key): the next guarded call throws LicenceError. Returns the restore function. */
 async function expireLicence(extra: Sql): Promise<() => void> {
   const saved = process.env.MOGGING_LICENSE_KEY;

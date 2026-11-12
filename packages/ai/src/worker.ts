@@ -1,7 +1,9 @@
 import { hostname } from "node:os";
 import { LicenceError, NotFoundError, assertLicensed, getDocument, normalizeLocale } from "@mogging/core";
 import type { AiCtx } from "./config.js";
-import { claim, complete, reap, release, renewLease, type ClaimFilter, type Completion, type CompleteResult } from "./claim.js";
+import {
+  claim, complete, fallbackFailure, reap, release, renewLease, type ClaimFilter, type Completion, type CompleteResult,
+} from "./claim.js";
 import { listGlossary } from "./glossary.js";
 import type { JobRow } from "./jobs.js";
 import { resolveModel } from "./providers.js";
@@ -188,7 +190,9 @@ export async function runWorker(ctx: AiCtx, options: WorkerOptions): Promise<Wor
       report.errors += 1;
       excludeIds.add(job.id);
       log(line("ERROR"));
-      log(`job=${job.id} error=${errorMessage(err)}`);
+      const fallback = fallbackFailure(err);
+      log(`job=${job.id} error=${errorMessage(err)}`
+        + (fallback ? ` fallback_failed=${fallback.message} calls=${fallback.callIds.join(",")}` : ""));
       if (err instanceof LicenceError) throw err;
     }
   }

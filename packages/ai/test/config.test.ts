@@ -181,4 +181,14 @@ describe("priceFor and glossaryModeFor", () => {
     expect(glossaryModeFor(cfg, "unknown")).toBe("warn");
     expect(glossaryModeFor(defineAiConfig(base({ glossary: "strict" })), "unknown")).toBe("strict");
   });
+
+  test("only OWN collection entries count: an inherited entry and a prototype name like constructor are ignored", () => {
+    const inherited = { ...cfg, collections: Object.create({ posts: { translate: "vendor/posts", glossary: "strict" } }) as typeof cfg.collections };
+    expect(priceFor(inherited, "posts")).toEqual({ modelId: "vendor/main", price: P });
+    expect(glossaryModeFor(inherited, "posts")).toBe("warn");
+    expect(priceFor(cfg, "constructor")).toEqual({ modelId: "vendor/main", price: P });
+    expect(glossaryModeFor(cfg, "constructor")).toBe("warn");
+    const inheritedPrice = { ...cfg, prices: Object.create({ "vendor/main": P }) as typeof cfg.prices };
+    expect(() => priceFor(inheritedPrice, "pages")).toThrow(ValidationError);
+  });
 });

@@ -1,13 +1,14 @@
 import type { Sql, TransactionSql } from "postgres";
 import {
   ValidationError, assertLicensed, getDocument, getSyncState, normalizeLocale,
-  type Collection, type DocumentRecord, type Field, type Snapshot, type SyncStateRow,
+  type Collection, type DocumentRecord, type Snapshot, type SyncStateRow,
 } from "@mogging/core";
 import { priceFor, type AiCtx } from "./config.js";
+import { jobContext } from "./context.js";
 import { estimateRequest, planRequests } from "./estimate.js";
 import { isTranslatable } from "./fields.js";
 import { listGlossary } from "./glossary.js";
-import { contextValues, maxTemplateTokens } from "./prompt.js";
+import { maxTemplateTokens } from "./prompt.js";
 import { getBudgets, scopesFor, type BudgetRow } from "./budget.js";
 import { listLimit } from "./provenance.js";
 
@@ -25,23 +26,20 @@ export type JobRow = {
   costEstimateMicros: number; budgetScope: string | null; errorMessage: string | null; createdAt: Date; updatedAt: Date;
 };
 
-type Row = {
+/** An ai_jobs row joined with its document's collection, as postgres.js returns it. */
+export type Row = {
   id: string; doc_id: string; collection: string; locale: string; field_paths: string[]; source_version: number; state: string;
   attempts: number; max_attempts: number; run_after: Date; locked_until: Date | null; locked_by: string | null;
   cost_estimate_micros: string; budget_scope: string | null; error_message: string | null; created_at: Date; updated_at: Date;
 };
 
 // bigint columns arrive as strings from postgres.js.
-const toJobRow = (r: Row): JobRow => ({
+export const toJobRow = (r: Row): JobRow => ({
   id: Number(r.id), docId: r.doc_id, collection: r.collection, locale: r.locale, fieldPaths: [...r.field_paths],
   sourceVersion: r.source_version, state: r.state, attempts: r.attempts, maxAttempts: r.max_attempts, runAfter: r.run_after,
   lockedUntil: r.locked_until, lockedBy: r.locked_by, costEstimateMicros: Number(r.cost_estimate_micros),
   budgetScope: r.budget_scope, errorMessage: r.error_message, createdAt: r.created_at, updatedAt: r.updated_at,
 });
-
-/** The JSON rendering of the non-translate part of the user message, as buildPrompt renders it (indent 1). */
-const payloadChars = (siblings: Record<string, unknown>, shared: Record<string, unknown>, glossary: unknown[]): number =>
-  JSON.stringify({ siblings, shared, glossary }, null, 1).length;
 
 /** Fields of `collection` named in `names`, in SCHEMA order (the key order of `collection.fields`). */
 const inSchemaOrder = (collection: Collection, names: Iterable<string>): string[] => {
@@ -58,6 +56,12 @@ function notYetDrafted(draft: Snapshot | null, source: Snapshot, fields: string[
   return fields.filter((f) => !(Object.hasOwn(draft.sourceHashes, f) && draft.sourceHashes[f] === source.sourceHashes[f]));
 }
 
+/** The fields whose PUBLISHED target head does not already carry the source head's hash (getSyncState's `current`). */
+function notYetPublished(published: Snapshot | null, source: Snapshot, fields: string[]): string[] {
+  if (published === null) return fields;
+  return fields.filter((f) => !(Object.hasOwn(published.sourceHashes, f) && published.sourceHashes[f] === source.sourceHashes[f]));
+}
+
 /**
  * Spec 8.5's enqueue estimate over the STORED values: 2 x the sum of estimateRequest over the planned requests (a
  * standard call plus a possible strict retry each). A field too large for the window is left out of the estimate.
@@ -68,18 +72,7 @@ function estimateJob(
 ): number {
   const sourceLocale = ctx.config.locales.source;
   const { price } = priceFor(ctx.ai, collection.name);
-  const target = doc.locales[locale];
-  const job = new Set(fields);
-  const siblingFields: Record<string, Field> = {};
-  const sharedFields: Record<string, Field> = {};
-  for (const [name, f] of Object.entries(collection.fields)) {
-    if (!f.localized) sharedFields[name] = f;
-    else if (!job.has(name)) siblingFields[name] = f;
-  }
-  const siblings = contextValues(siblingFields, (target?.draft ?? target?.published)?.data ?? {}, ctx.ai.contextCharLimit);
-  const shared = contextValues(sharedFields, doc.shared.published?.data ?? {}, ctx.ai.contextCharLimit);
-  const contextChars = payloadChars(siblings, shared, glossary);
-  const glossaryChars = payloadChars({}, {}, glossary);
+  const { contextChars, glossaryChars } = jobContext(ctx.ai, collection, doc, locale, fields, glossary);
   const templateTokens = maxTemplateTokens();
 
   let candidates = fields.map((name) => ({ name, wire: source.data[name] }));
@@ -207,9 +200,11 @@ export async function enqueueStale(ctx: AiCtx, input: EnqueueInput): Promise<Enq
       report.cancelledStale += cancelled.count;
     }
     for (const p of pairs) {
+      // `<`, not `<>`: source versions only increase, and a concurrent sweep that read a NEWER version may already
+      // have queued its job; cancelling that one would leave only this older job, which then self-cancels.
       const cancelled = await tx`update ai_jobs set state = 'CANCELLED',
           error_message = ${`source moved before claim (${ctx.actor})`}, updated_at = clock_timestamp()
-        where doc_id = ${p.docId} and locale = ${p.locale} and state = 'QUEUED' and source_version <> ${p.sourceVersion}`;
+        where doc_id = ${p.docId} and locale = ${p.locale} and state = 'QUEUED' and source_version < ${p.sourceVersion}`;
       report.cancelledStale += cancelled.count;
       const inserted = await tx`insert into ai_jobs
           (doc_id, locale, field_paths, source_version, source_hashes, state, max_attempts, cost_estimate_micros, budget_scope)
@@ -228,14 +223,21 @@ export async function enqueueStale(ctx: AiCtx, input: EnqueueInput): Promise<Enq
   return report;
 }
 
-/** Jobs ordered by id with the current month's budgets. Not licence-guarded: a read. */
+/**
+ * Jobs ordered by id (oldest first) with the current month's budgets. `afterId` is the cursor: only jobs with a
+ * greater id, so pass the last id of a page to read the next one. Not licence-guarded: a read.
+ */
 export async function listJobs(
-  ctx: AiCtx, input: { state?: string; collection?: string; limit?: number } = {},
+  ctx: AiCtx, input: { state?: string; collection?: string; limit?: number; afterId?: number } = {},
 ): Promise<{ jobs: JobRow[]; budgets: BudgetRow[] }> {
   const limit = listLimit(input.limit);
+  if (input.afterId !== undefined && !(Number.isSafeInteger(input.afterId) && input.afterId >= 0)) {
+    throw new ValidationError(`afterId must be a non-negative integer, got ${input.afterId}`);
+  }
   const { sql } = ctx;
   const rows = (await sql`select j.*, d.collection from ai_jobs j join documents d on d.id = j.doc_id
     where true
+      ${input.afterId === undefined ? sql`` : sql`and j.id > ${input.afterId}`}
       ${input.state === undefined ? sql`` : sql`and j.state = ${input.state}`}
       ${input.collection === undefined ? sql`` : sql`and d.collection = ${input.collection}`}
     order by j.id
@@ -251,6 +253,7 @@ function checkIds(ids: unknown): number[] {
 }
 
 type RetryOutcome = { retried: true } | { reason: string };
+const UNIQUE_VIOLATION = "23505";
 
 async function retryOne(ctx: AiCtx, tx: TransactionSql, id: number): Promise<RetryOutcome> {
   const [row] = (await tx`select j.*, d.collection from ai_jobs j join documents d on d.id = j.doc_id
@@ -269,7 +272,9 @@ async function retryOne(ctx: AiCtx, tx: TransactionSql, id: number): Promise<Ret
   if (active) return { reason: "active job exists" };
   const draft = doc.locales[job.locale]?.draft ?? null;
   if (draft?.state === "DRAFT_HUMAN") return { reason: "human draft pending" };
-  const fields = notYetDrafted(draft, source, inSchemaOrder(collection, job.fieldPaths));
+  // As at enqueue: a field the published target head already carries at the source hash is not bought again either.
+  const published = doc.locales[job.locale]?.published ?? null;
+  const fields = notYetPublished(published, source, notYetDrafted(draft, source, inSchemaOrder(collection, job.fieldPaths)));
   if (fields.length === 0) return { reason: "draft already current" };
 
   await tx`update ai_jobs set state = 'QUEUED', attempts = 0, error_message = ${`retried by ${ctx.actor}`},
@@ -281,7 +286,8 @@ async function retryOne(ctx: AiCtx, tx: TransactionSql, id: number): Promise<Ret
 
 /**
  * FAILED or CANCELLED -> QUEUED (attempts 0, error_message `retried by <actor>`), one transaction per id, under the
- * gates of enqueueStale. A job a pending draft partly covers is narrowed to its other fields. Not licence-guarded.
+ * gates of enqueueStale. A job a pending draft or the published target head partly covers is narrowed to its other
+ * fields. A sibling queued concurrently (unique violation) is reported `active job exists`. Not licence-guarded.
  */
 export async function retryJobs(
   ctx: AiCtx, input: { ids: number[] },
@@ -290,7 +296,14 @@ export async function retryJobs(
   let retried = 0;
   const skipped: Array<{ id: number; reason: string }> = [];
   for (const id of ids) {
-    const out = await ctx.sql.begin((tx) => retryOne(ctx, tx, id));
+    let out: RetryOutcome;
+    try {
+      out = await ctx.sql.begin((tx) => retryOne(ctx, tx, id));
+    } catch (err) {
+      // uq_ai_jobs_active: a sibling was queued after retryOne's active check (its only write is the final UPDATE).
+      if ((err as { code?: unknown } | null)?.code !== UNIQUE_VIOLATION) throw err;
+      out = { reason: "active job exists" };
+    }
     if ("retried" in out) retried += 1;
     else skipped.push({ id, reason: out.reason });
   }
