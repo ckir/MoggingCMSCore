@@ -40,9 +40,19 @@ function fieldSchema(field: Field): z.ZodType {
     case "reference": return z.string();
     case "number": return z.number();
     case "boolean": return z.boolean();
-    case "list": return z.array(fieldSchema(field.item));
-    case "object": return z.object(fieldShape(field.fields));
+    case "list": return z.array(nestedSchema(field.item));
+    case "object": return z.object(objectShape(field.fields));
   }
+}
+
+// Core stores a nested object value or list element as null where it is absent, so the wire schema allows null there.
+function nestedSchema(field: Field): z.ZodType {
+  return fieldSchema(field).nullable();
+}
+
+// Core also lets a stored object omit any declared key, so every key of a nested object is optional.
+function objectShape(fields: Record<string, Field>): Record<string, z.ZodType> {
+  return Object.fromEntries(Object.entries(fields).map(([k, f]) => [k, nestedSchema(f).optional()]));
 }
 
 function fieldShape(fields: Record<string, Field>): Record<string, z.ZodType> {
@@ -80,8 +90,13 @@ function sameKeys(a: Record<string, unknown>, b: Record<string, unknown>): boole
 }
 
 function walk(field: Field, source: unknown, draft: unknown, path: string, out: string[]): void {
+  if (field.kind === "richText") return; // compared by the rich-text validator, not here
+  // A null element or object value is a value, not text: it must stay null and nothing may become null.
+  if (source === null || draft === null) {
+    if (source !== draft) out.push(`${path}: non-text value changed`);
+    return;
+  }
   switch (field.kind) {
-    case "richText": return; // compared by the rich-text validator, not here
     case "text":
       if (typeof draft !== "string") out.push(`${path}: expected text`);
       return;

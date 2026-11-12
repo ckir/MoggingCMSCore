@@ -65,6 +65,18 @@ describe("outputSchema", () => {
     expect(schema.safeParse({ fields: { title: "x" }, glossaryTermsUsed: [] }).success).toBe(false);
   });
 
+  test("nested object keys are optional and nested values and list items may be null", () => {
+    const s = outputSchema({ o: object({ n: number(), t: text() }), l: list(text()) });
+    expect(s.safeParse({ fields: { o: { t: "x" }, l: ["a", null] }, glossaryTermsUsed: [] }).success).toBe(true);
+    expect(s.safeParse({ fields: { o: { n: null, t: null }, l: [] }, glossaryTermsUsed: [] }).success).toBe(true);
+    expect(s.safeParse({ fields: { o: {}, l: [null] }, glossaryTermsUsed: [] }).success).toBe(true);
+    // top-level field values stay mandatory and non-null
+    expect(s.safeParse({ fields: { o: { t: "x" } }, glossaryTermsUsed: [] }).success).toBe(false);
+    expect(s.safeParse({ fields: { o: null, l: [] }, glossaryTermsUsed: [] }).success).toBe(false);
+    // present values keep their type
+    expect(s.safeParse({ fields: { o: { n: "1" }, l: [] }, glossaryTermsUsed: [] }).success).toBe(false);
+  });
+
   test("maps every kind and strips unknown keys", () => {
     const s = outputSchema({
       r: richText(), n: number(), b: boolean(), d: dateTime(), ref: reference("posts"),
@@ -103,6 +115,13 @@ describe("stringLeaves", () => {
       { path: "$.items[1].label", text: "L1" },
       { path: "$.last", text: "Z" },
     ]);
+  });
+
+  test("skips null and undefined leaves", () => {
+    expect(stringLeaves(["a", null, undefined, "b"])).toEqual([
+      { path: "$[0]", text: "a" }, { path: "$[3]", text: "b" },
+    ]);
+    expect(stringLeaves({ a: null, b: "x" })).toEqual([{ path: "$.b", text: "x" }]);
   });
 
   test("honours a starting path", () => {
@@ -162,7 +181,22 @@ describe("checkShape", () => {
   test("reports a wrongly shaped draft instead of throwing", () => {
     expect(checkShape(tags, ["a"], "a")).toEqual(["$: expected a list"]);
     expect(checkShape(obj, { n: 1, t: "x" }, ["a"])).toEqual(["$: expected an object"]);
-    expect(checkShape(obj, { n: 1, t: "x" }, null)).toEqual(["$: expected an object"]);
+    expect(checkShape(obj, { n: 1, t: "x" }, null)).toEqual(["$: non-text value changed"]);
+  });
+
+  test("an object source omitting an optional key passes with an identity draft and rejects an added key", () => {
+    expect(checkShape(obj, { t: "x" }, { t: "y" })).toEqual([]);
+    expect(checkShape(obj, { t: "x" }, { t: "y", n: 1 })).toEqual(["$: object keys differ"]);
+    expect(checkShape(obj, { t: "x" }, { n: 1 })).toEqual(["$: object keys differ"]);
+  });
+
+  test("null elements and values must stay null", () => {
+    expect(checkShape(tags, ["a", null], ["b", null])).toEqual([]);
+    expect(checkShape(tags, ["a", null], ["b", "c"])).toEqual(["$[1]: non-text value changed"]);
+    expect(checkShape(tags, ["a", "b"], ["a", null])).toEqual(["$[1]: non-text value changed"]);
+    expect(checkShape(obj, { n: null, t: "x" }, { n: null, t: "y" })).toEqual([]);
+    expect(checkShape(obj, { n: null, t: "x" }, { n: 1, t: "y" })).toEqual(["$.n: non-text value changed"]);
+    expect(checkShape(obj, { n: 1, t: null }, { n: 1, t: "y" })).toEqual(["$.t: non-text value changed"]);
   });
 
   test("a text leaf must stay a string", () => {
