@@ -309,7 +309,9 @@ published_at timestamptz null, published_by text null, unpublished_at timestampt
 (doc_id, locale) where is_head_draft; index (doc_id, locale, version); index (doc_id, locale,
 published_at) for time-travel. `state` is one of PUBLISHED, DRAFT_HUMAN, DRAFT_AI, APPROVED.
 
-`content_provenance(id, doc_id, locale, version int null, field_path text null, job_id null,
+`content_provenance(id, doc_id, locale, version int null, field_path text null,
+superseded_version int null (the draft version this row replaced, spec 8.1), call_id uuid null (every row
+one provider call produced shares it, kept or discarded), job_id null,
 model_id, prompt_version, prompt_tokens, completion_tokens, cost_micros, edited bool, discarded bool,
 discard_reason text null, warnings text[] not null default '{}', acknowledged_warnings text[] null,
 bulk_id uuid null, approved_by, approved_at, created_at)`, with a partial index on `bulk_id` where not null. `warnings` holds the validator warnings
@@ -328,7 +330,8 @@ the reaper. A job covers all stale fields of one (document, locale) at one sourc
 doc_id, locale, draft_version, added_by, added_at)`; publishing a release flips every item's head in one transaction.
 
 `glossary(id, source_locale, target_locale, term, translation, accepted_forms text[], do_not_translate
-bool, note)`.
+bool, note, updated_by text not null, updated_at timestamptz not null default clock_timestamp())`;
+unique (source_locale, target_locale, term).
 
 `ai_budgets(id, scope text, period_start date, cap_micros bigint, spent_micros bigint)`; `scope` is
 `global` or `collection:<name>`; one row per scope per calendar month. There is no reservation
@@ -579,6 +582,8 @@ always writes empties explicitly and never writes a bare key, so an export-then-
 preserves suppression.
 
 **Implementation notes (plan 2).** Slugs may contain `/` (nested folders) and must be lowercase. `.md` and `.mdx` are both accepted and the extension sets the parse mode. Undeclared front-matter keys are a per-file error. References in front matter are a slug or a UUID. Reference slugs are case-insensitive (normalized like slugs); a null entry where a reference is declared is a per-file error. A whitespace-only body means absent. An unchanged file is skipped, as approved in F5.
+
+**Implementation notes (plan 3).** F1: AI settings are built by `defineAiConfig` in `@mogging/ai`, exported next to the core `config` from `mogging.config.ts`; core's `MoggingConfig` is unchanged. F2: OpenRouter is built in, and a `custom` provider takes any AI SDK `LanguageModel` keyed by model id; every model named anywhere needs a price-table entry, because `content_provenance.model_id` is `not null`. F3: `@mogging/ai` owns the SQL on `ai_jobs`, `ai_budgets`, `glossary` and the discarded-cost provenance row, with one lock order everywhere (`ai_budgets` rows, global first, then the `ai_jobs` row, then `documents` through `recordAiDraft`); the reaper commits in its own transaction before each claim. F4: only localized fields with a `text` or `richText` leaf are sent to the model; other stale or missing localized fields are reported as `not translatable` and never copied. F5: `content_provenance.superseded_version`, `call_id` and the glossary unique index on (source locale, target locale, term) were added to migration 0001, which is still unreleased; `recordAiDraft` fills `superseded_version` when it supersedes a pending AI draft. F6: the monthly cap is enforced inside the claim transaction under the budget row lock (one transaction, not one statement), and a refused job stays `QUEUED` with a `budget_exhausted:` message and a later `run_after`; the per-run budget is an in-memory tally that stops the run and marks nothing. A call's tokens and cost are apportioned over the fields of its request by their share of the translated characters (floor rounding, remainder on the first field), so the per-field rows sum to the call; every call that happened gets a `call_id` and is recorded (a kept row per field, or one discarded row for the call). The AI SDK is called with `maxRetries: 0`, so the only retry is the strict re-prompt and every attempt is counted and paid once. If the completion transaction throws after a provider call, a separate cost-only transaction records the spend; it locks the budget rows first and only then checks whether the first transaction committed (by looking for a provenance row with one of the call ids), so an ambiguous commit is never debited twice. Enqueue drops fields that a pending `DRAFT_AI` or `APPROVED` draft head already covers at the source hash, so a second compile does not buy them again; a pending `DRAFT_HUMAN` skips the pair and cancels its `QUEUED` job. Every comparison and stored timestamp in the job queue (leases, back-off, the fence) and the budget month use the database clock, not the worker host's.
 
 ## 10. Left to the builder, and to the owner
 

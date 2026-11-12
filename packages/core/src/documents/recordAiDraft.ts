@@ -15,6 +15,7 @@ export type AiProvenanceInput = {
   completionTokens: number;
   costMicros: number;
   jobId?: number;
+  callId?: string;
   warnings?: string[];
 };
 
@@ -78,11 +79,14 @@ export async function recordAiDraft(ctx: Ctx, input: RecordAiDraftInput): Promis
 
     // Base = draft head, else published head, else the latest row by version in any state (e.g. after
     // unpublish), else none. Read under the documents lock before any head flag is cleared.
-    type Base = { state: string; is_head_draft: boolean; data: Record<string, unknown>; source_hashes: Record<string, string> };
-    const [base] = (await tx`select state, is_head_draft, data, source_hashes from document_localized
+    type Base = { version: number; state: string; is_head_draft: boolean; data: Record<string, unknown>; source_hashes: Record<string, string> };
+    const [base] = (await tx`select version, state, is_head_draft, data, source_hashes from document_localized
       where doc_id = ${input.docId} and locale = ${locale}
       order by is_head_draft desc, is_head_published desc, version desc limit 1`) as unknown as Array<Base | undefined>;
     if (base && base.is_head_draft && base.state === "DRAFT_HUMAN") return { cancelled: "DRAFT_HUMAN" };
+
+    // The draft head this write replaces, when it is an AI draft or an approved one (spec 8.1).
+    const superseded = base && base.is_head_draft && (base.state === "DRAFT_AI" || base.state === "APPROVED") ? base.version : null;
 
     const data: Record<string, unknown> = stripTopLevelNulls({ ...(base?.data ?? {}), ...normalized });
     const hashes: Record<string, string> = { ...(base?.source_hashes ?? {}) };
@@ -104,9 +108,10 @@ export async function recordAiDraft(ctx: Ctx, input: RecordAiDraftInput): Promis
 
     for (const p of input.provenance) {
       await tx`insert into content_provenance
-          (doc_id, locale, version, field_path, job_id, model_id, prompt_version, prompt_tokens,
-           completion_tokens, cost_micros, warnings, created_at)
-        values (${input.docId}, ${locale}, ${version}, ${p.fieldPath}, ${p.jobId ?? null}, ${p.modelId},
+          (doc_id, locale, version, field_path, superseded_version, call_id, job_id, model_id, prompt_version,
+           prompt_tokens, completion_tokens, cost_micros, warnings, created_at)
+        values (${input.docId}, ${locale}, ${version}, ${p.fieldPath}, ${superseded}, ${p.callId ?? null},
+                ${p.jobId ?? null}, ${p.modelId},
                 ${p.promptVersion}, ${p.promptTokens}, ${p.completionTokens}, ${p.costMicros},
                 ${p.warnings ?? []}, ${t})`;
     }

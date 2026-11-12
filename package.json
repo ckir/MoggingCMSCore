@@ -5,7 +5,7 @@
   "license": "SEE LICENSE IN LICENSE.md",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/markdown"
+    "typecheck": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/markdown && tsc --noEmit -p packages/ai"
   },
   "devDependencies": {
     "typescript": "^5",

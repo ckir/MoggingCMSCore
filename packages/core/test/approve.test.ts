@@ -7,7 +7,7 @@ import {
 import { ctxFor, extraConnection, insertPublishedLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
-const prov = (fieldPath: string, extra: { warnings?: string[]; jobId?: number } = {}) => ({
+const prov = (fieldPath: string, extra: { warnings?: string[]; jobId?: number; callId?: string } = {}) => ({
   fieldPath, modelId: "m1", promptVersion: "p1", promptTokens: 10, completionTokens: 20, costMicros: 300, ...extra,
 });
 
@@ -457,4 +457,77 @@ test("approveClean skips a draft that a human superseded between the scan and th
     const [{ n }] = await sql`select count(*)::int as n from content_provenance where bulk_id is not null`;
     expect(n).toBe(0);
   } finally { await other.end(); }
+}));
+
+test("superseding a DRAFT_AI head records superseded_version on the new provenance rows", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  const input = { docId, locale: "de", sourceVersion: 1, sourceHashes: hashes };
+  expect(await recordAiDraft(ctx, { ...input, fields: { title: "Hallo" }, provenance: [prov("title")] })).toEqual({ version: 1 });
+  expect(await recordAiDraft(ctx, { ...input, fields: { title: "Hallo!", body: "Welt" }, provenance: [prov("title"), prov("body")] }))
+    .toEqual({ version: 2 });
+  const v1 = await sql`select superseded_version from content_provenance where doc_id = ${docId} and version = 1`;
+  expect(v1.map((r) => r.superseded_version)).toEqual([null]);
+  const v2 = await sql`select superseded_version from content_provenance where doc_id = ${docId} and version = 2`;
+  expect(v2).toHaveLength(2);
+  expect(v2.map((r) => r.superseded_version)).toEqual([1, 1]);
+}));
+
+test("superseding an APPROVED head records the APPROVED version as superseded_version", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  const input = { docId, locale: "de", sourceVersion: 1, sourceHashes: hashes };
+  expect(await recordAiDraft(ctx, { ...input, fields: { title: "Hallo" }, provenance: [prov("title")] })).toEqual({ version: 1 });
+  expect(await approve(ctx, { docId, locale: "de" })).toEqual({ version: 2 });
+  expect(await recordAiDraft(ctx, { ...input, fields: { title: "Hallo!", body: "Welt" }, provenance: [prov("title"), prov("body")] }))
+    .toEqual({ version: 3 });
+  const v3 = await sql`select superseded_version from content_provenance where doc_id = ${docId} and version = 3`;
+  expect(v3).toHaveLength(2);
+  expect(v3.map((r) => r.superseded_version)).toEqual([2, 2]);
+}));
+
+test("a first AI draft over a published head records superseded_version null", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  await insertPublishedLocalized(sql, docId, "de", 1, { title: "Pub" }, { title: hashes.title });
+  expect(await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { body: "Welt" }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("body")],
+  })).toEqual({ version: 2 });
+  const rows = await sql`select superseded_version from content_provenance where doc_id = ${docId} and version = 2`;
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.superseded_version).toBeNull();
+}));
+
+test("a provenance entry with callId stores it; without, call_id is null", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  const callId = "3f2b8c1e-5d4a-4e7b-9a6c-0d1e2f3a4b5c";
+  await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { title: "Hallo", body: "Welt" }, sourceVersion: 1, sourceHashes: hashes,
+    provenance: [prov("title", { callId }), prov("body")],
+  });
+  const rows = await sql`select field_path, call_id from content_provenance where doc_id = ${docId} order by field_path`;
+  expect(rows.map((r) => [r.field_path, r.call_id])).toEqual([["body", null], ["title", callId]]);
+}));
+
+test("approve copies call_id and superseded_version onto the APPROVED version's provenance rows", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  const callId = "3f2b8c1e-5d4a-4e7b-9a6c-0d1e2f3a4b5c";
+  const input = { docId, locale: "de", sourceVersion: 1, sourceHashes: hashes };
+  await recordAiDraft(ctx, { ...input, fields: { title: "Hallo" }, provenance: [prov("title")] });
+  await recordAiDraft(ctx, { ...input, fields: { title: "Hallo!" }, provenance: [prov("title", { callId })] });
+  const approved = await approve(ctx, { docId, locale: "de" });
+  expect(approved).toEqual({ version: 3 });
+  const rows = await sql`select call_id, superseded_version, approved_by from content_provenance
+    where doc_id = ${docId} and version = 3 and field_path = 'title'`;
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ call_id: callId, superseded_version: 1, approved_by: "reviewer" });
+}));
+
+test("glossary rejects a duplicate (source_locale, target_locale, term) and requires updated_by", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  await sql`insert into glossary (source_locale, target_locale, term, updated_by) values ('en', 'de', 'Dashboard', 'owner')`;
+  await expect(sql`insert into glossary (source_locale, target_locale, term, updated_by) values ('en', 'de', 'Dashboard', 'owner')`)
+    .rejects.toMatchObject({ code: "23505" });
+  await sql`insert into glossary (source_locale, target_locale, term, updated_by) values ('en', 'fr', 'Dashboard', 'owner')`;
+  await expect(sql`insert into glossary (source_locale, target_locale, term) values ('en', 'de', 'Other')`)
+    .rejects.toMatchObject({ code: "23502" });
+  const [g] = await sql`select updated_at from glossary where target_locale = 'fr'`;
+  expect(g!.updated_at).toBeInstanceOf(Date);
 }));
