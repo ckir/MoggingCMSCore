@@ -446,6 +446,35 @@ test("a lost lease during the call aborts it and the result is DISCARDED", async
   }
 }));
 
+test("a provider call that hangs past providerTimeoutSeconds is aborted by the timeout and the job backs off", async () => withTestDb(async (sql) => {
+  await migrateAndSeed(sql);
+  let aborted: boolean | null = null;
+  let reason: unknown;
+  const model = asyncMockModel([async (o: MockCallOptions) => {
+    // Hangs for up to 5 s, or until the abort signal fires; the 1 s provider timeout is the only thing that can fire it.
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 5000);
+      o.abortSignal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+    });
+    aborted = o.abortSignal?.aborted ?? null;
+    reason = o.abortSignal?.reason;
+    throw reason instanceof Error ? reason : new Error("provider call hung and was not aborted");
+  }]);
+  // leaseSeconds must exceed providerTimeoutSeconds (defineAiConfig). The abort reason (TimeoutError, not the lease
+  // path's AbortError) is the deterministic evidence that the timeout branch fired. Spend for the aborted call is a
+  // documented known limit and is deliberately not asserted.
+  const ctx = ctxFor(sql, model, { leaseSeconds: 3, providerTimeoutSeconds: 1 });
+  await enqueueStale(ctx, { locales: ["de"] });
+  const r = await run(ctx);
+  expect(aborted).toBe(true);
+  expect((reason as Error).name).toBe("TimeoutError");
+  expect(r).toEqual(report({ requeued: 1 }));
+  const [job] = await jobs(sql);
+  expect(job).toMatchObject({ state: "QUEUED", attempts: 1, run_after_future: true });
+  expect(job!.error_message).toEqual(expect.any(String));
+  expect(job!.error_message).not.toBe("");
+}));
+
 // ---- failures before and after the call ------------------------------------------------------------
 
 test("a missing API key fails the run before any claim", async () => withTestDb(async (sql) => {

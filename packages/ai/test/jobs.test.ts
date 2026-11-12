@@ -288,6 +288,24 @@ test("cancelJobs then retryJobs round-trip the state and record the actor", asyn
   });
 });
 
+test("retryJobs skips jobs that are QUEUED, RUNNING or COMPLETED as not retryable", async () => {
+  await withTestDb(async (sql) => {
+    await migrateAndSeed(sql);
+    const ctx = ctxFor(sql, model);
+    await enqueueStale(ctx, { locales: ["de"] });
+    const [job] = await jobs(sql);
+    const id = job!.id;
+    for (const state of ["QUEUED", "RUNNING", "COMPLETED"]) {
+      const live = state === "RUNNING";
+      await sql`update ai_jobs set state = ${state}, attempts = 2, error_message = 'sentinel',
+        locked_by = ${live ? "w1" : null}, locked_until = ${live ? new Date(Date.now() + 300_000) : null}
+        where id = ${id}`;
+      expect(await retryJobs(ctx, { ids: [id] })).toEqual({ retried: 0, skipped: [{ id, reason: `not retryable (${state})` }] });
+      expect((await jobs(sql))[0]).toMatchObject({ id, state, attempts: 2, error_message: "sentinel" });
+    }
+  });
+});
+
 test("retryJobs skips a job whose source moved, one with an active sibling, one under a human draft and one whose draft is already current", async () => {
   await withTestDb(async (sql) => {
     const moved = await migrateAndSeed(sql);

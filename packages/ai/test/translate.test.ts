@@ -281,6 +281,18 @@ describe("translateJob", () => {
     }
   });
 
+  test("per-field provenance follows the job field order even when a split job ran its requests in another order", async () => {
+    const body = wireTokens("body", SOURCE.body);
+    const others = Math.max(...(["title", "legal", "tags"] as const).map((f) => wireTokens(f, SOURCE[f])));
+    expect(body).toBeGreaterThan(others + 1); // precondition: only body is oversized
+    const job = jobFixture({ fieldPaths: ["title", "body", "legal", "tags"] });
+    const { outcome, model } = await run([identity, identity], { job, ai: { perFieldTokenLimit: others } });
+    expectOk(outcome);
+    // The requests ran as [title, legal, tags] then [body], so acceptance order is not the job field order.
+    expect(model.doGenerateCalls.map((c) => Object.keys(dataOf(c).translate))).toEqual([["title", "legal", "tags"], ["body"]]);
+    expect(outcome.perField.map((p) => p.fieldPath)).toEqual(["title", "body", "legal", "tags"]);
+  });
+
   test("a field that fits only without context gets a noContext request", async () => {
     // Brief numbers adjusted to the real template: maxTemplateTokens() is 1520, so with contextTokens 4096 a 3000
     // character body (T 1001, reserve 1814) does not fit even alone (1001 + 1814 + 1520 > 4096). contextTokens 5000
