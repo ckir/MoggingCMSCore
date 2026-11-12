@@ -198,3 +198,26 @@ describe("restoreDraft hardening", () => {
   });
 });
 
+
+describe("signature rejects structural tampering", () => {
+  const codes = (src: string, edit: (md: string) => string) => {
+    const p = sentinelize(markdownToTree(src));
+    expect(restoreDraft(p, p.markdown).ok).toBe(true);
+    const draft = edit(p.markdown);
+    expect(draft).not.toBe(p.markdown);
+    return codesOf(restoreDraft(p, draft));
+  };
+
+  test("a changed table column alignment is rejected", () => {
+    const src = "| a | b |\n| :- | -: |\n| x | y |\n";
+    expect(codes(src, (m) => m.replace("| :- | -: |", "| -: | :- |"))).toEqual(["BLOCK_SEQUENCE"]);
+    expect(codes(src, (m) => m.replace("| :- | -: |", "| -- | -: |"))).toEqual(["BLOCK_SEQUENCE"]);
+  });
+
+  test("a changed or dropped container attribute is rejected", () => {
+    const src = ':::tip{title="T" id="i"}\nBody\n:::\n';
+    expect(codes(src, (m) => m.replace('title="T"', 'title="U"'))).toEqual(["BLOCK_SEQUENCE"]);
+    expect(codes(src, (m) => m.replace(' title="T"', ""))).toEqual(["BLOCK_SEQUENCE"]);
+    expect(codes(src, (m) => m.replace("{#i ", "{#j "))).toEqual(["BLOCK_SEQUENCE"]);
+  });
+});

@@ -26,6 +26,13 @@ describe("markdownToTree", () => {
     });
   });
 
+  test("strikethrough parses to a delete mark", () => {
+    expect(markdownToTree("~~a~~ b\n").children).toEqual([{
+      type: "paragraph",
+      children: [{ type: "text", value: "a", marks: ["delete"] }, { type: "text", value: " b", marks: [] }],
+    }]);
+  });
+
   test("marks pushed into links and sorted", () => {
     const a = markdownToTree("**[a](u)**\n").children[0] as any;
     expect(a.children).toEqual([

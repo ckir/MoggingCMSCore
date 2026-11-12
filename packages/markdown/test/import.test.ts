@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { Sql } from "postgres";
-import { LicenceError, ValidationError, defineCollection, defineConfig, richText, text, getDocument, listDocuments, migrate, recordAiDraft } from "@mogging/core";
+import { LicenceError, ValidationError, defineCollection, defineConfig, richText, text, getDocument, listDocuments, migrate, recordAiDraft, approve } from "@mogging/core";
 import { importFolder } from "../src/import.js";
 import { isSafeSlug } from "../src/slug.js";
 import { withTestDb } from "./db.js";
@@ -309,6 +309,46 @@ describe("importFolder", () => {
       expect(de.docId).toBe(a.id);
       const missing = await importFolder(ctx, { dir: writeTree(null, { "de/docs/zz.md": "x\n" }) });
       expect(missing.files[0]!.docId).toBeNull();
+    });
+  });
+
+  test("an APPROVED draft survives a re-import of the old translation and warns when replaced", async () => {
+    await setup(async (_sql, ctx) => {
+      const dir = writeTree(null, basic());
+      await importFolder(ctx, { dir, publish: true });
+      const doc = (await getDocument(ctx, { collection: "docs", slug: "guide/intro" }))!;
+      await recordAiDraft(ctx, {
+        docId: doc.id, locale: "de", fields: { title: "KI" },
+        sourceVersion: doc.locales["en"]!.published!.version, sourceHashes: {},
+        provenance: [{ fieldPath: "title", modelId: "m", promptVersion: "v1", promptTokens: 1, completionTokens: 1, costMicros: 1 }],
+      });
+      await approve(ctx, { docId: doc.id, locale: "de" });
+      const approved = (await getDocument(ctx, { collection: "docs", docId: doc.id }))!;
+      expect(approved.locales["de"]!.draft!.state).toBe("APPROVED");
+      const v = approved.locales["de"]!.draft!.version;
+
+      const again = await importFolder(ctx, { dir, publish: true });
+      expect(outcome(again, "de/docs/guide/intro.md")).toBe("unchanged");
+      const mid = (await getDocument(ctx, { collection: "docs", docId: doc.id }))!;
+      expect(mid.locales["de"]!.draft!.state).toBe("APPROVED");
+      expect(mid.locales["de"]!.draft!.version).toBe(v);
+
+      fs.writeFileSync(path.join(dir, "de/docs/guide/intro.md"), "---\ntitle: Neu\n---\nHallo\n");
+      const third = await importFolder(ctx, { dir });
+      expect(outcome(third, "de/docs/guide/intro.md")).toBe("updated");
+      expect(third.warnings.map((w) => w.message)).toEqual([`replaced pending APPROVED draft v${v} for de`]);
+    });
+  });
+
+  test("a symlink in the import folder is skipped with a warning", async () => {
+    await setup(async (_sql, ctx) => {
+      const dir = writeTree(null, basic());
+      fs.symlinkSync(path.join(dir, "en/people/jane.md"), path.join(dir, "en/docs/link.md"));
+      const r = await importFolder(ctx, { dir });
+      expect(r.errors).toEqual([]);
+      expect(r.warnings).toEqual([{ file: "en/docs/link.md", message: "not a regular file; skipped" }]);
+      expect(r.files.map((f) => f.file).sort()).toEqual(["de/docs/guide/intro.md", "en/docs/guide/intro.md", "en/people/jane.md"]);
+      expect(await getDocument(ctx, { collection: "docs", slug: "link" })).toBeNull();
     });
   });
 
