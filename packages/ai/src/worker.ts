@@ -5,6 +5,7 @@ import {
   claim, complete, fallbackFailure, reap, release, renewLease, type ClaimFilter, type Completion, type CompleteResult,
 } from "./claim.js";
 import { listGlossary } from "./glossary.js";
+import { startLeaseKeeper } from "./leaseKeeper.js";
 import type { JobRow } from "./jobs.js";
 import { resolveModel } from "./providers.js";
 import { translateJob, type TranslateOutcome } from "./translate.js";
@@ -143,23 +144,12 @@ export async function runWorker(ctx: AiCtx, options: WorkerOptions): Promise<Wor
     const collection = ctx.config.collections.find((c) => c.name === job.collection)!;
     const sourceHashes = loaded.doc.locales[ctx.config.locales.source]?.published?.sourceHashes ?? {};
 
-    // (2) The call, with the lease renewed every third of its length; a failed renewal aborts the call in flight.
+    // (2) The call, with the lease renewed every third of its length. A renewal the fence refuses aborts the call in
+    // flight; one that throws is retried, and only a lease about to lapse without a success aborts (leaseKeeper.ts).
     const leaseLost = new AbortController();
-    let renewing: Promise<void> = Promise.resolve();
-    let busy = false;
-    const timer = setInterval(() => {
-      if (busy) return;
-      busy = true;
-      renewing = (async () => {
-        try {
-          if (!(await renewLease(ctx, job.id, lease))) leaseLost.abort();
-        } catch {
-          leaseLost.abort();
-        } finally {
-          busy = false;
-        }
-      })();
-    }, ctx.ai.leaseSeconds / 3 * 1000);
+    const keeper = startLeaseKeeper({
+      leaseMs: ctx.ai.leaseSeconds * 1000, renew: () => renewLease(ctx, job.id, lease), onLost: () => leaseLost.abort(),
+    });
     let outcome: TranslateOutcome;
     try {
       outcome = await translateJob(ctx, {
@@ -169,8 +159,7 @@ export async function runWorker(ctx: AiCtx, options: WorkerOptions): Promise<Wor
       });
     } finally {
       // Before complete: no renewal can land after the completion commit, and no timer outlives the run.
-      clearInterval(timer);
-      await renewing;
+      await keeper.stop();
     }
 
     const callMicros = outcome.calls.reduce((n, c) => n + c.costMicros, 0);
