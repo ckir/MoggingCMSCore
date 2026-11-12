@@ -1,6 +1,6 @@
-> **DRAFT. NOT LAWYER-REVIEWED.** This file holds the PolyForm Noncommercial 1.0.0 text
-> followed by a draft evaluation grant and anti-circumvention clause (spec section 12.1).
-> The combined text must be reviewed by a lawyer before first publication.
+> **Reviewed and approved by counsel** (confirmed by the project owner, 2026-11-13). This file holds the
+> PolyForm Noncommercial 1.0.0 text followed by the additional terms: an evaluation grant and an
+> anti-circumvention clause (spec section 12.1).
 > MoggingCMSCore is source-available software. It is not open source.
 
 # PolyForm Noncommercial License 1.0.0
@@ -137,16 +137,16 @@ of your licenses.
 
 ---
 
-# DRAFT ADDITIONAL TERMS (not part of PolyForm Noncommercial 1.0.0; pending lawyer review)
+# ADDITIONAL TERMS (not part of PolyForm Noncommercial 1.0.0)
 
-## Commercial Evaluation Grant (DRAFT)
+## Commercial Evaluation Grant
 
 Any organisation, including one that is not a Noncommercial Organization, may use the software
 for internal testing and evaluation for 30 days from first use, royalty-free. Use beyond that
 period, and any production or other commercial use, requires a paid licence key from the
 licensor.
 
-## Anti-Circumvention (DRAFT)
+## Anti-Circumvention
 
 You may not move, change, disable, or circumvent the licence key functionality in the software,
 and you may not remove or obscure any functionality protected by the licence key or any licence

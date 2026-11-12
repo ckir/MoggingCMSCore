@@ -1,6 +1,6 @@
 # Contributor Licence Agreement
 
-> **DRAFT. NOT LAWYER-REVIEWED.** Required from the first external pull request (spec section 12.5).
+> **Reviewed and approved by counsel** (confirmed by the project owner, 2026-11-13). Required from the first external pull request (spec section 12.5).
 
 By submitting a contribution to MoggingCMSCore you grant the project owner a perpetual,
 worldwide, irrevocable, non-exclusive, royalty-free, sublicensable right to use, reproduce,
