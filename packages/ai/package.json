@@ -7,7 +7,7 @@
   "engines": { "node": ">=22" },
   "main": "./src/index.ts",
   "exports": { ".": "./src/index.ts" },
-  "files": ["src", "README.md"],
+  "files": ["src", "prompts", "README.md"],
   "scripts": {
     "test": "vitest run"
   },
