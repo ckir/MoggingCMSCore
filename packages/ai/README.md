@@ -228,7 +228,10 @@ threw (outcome `ERROR`; the job stays `RUNNING` until the reaper takes it).
   `fallback_failed=<message> calls=<ids>`.
 - **Aborted calls record no spend.** A provider call that is aborted or times out (the provider timeout, or a lease
   lost mid-call) returns no usage, so it records no spend, writes no provenance row and is not seen by the monthly cap.
-  Whether the provider bills such a call is unverified. A job can make up to `maxAttempts` such calls per compile.
+  Whether the provider bills such a call is unverified. A job can make up to `maxAttempts` such calls before it fails.
+  This is an accepted limit of v0.1 (owner decision, 2026-11-13): when calls abort, the monthly cap and the per-run
+  budget are not a hard bound on provider spend. To limit the exposure, keep `providerTimeoutSeconds` and `maxAttempts`
+  modest, and compare the provider's own usage page with `listProvenance` if aborts are frequent.
 - **Lock order.** Every transaction takes locks in one order: `ai_budgets` rows (`global` first, then
   `collection:<name>`), then the `ai_jobs` row, then `documents` (taken by core's `recordAiDraft`). The reaper runs in
   its own committed transaction before each claim, and candidates are tried in short transactions, so the budget lock is
