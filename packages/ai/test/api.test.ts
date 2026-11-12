@@ -2,12 +2,15 @@ import { expect, test } from "vitest";
 import * as api from "../src/index.js";
 import * as pkg from "@mogging/ai";
 import type {
-  AiConfig, AiConfigInput, AiCtx, Estimate, GlossaryMode, ModelPrice, ProviderConfig, RequestPlan,
+  AiConfig, AiConfigInput, AiCtx, BudgetRow, Estimate, GlossaryMode, ModelPrice, ProviderConfig, RequestPlan,
 } from "../src/index.js";
 
 // THE CONTRACT: the complete runtime surface of @mogging/ai. Every task that adds an export updates this
 // list in the same commit.
-const FUNCTIONS = ["defineAiConfig", "usdToMicros", "priceFor", "glossaryModeFor", "estimateRequest", "planRequests"];
+const FUNCTIONS = [
+  "defineAiConfig", "usdToMicros", "priceFor", "glossaryModeFor", "estimateRequest", "planRequests",
+  "listGlossary", "upsertGlossary", "getBudgets",
+];
 const EXPECTED = [...FUNCTIONS].sort();
 
 for (const [label, mod] of [["relative", api], ["package self-reference", pkg]] as const) {
@@ -39,4 +42,6 @@ test("the listed types are importable and usable", () => {
   });
   const plans: RequestPlan[] = "requests" in planned ? planned.requests : [];
   expect([estimate.inputTokens, plans.map((p) => p.fields)]).toEqual([1, [["t"]]]);
+  const row: BudgetRow = { scope: "global", periodStart: "2026-11-01", capMicros: 1, spentMicros: 0, inFlightMicros: 0 };
+  expect(Object.keys(row)).toEqual(["scope", "periodStart", "capMicros", "spentMicros", "inFlightMicros"]);
 });
