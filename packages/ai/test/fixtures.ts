@@ -1,4 +1,5 @@
 import type { LanguageModel } from "ai";
+import postgres from "postgres";
 import type { Sql } from "postgres";
 import {
   createDocument, defineCollection, defineConfig, list, migrate, number, publish, richText, saveDraft, slug, text,
@@ -44,6 +45,15 @@ export function aiConfigFor(model: LanguageModel, overrides: Partial<AiConfigInp
  */
 export function ctxFor(sql: Sql, model: LanguageModel, overrides: Partial<AiConfigInput> = {}): AiCtx {
   return { sql, config: structuredClone(config), actor: "test", ai: aiConfigFor(model, overrides) };
+}
+
+/**
+ * Opens an extra, independent connection bound to the same per-test schema as `sql` (withTestDb pins one
+ * connection); a copy of packages/core/test/fixtures.ts `extraConnection`. Caller must `end()` it.
+ */
+export async function extraConnection(sql: Sql): Promise<Sql> {
+  const [{ s }] = (await sql`select current_schema() as s`) as unknown as [{ s: string }];
+  return postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {}, connection: { search_path: s } });
 }
 
 /** Migrates the schema and publishes one `posts` document in `en`; returns its docId. */
