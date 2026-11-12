@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { Sql } from "postgres";
 import type { LanguageModel } from "ai";
-import { NotFoundError, createDocument, deleteDocument, publish, saveDraft, type AiProvenanceInput } from "@mogging/core";
+import { NotFoundError, ValidationError, createDocument, deleteDocument, publish, saveDraft, type AiProvenanceInput } from "@mogging/core";
 import { markdownToTree } from "@mogging/markdown";
 import { claim, complete, reap, release, renewLease, type CallCost, type ClaimResult, type Completion } from "../src/claim.js";
 import { cancelJobs, enqueueStale, type JobRow } from "../src/jobs.js";
@@ -77,7 +77,7 @@ async function draft(sql: Sql, job: JobRow, calls: CallCost[], fields: Record<st
     fieldPath: f, modelId: kept.modelId, promptVersion: kept.promptVersion, promptTokens: kept.promptTokens,
     completionTokens: kept.completionTokens, costMicros: kept.costMicros, jobId: job.id, callId: kept.callId, warnings: ["w1"],
   }));
-  const sourceHashes = Object.fromEntries(Object.keys(fields).map((f) => [f, all[f]!]));
+  const sourceHashes = Object.fromEntries(Object.keys(fields).filter((f) => Object.hasOwn(all, f)).map((f) => [f, all[f]!]));
   return { kind: "draft", fields, sourceHashes, calls, perField };
 }
 
@@ -433,20 +433,19 @@ test("the fallback writes nothing when a row with one of the call ids already ex
   const { ctx, docId } = await setup(sql);
   const { job, lease } = await claimed(ctx);
   const c = call(400, true);
-  const d = await draft(sql, job, [c]);
+  // An undeclared field: recordAiDraft throws after the fence, inside complete's first transaction.
+  const d = await draft(sql, job, [c], { title: "Hallo", nope: "x" });
   const extra = await extraConnection(sql);
   try {
     // An earlier commit of this very completion, as an ambiguous commit leaves it.
     await extra`insert into content_provenance (doc_id, locale, call_id, job_id, model_id, prompt_version, prompt_tokens,
         completion_tokens, cost_micros, discarded, discard_reason)
       values (${docId}, 'de', ${c.callId}, ${job.id}, 'mock/translate', 'translate.v1', 100, 50, 400, true, 'earlier')`;
-    // The first transaction then fails after the fence: recordAiDraft no longer finds the document.
-    await deleteDocument({ ...ctx, sql: extra }, { docId });
   } finally {
     await extra.end();
   }
   const before = await spent(sql);
-  await expect(complete(ctx, job, lease, d)).rejects.toBeInstanceOf(NotFoundError);
+  await expect(complete(ctx, job, lease, d)).rejects.toBeInstanceOf(ValidationError);
   const rows = await provenance(sql);
   expect(rows).toHaveLength(1);
   expect(rows[0]!.discard_reason).toBe("earlier");
@@ -605,4 +604,60 @@ test("complete with kind retry backs off, then FAILS at max_attempts", async () 
   expect(rows).toHaveLength(3);
   expect(rows.every((r) => r.discarded && r.discard_reason === "provider: HTTP 503")).toBe(true);
   expect(await spent(sql)).toBe(before + 30);
+}));
+
+test("a throwing completion still records the spend", async () => withTestDb(async (sql) => {
+  const { ctx } = await setup(sql);
+  const { job, lease } = await claimed(ctx);
+  const before = await spent(sql);
+  const c1 = call(120, false);
+  const c2 = call(380, true);
+  // An undeclared field: recordAiDraft throws ValidationError after the fence, inside the first transaction.
+  const d = await draft(sql, job, [c1, c2], { title: "Hallo", nope: "x" });
+  const err = await complete(ctx, job, lease, d).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(ValidationError);
+  expect((err as Error).message).toMatch(/undeclared field/);
+  const rows = await provenance(sql);
+  // One commit_failed row per call; the first transaction's `validation:` row for c1 was rolled back.
+  expect(rows.map((r) => r.call_id)).toEqual([c1.callId, c2.callId]);
+  for (const r of rows) {
+    expect(r).toMatchObject({ discarded: true, job_id: String(job.id), version: null, field_path: null });
+    expect(r.discard_reason).toBe(`commit_failed: ${(err as Error).message}`);
+  }
+  expect(await spent(sql)).toBe(before + 500);
+  expect(await jobState(sql, job.id)).toMatchObject({ state: "RUNNING", locked_by: lease });
+  expect(await sql`select 1 from document_localized where locale = 'de'`).toHaveLength(0);
+}));
+
+// ---- per-collection scope -----------------------------------------------------------------------------
+
+test("a collection cap below the global cap refuses a job the global cap would allow", async () => withTestDb(async (sql) => {
+  await migrateAndSeed(sql);
+  await enqueueStale(ctxFor(sql, model), { locales: ["de"] });
+  const id = Number((await sql`select id from ai_jobs`)[0]!.id);
+  const est = await estimateOf(sql, id);
+  const ctx = ctxFor(sql, model, { budgets: { monthlyCapUsd: 1, collections: { posts: (est - 1) / 1e6 } } });
+  expect(await claim(ctx, { workerId: "w1", filter: {} })).toEqual({
+    refused: "budget", jobId: id,
+    reason: `budget_exhausted: collection:posts spent 0 + in-flight 0 + estimate ${est} > cap ${est - 1}`,
+  });
+  expect(await jobState(sql, id)).toMatchObject({ state: "QUEUED", attempts: 0 });
+}));
+
+test("complete debits both the global and the collection scope, in the fallback too", async () => withTestDb(async (sql) => {
+  const { ctx } = await setup(sql, {
+    locales: ["de", "de-CH"], overrides: { budgets: { monthlyCapUsd: 1, collections: { posts: 0.5 } } },
+  });
+  const a = await claimed(ctx);
+  const b = await claimed(ctx);
+  const scoped = async () => Object.fromEntries((await sql`select scope, spent_micros from ai_budgets order by scope`)
+    .map((r) => [r.scope as string, Number(r.spent_micros)]));
+  expect(await scoped()).toEqual({ "collection:posts": 0, global: 0 });
+  const calls = [call(300, false), call(400, false)];
+  expect(await complete(ctx, a.job, a.lease, { kind: "failed", reason: "bad", calls })).toBe("FAILED");
+  expect(await scoped()).toEqual({ "collection:posts": 700, global: 700 });
+  // The cost-only fallback (an undeclared field makes the first transaction throw) debits both scopes as well.
+  const d = await draft(sql, b.job, [call(50, true)], { title: "Hallo", nope: "x" });
+  await expect(complete(ctx, b.job, b.lease, d)).rejects.toBeInstanceOf(ValidationError);
+  expect(await scoped()).toEqual({ "collection:posts": 750, global: 750 });
 }));

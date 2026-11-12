@@ -218,18 +218,22 @@ export async function complete(ctx: AiCtx, job: JobRow, lease: string, c: Comple
 }
 
 /**
- * The cost-only fallback. A row with one of the call ids means the first transaction committed after all (an ambiguous
- * commit): nothing is written. Otherwise, with calls, debit and one `commit_failed:` row per call. The job is left
- * RUNNING for the reaper either way.
+ * The cost-only fallback. Without calls there is nothing to record (no budget row is created or locked). A row with one
+ * of the call ids means the first transaction committed after all (an ambiguous commit): nothing is written. Otherwise,
+ * debit and one `commit_failed:` row per call. The job is left RUNNING for the reaper either way.
  */
 async function recordSpendOnly(
   ctx: AiCtx, job: JobRow, calls: CallCost[], scopes: string[], total: number,
   discard: (tx: TransactionSql, call: CallCost, reason: string) => Promise<void>, message: string,
 ): Promise<void> {
+  if (calls.length === 0) return;
   await ctx.sql.begin(async (tx) => {
-    const [hit] = await tx`select 1 from content_provenance where call_id = any(${calls.map((x) => x.callId)}::uuid[]) limit 1`;
-    if (hit || calls.length === 0) return;
+    // Budgets are locked BEFORE the ambiguity check: a first transaction whose COMMIT is still in flight holds these
+    // row locks, so this waits for it, and the check (a fresh READ COMMITTED statement) then sees its rows. Checking
+    // first could miss a commit that becomes visible just after, and debit and record the calls twice.
     await lockBudgets(tx, ctx.ai, job.collection);
+    const [hit] = await tx`select 1 from content_provenance where call_id = any(${calls.map((x) => x.callId)}::uuid[]) limit 1`;
+    if (hit) return;
     await debitBudgets(tx, scopes, total);
     for (const call of calls) await discard(tx, call, `commit_failed: ${message}`);
   });
