@@ -18,13 +18,13 @@ export function startLeaseKeeper(args: {
   leaseMs: number;                    // ctx.ai.leaseSeconds * 1000
   renew: () => Promise<boolean>;      // false = the fence says the lease is gone; may throw
   onLost: () => void;                 // abort the in-flight call; called at most once
-  retryMs?: number;                   // default RENEW_RETRY_MS, clamped to at most leaseMs / 3
+  retryMs?: number;                   // default RENEW_RETRY_MS
   marginMs?: number;                  // default leaseMarginMs(leaseMs)
   now?: () => number;                 // default performance.now (monotonic, local); tests inject it
 }): LeaseKeeper {
   const { leaseMs, renew, onLost } = args;
   const now = args.now ?? (() => performance.now());
-  const retryMs = Math.min(args.retryMs ?? RENEW_RETRY_MS, leaseMs / 3);
+  const retryMs = args.retryMs ?? RENEW_RETRY_MS;
   // Never more than half the lease, so a caller's margin of leaseMs or more cannot abort at once.
   const marginMs = Math.min(args.marginMs ?? leaseMarginMs(leaseMs), leaseMs / 2);
 

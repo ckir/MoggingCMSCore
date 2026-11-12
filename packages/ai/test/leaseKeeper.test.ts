@@ -206,11 +206,9 @@ test("onLost is called at most once", async () => {
   }
 });
 
-test("a 3 s lease renews again 1000 ms after a throw (tick + leaseMs / 3), not 5000 ms later", async () => {
-  // This pins the observable promise, not the retry clamp itself. Removing the clamp (retry 5000 ms) also passes:
-  // the clamped retry is due exactly at the next regular tick, and that tick's attempt fires first (an earlier timer
-  // id) and cancels or resets the retry. With retryMs >= leaseMs / 3 the next tick always comes first, so in the
-  // renewal calls the clamp is an equivalent mutant.
+test("a 3 s lease renews again 1000 ms after a throw (the next regular tick), not 5000 ms later", async () => {
+  // A retry due later than the next regular tick never runs: that tick renews first and resets the retry, so a short
+  // lease needs no clamp on retryMs.
   const { renew, calls } = script("throw", true);
   const onLost = vi.fn();
   // marginMs 0 keeps the watchdog (otherwise 1.5 s) out of the way.
