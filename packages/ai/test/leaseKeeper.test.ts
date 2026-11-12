@@ -205,3 +205,60 @@ test("onLost is called at most once", async () => {
     expect(onLost).toHaveBeenCalledTimes(1);
   }
 });
+
+test("a 3 s lease renews again 1000 ms after a throw (tick + leaseMs / 3), not 5000 ms later", async () => {
+  // This pins the observable promise, not the retry clamp itself. Removing the clamp (retry 5000 ms) also passes:
+  // the clamped retry is due exactly at the next regular tick, and that tick's attempt fires first (an earlier timer
+  // id) and cancels or resets the retry. With retryMs >= leaseMs / 3 the next tick always comes first, so in the
+  // renewal calls the clamp is an equivalent mutant.
+  const { renew, calls } = script("throw", true);
+  const onLost = vi.fn();
+  // marginMs 0 keeps the watchdog (otherwise 1.5 s) out of the way.
+  const keeper = startLeaseKeeper({ leaseMs: 3_000, renew, onLost, marginMs: 0, now: () => Date.now() });
+  await at(1_000);
+  expect(calls).toEqual([1_000]);
+  await at(2_000);
+  expect(calls).toEqual([1_000, 2_000]);
+  expect(onLost).not.toHaveBeenCalled();
+  await keeper.stop();
+});
+
+test("a successful renewal anchors the watchdog at its SEND time, not when it settles", async () => {
+  const d = deferred();
+  const { renew, calls } = script(d, "throw");
+  const { keeper, onLost } = start(renew);
+  await at(TICK);
+  expect(calls).toEqual([TICK]);  // sent at TICK
+  await at(TICK + 50_000);
+  d.resolve(true);                 // settles 50 s later
+  await at(TICK + WATCHDOG - 1);
+  expect(onLost).not.toHaveBeenCalled();
+  await at(TICK + WATCHDOG);       // send time + (lease - margin), not settle time + (lease - margin)
+  expect(onLost).toHaveBeenCalledTimes(1);
+  await keeper.stop();
+});
+
+test("a retry that returns false aborts at once: throw at the tick, false at tick + retryMs", async () => {
+  const { renew, calls } = script("throw", false);
+  const { keeper, onLost } = start(renew);
+  await at(TICK + RENEW_RETRY_MS - 1);
+  expect(onLost).not.toHaveBeenCalled();
+  await at(TICK + RENEW_RETRY_MS);
+  expect(calls).toEqual([TICK, TICK + RENEW_RETRY_MS]);
+  expect(onLost).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+  await at(5 * LEASE);
+  expect(onLost).toHaveBeenCalledTimes(1);
+  await keeper.stop();
+});
+
+test("a margin of leaseMs or more is clamped to half the lease: the watchdog fires at leaseMs / 2, not at once", async () => {
+  const { renew } = script("hang");
+  const onLost = vi.fn();
+  const keeper = startLeaseKeeper({ leaseMs: LEASE, renew, onLost, marginMs: LEASE, now: () => Date.now() });
+  await at(LEASE / 2 - 1);
+  expect(onLost).not.toHaveBeenCalled();
+  await at(LEASE / 2);
+  expect(onLost).toHaveBeenCalledTimes(1);
+  void keeper; // the hanging renewal never settles, so stop() is not awaited
+});

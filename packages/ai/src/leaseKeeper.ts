@@ -25,14 +25,18 @@ export function startLeaseKeeper(args: {
   const { leaseMs, renew, onLost } = args;
   const now = args.now ?? (() => performance.now());
   const retryMs = Math.min(args.retryMs ?? RENEW_RETRY_MS, leaseMs / 3);
-  const marginMs = args.marginMs ?? leaseMarginMs(leaseMs);
+  // Never more than half the lease, so a caller's margin of leaseMs or more cannot abort at once.
+  const marginMs = Math.min(args.marginMs ?? leaseMarginMs(leaseMs), leaseMs / 2);
 
   let stopped = false;                // set by stop() and by losing the lease: nothing aborts or schedules after it
   let busy = false;
   let inFlight: Promise<void> = Promise.resolve();   // never rejects
   let retry: ReturnType<typeof setTimeout> | undefined;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
-  // The claim just set locked_until = DB now + lease; a renewal's new end is at least its send time + lease.
+  // The first anchor is the keeper's start. That is after the claim AND the load phase, so it is NOT by itself a safe
+  // lower bound for the claim's locked_until. The safety comes from translate.ts: no provider call starts before its
+  // `beforeCall` renewal succeeds, and that renewal is sent after this point, so for any call made the lease ends at or
+  // after now() + leaseMs. After that, a successful renewal anchors at its SEND time (a lower bound for its new end).
   let lastOkAt = now();
 
   const clearAll = () => {
