@@ -32,9 +32,9 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** A term bounded by non-letter, non-number characters or a string edge; the term itself matches literally. */
+/** A term bounded by non-letter characters or a string edge (digits and punctuation are boundaries; a combining mark continues a word); the term itself matches literally. */
 function boundedTerm(term: string, flags: string): RegExp {
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(term)}(?![\\p{L}\\p{N}])`, flags);
+  return new RegExp(`(?<![\\p{L}\\p{M}])${escapeRegExp(term)}(?![\\p{L}\\p{M}])`, flags);
 }
 
 function countTerm(text: string, term: string, flags: string): number {

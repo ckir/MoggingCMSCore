@@ -225,6 +225,17 @@ describe("do-not-translate (rule 3)", () => {
     expect(textCheck("Use Mogging", "Xrisi XMogging", dnt).ok).toBe(false);
   });
 
+  test("a term next to a digit is enforced (5GB, 10kg)", () => {
+    const gb = [entry({ term: "GB", doNotTranslate: true })];
+    const rejected = textCheck("Get 5GB free", "Pare 5 Go dorean", gb);
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) expect(rejected.rejections).toEqual(['title: do-not-translate term "GB" missing']);
+    expect(textCheck("Get 5GB free", "Pare 5GB dorean", gb).ok).toBe(true);
+    const kg = [entry({ term: "kg", doNotTranslate: true })];
+    expect(textCheck("It weighs 10kg", "Zygizei 10 kilo", kg).ok).toBe(false);
+    expect(textCheck("It weighs 10kg", "Zygizei 10kg", kg).ok).toBe(true);
+  });
+
   test("term matching is literal: C++ and Node.js", () => {
     const g = [entry({ term: "C++", doNotTranslate: true }), entry({ term: "Node.js", doNotTranslate: true })];
     expect(textCheck("We write C++ and Node.js.", "Grafoume C++ kai Node.js.", g).ok).toBe(true);
@@ -282,9 +293,32 @@ describe("glossary (rule 4)", () => {
     expect(textCheck("See the catalogue", "Dite ton katalogo", [cat], "strict")).toEqual({
       ok: true, value: "Dite ton katalogo", warnings: [], glossaryTermsUsed: [],
     });
-    expect(textCheck("A bobcat and a 2cat", "Ena zoo", [cat], "strict").ok).toBe(true); // preceded by a letter or digit
+    expect(textCheck("A bobcat and a cats", "Ena zoo", [cat], "strict").ok).toBe(true); // letter before / after
     expect(textCheck("See the cat.", "Dite", [cat], "strict").ok).toBe(false);
     expect(textCheck("the cat's toy", "to paixnidi", [cat], "strict").ok).toBe(false);
+  });
+
+  test("a digit next to a glossary term is a boundary (spec 8.4: letters only)", () => {
+    expect(textCheck("A 2cat and cat2", "Ena zoo", [cat], "strict")).toEqual({
+      ok: false, rejections: ['title: glossary: "cat" expected "gata"'], warnings: [],
+    });
+    expect(textCheck("A 2cat", "2gata", [cat], "strict")).toMatchObject({ ok: true, glossaryTermsUsed: ["cat"] });
+    const gb = entry({ term: "GB", translation: "GB" });
+    expect(textCheck("Get 5GB free", "Pare 5 Go dorean", [gb], "strict").ok).toBe(false);
+    expect(textCheck("Get 5GB free", "Pare 5GB dorean", [gb], "strict").ok).toBe(true);
+  });
+
+  test("a combining mark after a letter is part of the word, not a boundary", () => {
+    const e = entry({ term: "x", translation: "ex" });
+    expect(textCheck("a x́ b", "kati", [e], "strict").ok).toBe(true); // x + U+0301 has no precomposed form
+    expect(textCheck("a x b", "kati", [e], "strict").ok).toBe(false);
+    const dnt = [entry({ term: "x", doNotTranslate: true })];
+    expect(textCheck("a x́ b", "kati", dnt).ok).toBe(true);
+    // NFC composes e + U+0301 to a single letter, which is not the term "e"
+    const plainE = entry({ term: "e", translation: "ee" });
+    expect(textCheck("caf é au", "kati", [plainE], "strict").ok).toBe(true);
+    // a combining mark BEFORE the term (mark preceded by a letter) also blocks the match
+    expect(textCheck("ax́ b", "kati", [e], "strict").ok).toBe(true);
   });
 
   test("term C++ matches literally", () => {
