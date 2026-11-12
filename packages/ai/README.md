@@ -228,7 +228,13 @@ threw (outcome `ERROR`; the job stays `RUNNING` until the reaper takes it).
   `fallback_failed=<message> calls=<ids>`.
 - **Aborted calls record no spend.** A provider call that is aborted or times out (the provider timeout, or a lease
   lost mid-call) returns no usage, so it records no spend, writes no provenance row and is not seen by the monthly cap.
-  Whether the provider bills such a call is unverified. A job can make up to `maxAttempts` such calls before it fails.
+  The provider does bill such a call for the work done before it noticed the disconnect. Measured on 2026-11-13
+  against `openai/gpt-4o-mini` through OpenRouter with non-streaming calls (three aborted calls per run, the key's usage
+  read before and after): aborting after 1.5 s billed about the input tokens only, and aborting after 9 s, roughly
+  halfway through generating 800 tokens, billed about 44 percent of a full call. So the unseen cost grows with how long
+  the call ran before it was aborted, up to a full call. OpenRouter's documentation says a non-streaming request that is
+  cancelled is billed for the complete response; this measurement showed less for this model, but it is one model and a
+  few samples. A job can make up to `maxAttempts` such calls before it fails.
   This is an accepted limit of v0.1 (owner decision, 2026-11-13): when calls abort, the monthly cap and the per-run
   budget are not a hard bound on provider spend. To limit the exposure, keep `providerTimeoutSeconds` and `maxAttempts`
   modest, and compare the provider's own usage page with `listProvenance` if aborts are frequent.
