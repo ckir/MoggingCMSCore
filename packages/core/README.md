@@ -63,5 +63,5 @@ MoggingCMSCore is source-available, not open source; the terms are in [LICENSE.m
   (the environment variable wins). Keys are verified offline.
 - When the evaluation ends without a valid key, writes and publishing are paused (`LicenceError`
   `LICENCE_REQUIRED`). Reads such as `resolve` and `getDocument` keep working.
-- Pre-release note: the production public key is not yet embedded in this pre-release (v0.1 development),
-  so no key can be verified yet.
+- The production Ed25519 public key is embedded in `src/licence/publicKey.ts`. Keys are signed offline with
+  the owner's private key and verified against that public key without any network call.
