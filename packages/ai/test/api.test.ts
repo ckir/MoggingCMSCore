@@ -3,7 +3,7 @@ import * as api from "../src/index.js";
 import * as pkg from "@mogging/ai";
 import type {
   AiConfig, AiConfigInput, AiCtx, BudgetRow, EnqueueInput, EnqueueReport, Estimate, GlossaryMode, JobRow, ModelPrice,
-  ProvenanceRow, ProviderConfig, RequestPlan, Skipped,
+  ProvenanceRow, ProviderConfig, RequestPlan, Skipped, WorkerOptions, WorkerReport,
 } from "../src/index.js";
 
 // THE CONTRACT: the complete runtime surface of @mogging/ai. Every task that adds an export updates this
@@ -11,6 +11,7 @@ import type {
 const FUNCTIONS = [
   "defineAiConfig", "usdToMicros", "priceFor", "glossaryModeFor", "estimateRequest", "planRequests",
   "listGlossary", "upsertGlossary", "getBudgets", "enqueueStale", "listJobs", "retryJobs", "cancelJobs", "listProvenance",
+  "runWorker",
 ];
 const EXPECTED = [...FUNCTIONS].sort();
 
@@ -62,4 +63,15 @@ test("the listed types are importable and usable", () => {
   };
   expect([enqueue.locales, report.skipped[0]!.reason, job.fieldPaths, prov.discarded])
     .toEqual([["de"], "human draft pending", ["title"], true]);
+  const options: WorkerOptions = {
+    once: true, runBudgetMicros: 1, pollMs: 1, filter: { collection: "posts" }, workerId: "w", log: () => undefined,
+    signal: new AbortController().signal, hooks: { afterClaim: async () => undefined, beforeComplete: async () => undefined },
+  };
+  const worker: WorkerReport = {
+    completed: 0, failed: 0, cancelled: 0, discarded: 0, requeued: 0, errors: 0, budgetRefusals: 0, runBudgetStop: false,
+    spentMicros: 0,
+  };
+  expect([options.once, Object.keys(worker)]).toEqual([true, [
+    "completed", "failed", "cancelled", "discarded", "requeued", "errors", "budgetRefusals", "runBudgetStop", "spentMicros",
+  ]]);
 });

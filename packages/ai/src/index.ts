@@ -9,3 +9,5 @@ export { enqueueStale, listJobs, retryJobs, cancelJobs } from "./jobs.js";
 export type { EnqueueInput, EnqueueReport, Skipped, JobRow } from "./jobs.js";
 export { listProvenance } from "./provenance.js";
 export type { ProvenanceRow } from "./provenance.js";
+export { runWorker } from "./worker.js";
+export type { WorkerOptions, WorkerReport } from "./worker.js";

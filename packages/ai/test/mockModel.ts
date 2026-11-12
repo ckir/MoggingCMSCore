@@ -41,6 +41,28 @@ export function mockModel(outputs: MockOutput[]): MockLanguageModelV3 {
   });
 }
 
+/** An output of `asyncMockModel`: any `MockOutput`, or an async function of the call whose result is treated the same way. */
+export type AsyncMockOutput = MockOutput | ((options: MockCallOptions) => Promise<unknown>);
+
+/**
+ * As `mockModel`, but a function output may be async: its result is awaited before it is interpreted, so a call can
+ * wait, observe its abort signal or write through another connection before it answers.
+ */
+export function asyncMockModel(outputs: AsyncMockOutput[]): MockLanguageModelV3 {
+  let n = 0;
+  return new MockLanguageModelV3({
+    doGenerate: async (options) => {
+      const i = n++;
+      if (i >= outputs.length) throw new Error(`asyncMockModel: no output for call ${i}`);
+      let out = outputs[i];
+      if (typeof out === "function") out = await (out as (o: MockCallOptions) => unknown)(options);
+      if (out instanceof Error) throw out;
+      if (out instanceof RawResult) return { ...base(""), ...out.result };
+      return base(JSON.stringify(out));
+    },
+  });
+}
+
 /** The system and user message texts of a recorded call. */
 export function messagesOf(options: MockCallOptions): { system: string; user: string } {
   let system = "";
