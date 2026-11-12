@@ -309,7 +309,9 @@ published_at timestamptz null, published_by text null, unpublished_at timestampt
 (doc_id, locale) where is_head_draft; index (doc_id, locale, version); index (doc_id, locale,
 published_at) for time-travel. `state` is one of PUBLISHED, DRAFT_HUMAN, DRAFT_AI, APPROVED.
 
-`content_provenance(id, doc_id, locale, version int null, field_path text null, job_id null,
+`content_provenance(id, doc_id, locale, version int null, field_path text null,
+superseded_version int null (the draft version this row replaced, spec 8.1), call_id uuid null (every row
+one provider call produced shares it, kept or discarded), job_id null,
 model_id, prompt_version, prompt_tokens, completion_tokens, cost_micros, edited bool, discarded bool,
 discard_reason text null, warnings text[] not null default '{}', acknowledged_warnings text[] null,
 bulk_id uuid null, approved_by, approved_at, created_at)`, with a partial index on `bulk_id` where not null. `warnings` holds the validator warnings
@@ -328,7 +330,8 @@ the reaper. A job covers all stale fields of one (document, locale) at one sourc
 doc_id, locale, draft_version, added_by, added_at)`; publishing a release flips every item's head in one transaction.
 
 `glossary(id, source_locale, target_locale, term, translation, accepted_forms text[], do_not_translate
-bool, note)`.
+bool, note, updated_by text not null, updated_at timestamptz not null default clock_timestamp())`;
+unique (source_locale, target_locale, term).
 
 `ai_budgets(id, scope text, period_start date, cap_micros bigint, spent_micros bigint)`; `scope` is
 `global` or `collection:<name>`; one row per scope per calendar month. There is no reservation

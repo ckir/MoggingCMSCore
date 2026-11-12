@@ -130,10 +130,11 @@ async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): P
       const isRejected = path !== null && rejected.has(path);
       const isEdited = path !== null && Object.hasOwn(edits, path);
       await tx`insert into content_provenance
-          (doc_id, locale, version, field_path, job_id, model_id, prompt_version, prompt_tokens,
-           completion_tokens, cost_micros, edited, discarded, discard_reason, warnings,
+          (doc_id, locale, version, field_path, superseded_version, call_id, job_id, model_id, prompt_version,
+           prompt_tokens, completion_tokens, cost_micros, edited, discarded, discard_reason, warnings,
            acknowledged_warnings, bulk_id, approved_by, approved_at, created_at)
-        values (${input.docId}, ${locale}, ${version}, ${path}, ${r.job_id as number | null},
+        values (${input.docId}, ${locale}, ${version}, ${path}, ${r.superseded_version as number | null},
+                ${r.call_id as string | null}, ${r.job_id as number | null},
                 ${r.model_id as string}, ${r.prompt_version as string}, 0,
                 0, 0, ${isEdited},
                 ${isRejected}, ${isRejected ? "rejected by reviewer" : null},

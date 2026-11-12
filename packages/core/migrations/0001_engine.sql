@@ -85,6 +85,8 @@ create table content_provenance (
   locale text not null,
   version int null,
   field_path text null,
+  superseded_version int null,
+  call_id uuid null,
   job_id bigint null references ai_jobs (id) on delete set null,
   model_id text not null,
   prompt_version text not null,
@@ -132,8 +134,11 @@ create table glossary (
   translation text null,
   accepted_forms text[] not null default '{}',
   do_not_translate boolean not null default false,
-  note text null
+  note text null,
+  updated_by text not null,
+  updated_at timestamptz not null default clock_timestamp()
 );
+create unique index uq_glossary_term on glossary (source_locale, target_locale, term);
 
 create table ai_budgets (
   id bigint generated always as identity primary key,
