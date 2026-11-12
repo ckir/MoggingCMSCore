@@ -5,3 +5,7 @@ export type { Estimate, RequestPlan } from "./estimate.js";
 export { listGlossary, upsertGlossary } from "./glossary.js";
 export { getBudgets } from "./budget.js";
 export type { BudgetRow } from "./budget.js";
+export { enqueueStale, listJobs, retryJobs, cancelJobs } from "./jobs.js";
+export type { EnqueueInput, EnqueueReport, Skipped, JobRow } from "./jobs.js";
+export { listProvenance } from "./provenance.js";
+export type { ProvenanceRow } from "./provenance.js";
