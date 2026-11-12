@@ -1,3 +1,4 @@
+import { hostname } from "node:os";
 import { LicenceError, NotFoundError, assertLicensed, getDocument, normalizeLocale } from "@mogging/core";
 import type { AiCtx } from "./config.js";
 import { claim, complete, reap, release, renewLease, type ClaimFilter, type Completion, type CompleteResult } from "./claim.js";
@@ -72,7 +73,8 @@ export async function runWorker(ctx: AiCtx, options: WorkerOptions): Promise<Wor
   const baseFilter = options.filter ?? {};
   const reachable = baseFilter.collection !== undefined ? [baseFilter.collection] : ctx.config.collections.map((c) => c.name);
   const models = new Map(reachable.map((c) => [c, resolveModel(ctx.ai, c)]));
-  const workerId = options.workerId ?? `worker-${process.pid}`;
+  // A lease names a process: <actor>@<hostname>#<pid>; claim appends #<8 hex> per claim.
+  const workerId = options.workerId ?? `${ctx.actor}@${hostname()}#${process.pid}`;
   const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
   const log = options.log ?? (() => undefined);
   const excludeIds = new Set<number>(baseFilter.excludeIds ?? []);

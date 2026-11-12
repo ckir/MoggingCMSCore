@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { setTimeout as delay } from "node:timers/promises";
+import { hostname } from "node:os";
 import type { Sql } from "postgres";
 import {
   LicenceError, ValidationError, createDocument, deleteDocument, publish, saveDraft, type Ctx,
@@ -52,10 +53,12 @@ async function publishNewSource(extra: Sql, docId: string): Promise<void> {
 }
 
 /** A second published post (the seed is migrateAndSeed's). */
-async function seedPost(sql: Sql, title: string): Promise<string> {
+async function seedPost(sql: Sql, title: string, data?: Record<string, unknown>): Promise<string> {
   const ctx = { sql, config, actor: "seed" };
   const { id } = await createDocument(ctx, { collection: "posts" });
-  await saveDraft(ctx, { docId: id, locale: "en", data: { title, body: markdownToTree("# Two\n\nSecond\n"), legal: "L", tags: ["c"], price: 1 } });
+  await saveDraft(ctx, {
+    docId: id, locale: "en", data: data ?? { title, body: markdownToTree("# Two\n\nSecond\n"), legal: "L", tags: ["c"], price: 1 },
+  });
   await publish(ctx, { docId: id, locale: "en" });
   return id;
 }
@@ -239,6 +242,31 @@ test("the reaper runs before the claim and its counts stay out of the report", a
   expect(model.doGenerateCalls).toHaveLength(0);
 }));
 
+test("a lease names the actor, host and process unless workerId is given", async () => withTestDb(async (sql) => {
+  await migrateAndSeed(sql);
+  const model = mockModel([identity, identity]);
+  const ctx = ctxFor(sql, model);
+  await enqueueStale(ctx, { locales: ["de"] });
+  const leases: Array<string | null> = [];
+  const afterClaim = async (job: { id: number; lockedBy: string | null }) => {
+    leases.push(job.lockedBy);
+    leases.push((await sql`select locked_by from ai_jobs where id = ${job.id}`)[0]!.locked_by as string);
+  };
+  expect(await run(ctx, { hooks: { afterClaim } })).toMatchObject({ completed: 1 });
+  expect(ctx.actor).toBe("test");
+  for (const l of leases) expect(l).toMatch(new RegExp(`^test@[^#]+#${process.pid}#[0-9a-f]{8}$`));
+  expect(leases[0]!.split("#")[0]).toBe(`test@${hostname()}`);
+
+  // An explicit workerId wins.
+  await saveDraft(ctx, { docId: (await jobs(sql))[0]!.doc_id, locale: "en", data: { title: "Hello again" } });
+  await publish(ctx, { docId: (await jobs(sql))[0]!.doc_id, locale: "en" });
+  await enqueueStale(ctx, { locales: ["de"] });
+  leases.length = 0;
+  expect(await run(ctx, { workerId: "w9", hooks: { afterClaim } })).toMatchObject({ completed: 1 });
+  expect(leases).toHaveLength(2);
+  for (const l of leases) expect(l).toMatch(/^w9#[0-9a-f]{8}$/);
+}));
+
 // ---- budgets ---------------------------------------------------------------------------------------
 
 test("the run budget stops the run before claiming", async () => withTestDb(async (sql) => {
@@ -252,6 +280,27 @@ test("the run budget stops the run before claiming", async () => withTestDb(asyn
   expect(model.doGenerateCalls).toHaveLength(0);
   // The control: a run budget equal to the estimate claims and completes it.
   expect(await run(ctx, { runBudgetMicros: estimate })).toEqual(report({ completed: 1, spentMicros: CALL_MICROS }));
+}));
+
+test("the run budget is cumulative: spend so far counts against the next claim", async () => withTestDb(async (sql) => {
+  await migrateAndSeed(sql);
+  // The same source as the seed, so both jobs carry the same estimate.
+  await seedPost(sql, "Hello", {
+    title: "Hello", body: markdownToTree("# Hi\n\nHello `x` {name}\n"), legal: "Terms apply", tags: ["a", "b"], price: 5,
+  });
+  const model = mockModel([identity, identity]);
+  const ctx = ctxFor(sql, model);
+  await enqueueStale(ctx, { locales: ["de"] });
+  const estimates = (await sql`select cost_estimate_micros from ai_jobs order by id`).map((r) => Number(r.cost_estimate_micros));
+  expect(estimates).toHaveLength(2);
+  expect(estimates[0]).toBe(estimates[1]);
+  // Each job fits the run budget alone; after the first job's spend the second no longer does.
+  const runBudgetMicros = estimates[0]! + CALL_MICROS / 2;
+  expect(runBudgetMicros - CALL_MICROS).toBeLessThan(estimates[1]!);
+  expect(await run(ctx, { runBudgetMicros })).toEqual(report({ completed: 1, runBudgetStop: true, spentMicros: CALL_MICROS }));
+  const states = (await jobs(sql)).map((j) => [j.state, j.attempts, j.error_message]);
+  expect(states.sort()).toEqual([["COMPLETED", 1, null], ["QUEUED", 0, null]]);
+  expect(model.doGenerateCalls).toHaveLength(1);
 }));
 
 test("a monthly cap refusal is counted and the job keeps its reason", async () => withTestDb(async (sql) => {
@@ -366,7 +415,8 @@ test("a lost lease during the call aborts it and the result is DISCARDED", async
     let reason: unknown;
     const model = asyncMockModel([async (o: MockCallOptions) => {
       const start = performance.now();
-      moved = delay(500).then(() => extra`update ai_jobs set locked_until = clock_timestamp() - interval '1 second'`);
+      // Well before the first renewal tick (1 s after the timer starts), on a connection opened beforehand.
+      moved = delay(150).then(() => extra`update ai_jobs set locked_until = clock_timestamp() - interval '1 second'`);
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, 2500);
         o.abortSignal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
@@ -381,6 +431,7 @@ test("a lost lease during the call aborts it and the result is DISCARDED", async
     // tells the lease abort (AbortError) from the provider timeout (TimeoutError).
     const ctx = ctxFor(sql, model, { leaseSeconds: 3, providerTimeoutSeconds: 2 });
     await enqueueStale(ctx, { locales: ["de"] });
+    await extra`select 1`; // connected now, so the lease move does not pay for opening it
     const r = await run(ctx);
     await moved;
     expect(abortedAfterMs).not.toBeNull();
