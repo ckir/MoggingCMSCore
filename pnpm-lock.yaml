@@ -15,6 +15,37 @@ importers:
         specifier: ^5
         version: 5.1.0(@types/node@22.20.5)(vite@8.3.7(@types/node@22.20.5)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
 
+  packages/ai:
+    dependencies:
+      '@mogging/core':
+        specifier: workspace:*
+        version: link:../core
+      '@mogging/markdown':
+        specifier: workspace:*
+        version: link:../markdown
+      '@openrouter/ai-sdk-provider':
+        specifier: 3.1.0
+        version: 3.1.0(ai@7.0.154(zod@4.6.7))(zod@4.6.7)
+      ai:
+        specifier: 7.0.154
+        version: 7.0.154(zod@4.6.7)
+      postgres:
+        specifier: ^4
+        version: 4.1.0
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.20.5
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^5
+        version: 5.1.0(@types/node@22.20.5)(vite@8.3.7(@types/node@22.20.5)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
+
   packages/core:
     dependencies:
       canonicalize:
