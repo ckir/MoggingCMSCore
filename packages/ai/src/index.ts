@@ -11,3 +11,7 @@ export { listProvenance } from "./provenance.js";
 export type { ProvenanceRow } from "./provenance.js";
 export { runWorker } from "./worker.js";
 export type { WorkerOptions, WorkerReport } from "./worker.js";
+export type { ClaimFilter } from "./claim.js";
+export { compile } from "./compile.js";
+export type { CompileInput, CompileReport } from "./compile.js";
+export type { GlossaryEntry } from "./validate.js";

@@ -2,8 +2,9 @@ import { expect, test } from "vitest";
 import * as api from "../src/index.js";
 import * as pkg from "@mogging/ai";
 import type {
-  AiConfig, AiConfigInput, AiCtx, BudgetRow, EnqueueInput, EnqueueReport, Estimate, GlossaryMode, JobRow, ModelPrice,
-  ProvenanceRow, ProviderConfig, RequestPlan, Skipped, WorkerOptions, WorkerReport,
+  AiConfig, AiConfigInput, AiCtx, BudgetRow, ClaimFilter, CompileInput, CompileReport, EnqueueInput, EnqueueReport, Estimate,
+  GlossaryEntry, GlossaryMode, JobRow, ModelPrice, ProvenanceRow, ProviderConfig, RequestPlan, Skipped, WorkerOptions,
+  WorkerReport,
 } from "../src/index.js";
 
 // THE CONTRACT: the complete runtime surface of @mogging/ai. Every task that adds an export updates this
@@ -11,7 +12,7 @@ import type {
 const FUNCTIONS = [
   "defineAiConfig", "usdToMicros", "priceFor", "glossaryModeFor", "estimateRequest", "planRequests",
   "listGlossary", "upsertGlossary", "getBudgets", "enqueueStale", "listJobs", "retryJobs", "cancelJobs", "listProvenance",
-  "runWorker",
+  "runWorker", "compile",
 ];
 const EXPECTED = [...FUNCTIONS].sort();
 
@@ -74,4 +75,12 @@ test("the listed types are importable and usable", () => {
   expect([options.once, Object.keys(worker)]).toEqual([true, [
     "completed", "failed", "cancelled", "discarded", "requeued", "errors", "budgetRefusals", "runBudgetStop", "spentMicros",
   ]]);
+  const entry: GlossaryEntry = {
+    sourceLocale: "en", targetLocale: "de", term: "Mogging", translation: null, acceptedForms: [], doNotTranslate: true, note: null,
+  };
+  const filter: ClaimFilter = { collection: "posts", docIds: [], locales: ["de"], excludeIds: [], maxEstimateMicros: 1 };
+  const compileInput: CompileInput = { locales: ["de"], budgetUsd: 1, collection: "posts", docIds: [], log: () => undefined };
+  const compileReport: CompileReport = { enqueue: report, worker, pendingJobs: 0 };
+  expect([entry.doNotTranslate, filter.locales, compileInput.budgetUsd, Object.keys(compileReport)])
+    .toEqual([true, ["de"], 1, ["enqueue", "worker", "pendingJobs"]]);
 });

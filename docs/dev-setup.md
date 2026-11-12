@@ -25,3 +25,19 @@ pnpm typecheck
 
 Each test uses `withTestDb` (`packages/core/test/db.ts`), which creates a schema `t_<random8>`,
 runs the test inside it and drops it afterwards.
+
+## Live provider test (optional)
+
+`packages/ai/test/live.test.ts` translates the seeded document through the real OpenRouter API with
+`openai/gpt-4o-mini` and checks the outcome and the recorded cost (under 2000 micro-dollars, a fraction of a cent).
+It is skipped unless both variables are set, so the normal suite never calls a provider and never spends money:
+
+```bash
+MOGGING_LIVE=1 OPENROUTER_API_KEY=... DATABASE_URL=postgres://mogging:mogging@localhost:5432/mogging_test \
+  pnpm --filter @mogging/ai test live
+```
+
+`MOGGING_LIVE` opts in to the call. `OPENROUTER_API_KEY` is your own key, read only by the provider the way production
+reads it; the test never prints or stores it. Keep the key in your shell or an untracked `.env`, never in a tracked file.
+Expected: one passing test. A `FAILED` job whose provenance rows all say `validation:` also passes, because the model
+is rejected by the validator about one time in ten.
