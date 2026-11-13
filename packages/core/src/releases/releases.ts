@@ -1,5 +1,5 @@
 import type { Ctx } from "../ctx.js";
-import { NotFoundError, NotPublishableError, StaleReleaseError, ValidationError } from "../errors.js";
+import { ConflictError, NotFoundError, NotPublishableError, StaleReleaseError, ValidationError } from "../errors.js";
 import { assertLicensed } from "../licence/guard.js";
 import { publishWithinTx } from "../documents/publishCore.js";
 import { normalizeLocale } from "../schema/locale.js";
@@ -29,12 +29,46 @@ function releaseIdOf(id: string): string {
   return id;
 }
 
-/** Creates an empty release. The id is a bigint column, returned as a decimal string. */
+/** Creates an empty release. The id is a bigint column, returned as a decimal string. Names are unique. */
 export async function createRelease(ctx: Ctx, input: CreateReleaseInput): Promise<{ id: string }> {
   const { sql, actor } = ctx;
   if (typeof input.name !== "string" || input.name.trim() === "") throw new ValidationError("Release name is required");
-  const [row] = await sql`insert into releases (name, created_by) values (${input.name}, ${actor}) returning id`;
-  return { id: String(row!.id) };
+  try {
+    const [row] = await sql`insert into releases (name, created_by) values (${input.name}, ${actor}) returning id`;
+    return { id: String(row!.id) };
+  } catch (e) {
+    if ((e as { code?: string }).code === "23505") throw new ConflictError(`Release "${input.name}" already exists`);
+    throw e;
+  }
+}
+
+export type ReleaseSummary = {
+  id: string;
+  name: string;
+  createdBy: string;
+  createdAt: Date;
+  publishedAt: Date | null;
+  allowStale: boolean;
+  itemCount: number;
+};
+
+/** Every release with its item count, ordered by id. Unguarded read. */
+export async function listReleases(ctx: Ctx): Promise<ReleaseSummary[]> {
+  // count(*) is a bigint, which postgres.js returns as a string: cast it.
+  const rows = await ctx.sql`select r.id, r.name, r.created_by, r.created_at, r.published_at, r.allow_stale,
+      count(i.release_id)::int as item_count
+    from releases r left join release_items i on i.release_id = r.id
+    group by r.id
+    order by r.id`;
+  return rows.map((r) => ({
+    id: String(r.id),
+    name: r.name as string,
+    createdBy: r.created_by as string,
+    createdAt: r.created_at as Date,
+    publishedAt: (r.published_at ?? null) as Date | null,
+    allowStale: r.allow_stale as boolean,
+    itemCount: r.item_count as number,
+  }));
 }
 
 /**
@@ -66,6 +100,15 @@ export async function addToRelease(ctx: Ctx, input: AddToReleaseInput): Promise<
       );
     }
     const itemLocale = isShared ? null : locale;
+    // An item already there at ANOTHER version would make publishRelease refuse later (its version is no longer
+    // the draft head) and nothing removes an item, so say so now; the same version stays the "already in" error.
+    const [held] = await tx`select draft_version from release_items
+      where release_id = ${releaseId} and doc_id = ${input.docId} and coalesce(locale, '') = ${itemLocale ?? ""}`;
+    if (held && held.draft_version !== input.version) {
+      throw new ConflictError(
+        `${label} is in release ${releaseId} at version ${String(held.draft_version)}; the current head is version ${input.version}`,
+      );
+    }
     const inserted = await tx`insert into release_items (release_id, doc_id, locale, draft_version, added_by)
       values (${releaseId}, ${input.docId}, ${itemLocale}, ${input.version}, ${ctx.actor})
       on conflict do nothing returning 1 as x`;

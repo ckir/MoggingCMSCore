@@ -26,16 +26,19 @@ export { publish, unpublish } from "./documents/publish.js";
 export type { PublishInput, UnpublishInput } from "./documents/publish.js";
 export { recordAiDraft } from "./documents/recordAiDraft.js";
 export type { AiProvenanceInput, RecordAiDraftInput, RecordAiDraftResult } from "./documents/recordAiDraft.js";
+export { rejectDraft } from "./documents/rejectDraft.js";
 export { approve, approveClean } from "./documents/approve.js";
 export type { ApproveInput, ApproveCleanInput, ApproveCleanResult } from "./documents/approve.js";
 
 export { resolve, resolveReference, getDocument, listDocuments } from "./read/resolve.js";
 export type { ResolveInput, ResolvedDocument, Snapshot, HeadPair, DocumentRecord } from "./read/resolve.js";
+export { listDraftHeads, getDraftReview } from "./read/review.js";
+export type { DraftHead, DraftReview, ReviewField } from "./read/review.js";
 
 export { getSyncState, trackFields } from "./sync/state.js";
 export type { SyncStateKind, SyncStateRow, SyncStateInput, TrackFieldsInput } from "./sync/state.js";
 
-export { createRelease, addToRelease, publishRelease } from "./releases/releases.js";
+export { createRelease, addToRelease, publishRelease, listReleases } from "./releases/releases.js";
 export type {
   CreateReleaseInput, AddToReleaseInput, PublishReleaseInput, StaleReleaseItem, StaleReleaseErrorWithItems,
 } from "./releases/releases.js";

@@ -1,8 +1,9 @@
 import { expect, test } from "vitest";
 import type { Sql } from "postgres";
 import {
-  NotFoundError, NotPublishableError, StaleReleaseError, ValidationError, addToRelease, createDocument, createRelease,
-  deleteDocument, getSyncState, migrate, publish, publishRelease, saveDraft,
+  ConflictError, NotFoundError, NotPublishableError, StaleReleaseError, ValidationError, addToRelease, approve,
+  createDocument, createRelease, deleteDocument, getSyncState, hashValue, listReleases, migrate, publish, publishRelease,
+  recordAiDraft, saveDraft,
 } from "../src/index.js";
 import { ctxFor, extraConnection, insertAiDraftLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
@@ -66,6 +67,7 @@ test("addToRelease rejects DRAFT_AI, historical drafts, published heads, duplica
   const dup = addToRelease(ctx, { releaseId: id, docId, locale: "de", version: v2 });
   await expect(dup).rejects.toThrow(ValidationError);
   await expect(dup).rejects.toThrow(/already/);
+  await expect(dup).rejects.toThrow(/is already in release/);
   // published release
   await publishRelease(ctx, { releaseId: id });
   const next = await docWithSource(ctx, true);
@@ -423,4 +425,60 @@ test("publishRelease records the releasing actor as unpublished_by on the heads 
   expect(rows.map((r) => [r.version, r.is_head_published, r.unpublished_by, r.published_by])).toEqual([
     [1, false, "release-publisher", "releaser"], [2, true, null, "release-publisher"],
   ]);
+}));
+
+test("createRelease rejects a duplicate name with ConflictError", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  await createRelease(ctx, { name: "spring" });
+  await expect(createRelease(ctx, { name: "spring" })).rejects.toThrow(ConflictError);
+  await expect(createRelease(ctx, { name: "spring" })).rejects.toThrow('Release "spring" already exists');
+  expect(await createRelease(ctx, { name: "autumn" })).toEqual({ id: expect.any(String) });
+  const [{ n }] = await sql`select count(*)::int as n from releases`;
+  expect(n).toBe(2);
+}));
+
+test("listReleases returns id, name, itemCount and publishedAt", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  expect(await listReleases(ctx)).toEqual([]);
+  const a = await createRelease(ctx, { name: "la" });
+  const b = await createRelease(ctx, { name: "lb" });
+  const { docId, deVersion } = await docWithSource(ctx, true);
+  await addToRelease(ctx, { releaseId: a.id, docId, locale: "de", version: deVersion });
+  await publishRelease(ctx, { releaseId: a.id, allowStale: true });
+  const list = await listReleases(ctx);
+  expect(list).toHaveLength(2);
+  expect(list[0]).toMatchObject({ id: a.id, name: "la", createdBy: "releaser", itemCount: 1, allowStale: true });
+  expect(list[0]!.publishedAt).toBeInstanceOf(Date);
+  expect(list[0]!.createdAt).toBeInstanceOf(Date);
+  expect(list[1]).toMatchObject({ id: b.id, name: "lb", createdBy: "releaser", itemCount: 0, publishedAt: null, allowStale: false });
+  expect(typeof list[0]!.itemCount).toBe("number");
+}));
+
+test("addToRelease of a pair the release already holds at an older version throws ConflictError naming both versions", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId } = await docWithSource(ctx, false);
+  const hashes = { title: hashValue("T"), body: hashValue("B") };
+  const draftAndApprove = async (title: string) => {
+    await recordAiDraft(ctx, {
+      docId, locale: "de", fields: { title }, sourceVersion: 1, sourceHashes: hashes, provenance: [],
+    });
+    return (await approve(ctx, { docId, locale: "de" })).version;
+  };
+  const { id: first } = await createRelease(ctx, { name: "first" });
+  const { id: second } = await createRelease(ctx, { name: "second" });
+  const v1 = await draftAndApprove("Erste"); // APPROVED head
+  await addToRelease(ctx, { releaseId: first, docId, locale: "de", version: v1 });
+  const v2 = await draftAndApprove("Zweite"); // a new APPROVED head replaces the one in the release
+  const e = await addToRelease(ctx, { releaseId: first, docId, locale: "de", version: v2 }).catch((x: unknown) => x);
+  expect(e).toBeInstanceOf(ConflictError);
+  expect((e as Error).message).toBe(
+    `${docId}/de is in release ${first} at version ${v1}; the current head is version ${v2}`,
+  );
+  expect((e as Error).message).not.toContain("is already in release");
+  expect(await sql`select draft_version from release_items where release_id = ${first}`).toMatchObject([{ draft_version: v1 }]);
+  // The same version in a release still throws the ValidationError.
+  await addToRelease(ctx, { releaseId: second, docId, locale: "de", version: v2 });
+  const dup = addToRelease(ctx, { releaseId: second, docId, locale: "de", version: v2 });
+  await expect(dup).rejects.toThrow(ValidationError);
+  await expect(dup).rejects.toThrow(/is already in release/);
 }));

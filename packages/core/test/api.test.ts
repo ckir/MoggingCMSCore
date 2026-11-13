@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import * as api from "../src/index.js";
 import * as pkg from "@mogging/core";
-import type { Ctx, DocumentRecord, Field, LicencePayload, MoggingConfig, Snapshot } from "../src/index.js";
+import type { Ctx, DocumentRecord, DraftHead, DraftReview, Field, ReviewField, LicencePayload, MoggingConfig, Snapshot } from "../src/index.js";
 
 // THE CONTRACT: this is the complete runtime surface of @mogging/core (spec 9.3). Adding or removing an
 // export must be a deliberate edit here; a leaked internal (encodeKey, stripTopLevelNulls, isEmptyValue,
@@ -14,6 +14,7 @@ const FUNCTIONS = [
   "saveDraft", "publish", "unpublish", "recordAiDraft", "approve", "approveClean",
   "resolve", "resolveReference", "getSyncState", "trackFields",
   "createRelease", "addToRelease", "publishRelease",
+  "rejectDraft", "listDraftHeads", "getDraftReview", "listReleases",
   "hashValue", "normalizeValue", "verifyKey", "getLicenceState", "assertLicensed",
 ];
 const ERROR_CLASSES = [
@@ -51,6 +52,10 @@ test("the listed types are importable and usable", () => {
   const snap: Pick<Snapshot, "version"> = { version: 1 };
   const rec: Pick<DocumentRecord, "collection"> = { collection: "pages" };
   const ctxShape: Pick<Ctx, "actor"> = { actor: "a" };
+  const head: Pick<DraftHead, "warningCount"> = { warningCount: 0 };
+  const review: Pick<DraftReview, "fields"> = { fields: [] };
+  const reviewField: Pick<ReviewField, "path"> = { path: "title" };
   expect([config.collections.length, field.kind, payload, snap.version, rec.collection, ctxShape.actor])
     .toEqual([1, "text", undefined, 1, "pages", "a"]);
+  expect([head.warningCount, review.fields.length, reviewField.path]).toEqual([0, 0, "title"]);
 });

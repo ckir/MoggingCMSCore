@@ -204,7 +204,9 @@ Rules:
   records the rejection in provenance. Approving writes a new version in state `APPROVED` containing
   the accepted and edited fields; its provenance rows reference the AI version and carry an `edited`
   flag per field the reviewer changed. The original AI version stays in history and is never
-  publishable itself.
+  publishable itself. A `DRAFT_AI` head may also be rejected as a whole (`rejectDraft`): the head flag
+  is cleared, the row stays in history, a `human:reject` provenance row records who and why, and the
+  pair is stale again so a later `compile` may regenerate it.
 - A `DRAFT_HUMAN` snapshot may be published by its author without a separate approval; the
   publication record names them. Only `DRAFT_AI` requires the approval step.
 - Each snapshot records `published_at` and `unpublished_at`. Time-travel reads take a timestamp T and
@@ -303,11 +305,16 @@ unique (doc_id) where is_head_draft. Same states and lifecycle as the localized 
 `DRAFT_AI` (shared fields are never AI-generated).
 
 `document_localized(id bigint identity pk, doc_id, locale text, version int, state text, data jsonb,
-source_hashes jsonb, is_head_published bool, is_head_draft bool, created_at, created_by,
+source_hashes jsonb, field_warnings jsonb not null default '{}', is_head_published bool, is_head_draft bool, created_at, created_by,
 published_at timestamptz null, published_by text null, unpublished_at timestamptz null, unpublished_by text null)`; unique
 (doc_id, locale, version); partial unique (doc_id, locale) where is_head_published; partial unique
 (doc_id, locale) where is_head_draft; index (doc_id, locale, version); index (doc_id, locale,
 published_at) for time-travel. `state` is one of PUBLISHED, DRAFT_HUMAN, DRAFT_AI, APPROVED.
+`field_warnings` holds the warnings the row's AI text still carries, per field (field path to distinct
+warning texts; a field with none has no key); it is `{}` once the row is approved. INVARIANT: every writer
+that creates or copies a `DRAFT_AI` row must set it, because the default `{}` lets the 8.4 gate pass. A
+field carried over from a superseded draft keeps the warnings of the text it carries; a field the AI
+re-drafts has exactly its new call's warnings.
 
 `content_provenance(id, doc_id, locale, version int null, field_path text null,
 superseded_version int null (the draft version this row replaced, spec 8.1), call_id uuid null (every row
@@ -315,8 +322,8 @@ one provider call produced shares it, kept or discarded), job_id null,
 model_id, prompt_version, prompt_tokens, completion_tokens, cost_micros, edited bool, discarded bool,
 discard_reason text null, warnings text[] not null default '{}', acknowledged_warnings text[] null,
 bulk_id uuid null, approved_by, approved_at, created_at)`, with a partial index on `bulk_id` where not null. `warnings` holds the validator warnings
-of section 8.4 for that field; `approve-clean` (8.6) considers only drafts whose rows all have an
-empty `warnings`. `version` and `field_path` are null
+of section 8.4 for that field; `approve-clean` (8.6) considers only drafts whose row's `field_warnings`
+(above) is empty, so a field carried over from a superseded draft still counts. `version` and `field_path` are null
 on a discarded-cost row, which records a provider call whose result was never stored (section 8.2).
 Every provider call produces exactly one provenance row per field it covered, or one discarded row.
 
@@ -326,7 +333,7 @@ text, error_message, created_at, updated_at)`; partial unique (doc_id, locale, s
 RUNNING); index (run_after, id) where state = QUEUED; index (locked_until) where state = RUNNING for
 the reaper. A job covers all stale fields of one (document, locale) at one source version.
 
-`releases(id, name, created_by, created_at, published_at, published_by, allow_stale bool)` and `release_items(release_id,
+`releases(id, name, created_by, created_at, published_at, published_by, allow_stale bool)`, unique (name), and `release_items(release_id,
 doc_id, locale, draft_version, added_by, added_at)`; publishing a release flips every item's head in one transaction.
 
 `glossary(id, source_locale, target_locale, term, translation, accepted_forms text[], do_not_translate
@@ -351,7 +358,8 @@ engine migration from this section and keeps the probe only as the origin of the
 Saving a draft: in one transaction, lock the `documents` row (`SELECT ... FOR UPDATE`), allocate the
 next version for that (doc, locale), clear the previous draft head flag, insert the new snapshot row,
 and write provenance rows for any AI-produced fields. A write that expected a different current version
-fails with a conflict. Locking the document row rather than the head row works for the first write
+fails with a conflict; `approve` and `rejectDraft` take the same optional `expectedVersion` as `saveDraft`
+(the draft head version the reviewer saw). Locking the document row rather than the head row works for the first write
 too, when no head exists. Publishing is the flag flip described in section 6.3, under the same lock.
 Any operation that locks several documents (publishing a release, bulk import) locks them in
 ascending `documents.id` order, so two concurrent multi-document operations cannot deadlock.
@@ -470,7 +478,9 @@ without the owner's explicit decision (section 8.6).
    deterministic check cannot cover every inflection. A collection or the whole config may set
    `glossary: "strict"`, which makes a miss a rejection like checks 1 to 3. The review surface
    counts warnings per draft and refuses to approve a draft with warnings unless the reviewer
-   acknowledges each one by name; the acknowledgement is recorded in provenance.
+   acknowledges each one by name; the acknowledgement is recorded in provenance. The refusal lives in
+   core `approve` (D-warn): a draft with warnings is approved only with `acknowledgedWarnings` equal to
+   its distinct warning texts; the CLI's `--ack-warning <text>` and the interactive prompt feed it.
 
 A draft failing 1, 2 or 3 is not stored. The job's first failed attempt is retried once with the
 `strict` prompt variant; a second failure marks the job FAILED with the validation reason.
@@ -505,7 +515,8 @@ configuration; the CLI refuses to compile without them.
 
 v0.1 has no admin UI. Review happens through the CLI, which prints a side-by-side diff of source
 change and AI draft per field with glossary matches and warnings highlighted, and accepts approve,
-reject, and edit-then-approve per (document, locale). There is no unconditional "approve all". The
+reject (of single fields through `approve`, or of the whole draft through `rejectDraft`), and
+edit-then-approve per (document, locale). There is no unconditional "approve all". The
 owner-approved bulk path is `mogging review --approve-clean [--collection] [--locale]`: it approves
 every `DRAFT_AI` head in scope that has zero warnings and passed every validator, skips the rest
 and lists them, and writes one bulk-approval provenance row per approved draft carrying the actor,
@@ -556,8 +567,8 @@ spend rose without a draft appearing), `mogging query` (ad hoc reads).
 
 Every CLI command is a function in `@mogging/core` or `@mogging/ai` taking a typed context (database
 connection, schema, actor). Reads: `getDocument`, `listDocuments`, `resolve` (locale chain applied),
-`getSyncState`. Writes: `saveDraft`, `approve`, `publish`, `unpublish`, `createRelease`,
-`addToRelease`, `publishRelease`. Pipeline: `enqueueStale`, `runWorker`. Licensing (section 12):
+`getSyncState`, `listDraftHeads`, `getDraftReview`, `listReleases`. Writes: `saveDraft`, `approve`,
+`rejectDraft`, `publish`, `unpublish`, `createRelease`, `addToRelease`, `publishRelease`. Pipeline: `enqueueStale`, `runWorker`. Licensing (section 12):
 `verifyKey`, `getLicenceState`, `assertLicensed`, the `LicenceError` class and the `LicencePayload`
 type; key signing is a separate tool, not part of the SDK. Every write takes an actor and is
 recorded (the migrations bootstrap, which has no human actor, is the one exception). The worker logs one line per job with job id, model, tokens, cost and outcome.
@@ -661,7 +672,8 @@ purchase address and says plainly what is affected. The guarded set is exactly: 
 `recordAiDraft`, `approve` (and therefore `approveClean`), `publish`, `publishRelease`, and `compile`
 (the pipeline's enqueue and worker). **Not guarded**, by decision: every read (`resolve`,
 `getDocument`, `listDocuments`, `getSyncState`), `unpublish` (an emergency takedown must always
-work), `createRelease`, `addToRelease` and `trackFields` (metadata, no content). Because reads stay
+work), `createRelease`, `addToRelease`, `trackFields` (metadata, no content) and `rejectDraft` (it only
+removes a draft head). Because reads stay
 free, a static-site build that only reads keeps succeeding after the window; what stops is editing,
 translating and publishing new content. The refusal message says exactly that: "Reads keep working
 and existing builds still succeed; content updates, compiles and publishing are paused until a

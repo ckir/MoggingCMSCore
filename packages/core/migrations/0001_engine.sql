@@ -41,6 +41,10 @@ create table document_localized (
   state text not null check (state in ('PUBLISHED', 'DRAFT_HUMAN', 'DRAFT_AI', 'APPROVED')),
   data jsonb not null default '{}'::jsonb,
   source_hashes jsonb not null default '{}'::jsonb,
+  -- The warnings the row's AI text still carries: field path -> distinct warning texts; '{}' once approved.
+  -- INVARIANT: every writer that creates or copies a DRAFT_AI row must set it, because the default '{}'
+  -- lets the spec 8.4 acknowledgement gate pass.
+  field_warnings jsonb not null default '{}'::jsonb,
   is_head_published boolean not null default false,
   is_head_draft boolean not null default false,
   created_at timestamptz not null default clock_timestamp(),
@@ -113,7 +117,8 @@ create table releases (
   created_at timestamptz not null default clock_timestamp(),
   published_at timestamptz null,
   published_by text null,
-  allow_stale boolean not null default false
+  allow_stale boolean not null default false,
+  constraint uq_releases_name unique (name)
 );
 
 create table release_items (

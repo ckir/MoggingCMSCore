@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Sql } from "postgres";
 import type { Ctx } from "../ctx.js";
-import { NotFoundError, NotPublishableError, ValidationError } from "../errors.js";
+import { ConflictError, NotFoundError, NotPublishableError, ValidationError } from "../errors.js";
 import { assertLicensed } from "../licence/guard.js";
 import { normalizeLocale } from "../schema/locale.js";
 import { hashValue } from "../values/hash.js";
@@ -16,6 +16,8 @@ export type ApproveInput = {
   rejectFields?: string[];
   acknowledgedWarnings?: string[];
   bulkId?: string;
+  /** The draft head version the reviewer saw; any other head version is a ConflictError (as saveDraft's). */
+  expectedVersion?: number;
 };
 export type ApproveCleanInput = { collection?: string; locale?: string };
 export type ApproveCleanResult = {
@@ -76,18 +78,38 @@ async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): P
     const [{ t }] = (await tx`select clock_timestamp() as t`) as unknown as [{ t: Date }];
     const label = `${input.docId}/${locale}`;
 
-    const [ai] = await tx`select version, state, data, source_hashes from document_localized
+    const [ai] = await tx`select version, state, data, source_hashes, field_warnings from document_localized
       where doc_id = ${input.docId} and locale = ${locale} and is_head_draft`;
     if (!ai) throw new NotPublishableError(`${label} has no draft head to approve`);
     if (ai.state !== "DRAFT_AI") {
       throw new NotPublishableError(`Draft head of ${label} (state ${String(ai.state)}) is not a DRAFT_AI`);
     }
     const aiVersion = ai.version as number;
+    if (input.expectedVersion !== undefined && input.expectedVersion !== aiVersion) {
+      throw new ConflictError(
+        `Expected draft version ${input.expectedVersion} of ${label} but the head is ${aiVersion}`,
+      );
+    }
+
+    // D-warn (spec 8.4): the draft's distinct warning texts, from its own row (D-fwarn), must be acknowledged
+    // exactly, as a set. Fields this call rejects or edits still count, as `review show` lists them.
+    const warned = new Set(
+      Object.values((ai.field_warnings ?? {}) as Record<string, string[]>).flat().filter((w) => w !== ""),
+    );
+    if (cleanOnly && warned.size > 0) return { skipped: "has warnings" };
+    const acked = new Set(input.acknowledgedWarnings ?? []);
+    const missing = [...warned].filter((w) => !acked.has(w));
+    if (missing.length > 0) {
+      throw new ValidationError(`${label} has ${warned.size} warning(s) not acknowledged: ${missing.join(" | ")}`);
+    }
+    const unknown = [...acked].filter((w) => !warned.has(w));
+    if (unknown.length > 0) {
+      throw new ValidationError(`${label} acknowledges unknown warnings: ${unknown.join(" | ")}`);
+    }
 
     // Rows of the AI version are matched by (doc_id, locale, version). Discarded-cost rows have version null.
     const rows = await tx`select * from content_provenance
       where doc_id = ${input.docId} and locale = ${locale} and version = ${aiVersion} order by id`;
-    if (cleanOnly && rows.some((r) => (r.warnings as string[]).length > 0)) return { skipped: "has warnings" };
 
     const [pub] = await tx`select data, source_hashes from document_localized
       where doc_id = ${input.docId} and locale = ${locale} and is_head_published`;
@@ -119,10 +141,11 @@ async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): P
 
     await tx`update document_localized set is_head_draft = false
       where doc_id = ${input.docId} and locale = ${locale} and is_head_draft`;
+    // An acknowledged warning is never demanded again for that text: the APPROVED row carries none (D-fwarn).
     await tx`insert into document_localized
-        (doc_id, locale, version, state, data, source_hashes, is_head_draft, created_at, created_by)
+        (doc_id, locale, version, state, data, source_hashes, field_warnings, is_head_draft, created_at, created_by)
       values (${input.docId}, ${locale}, ${version}, 'APPROVED', ${tx.json(finalData as Json)},
-              ${tx.json(hashes as Json)}, true, ${t}, ${actor})`;
+              ${tx.json(hashes as Json)}, '{}'::jsonb, true, ${t}, ${actor})`;
 
     const ack = input.acknowledgedWarnings === undefined ? null : input.acknowledgedWarnings;
     for (const r of rows) {
@@ -139,6 +162,14 @@ async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): P
                 0, 0, ${isEdited},
                 ${isRejected}, ${isRejected ? "rejected by reviewer" : null},
                 ${r.warnings as string[]}, ${ack}, ${input.bulkId ?? null}, ${actor}, ${t}, ${t})`;
+    }
+    if (rows.length === 0 && warned.size > 0) {
+      // An AI version with no provenance rows (legal) still records who acknowledged which warnings (spec 8.4).
+      await tx`insert into content_provenance
+          (doc_id, locale, version, field_path, job_id, model_id, prompt_version, prompt_tokens,
+           completion_tokens, cost_micros, warnings, acknowledged_warnings, bulk_id, approved_by, approved_at, created_at)
+        values (${input.docId}, ${locale}, ${version}, null, null, 'human:approve', '', 0, 0, 0,
+                ${[...warned]}, ${[...acked]}, ${input.bulkId ?? null}, ${actor}, ${t}, ${t})`;
     }
     if (cleanOnly) {
       // Bulk-approval marker (spec 8.6): one row per approved draft; consumers count rows per bulk_id.

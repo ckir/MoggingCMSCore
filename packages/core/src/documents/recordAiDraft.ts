@@ -79,8 +79,11 @@ export async function recordAiDraft(ctx: Ctx, input: RecordAiDraftInput): Promis
 
     // Base = draft head, else published head, else the latest row by version in any state (e.g. after
     // unpublish), else none. Read under the documents lock before any head flag is cleared.
-    type Base = { version: number; state: string; is_head_draft: boolean; data: Record<string, unknown>; source_hashes: Record<string, string> };
-    const [base] = (await tx`select version, state, is_head_draft, data, source_hashes from document_localized
+    type Base = {
+      version: number; state: string; is_head_draft: boolean; data: Record<string, unknown>;
+      source_hashes: Record<string, string>; field_warnings: Record<string, string[]>;
+    };
+    const [base] = (await tx`select version, state, is_head_draft, data, source_hashes, field_warnings from document_localized
       where doc_id = ${input.docId} and locale = ${locale}
       order by is_head_draft desc, is_head_published desc, version desc limit 1`) as unknown as Array<Base | undefined>;
     if (base && base.is_head_draft && base.state === "DRAFT_HUMAN") return { cancelled: "DRAFT_HUMAN" };
@@ -94,6 +97,18 @@ export async function recordAiDraft(ctx: Ctx, input: RecordAiDraftInput): Promis
       if (normalized[key] === null) delete hashes[key];
       else if (Object.hasOwn(input.sourceHashes, key)) hashes[key] = input.sourceHashes[key]!;
     }
+    // Warnings the row still carries (D-fwarn): a carried field keeps the warnings of the text it carries, from
+    // whatever base; a field this call re-drafts has exactly this call's warnings. A provenance entry for a
+    // field not in `fields` changes nothing here (its warnings stay on its own provenance row).
+    const fw: Record<string, string[]> = { ...(base?.field_warnings ?? {}) };
+    for (const key of Object.keys(normalized)) {
+      delete fw[key];
+      if (normalized[key] === null) continue;
+      const texts = [...new Set(
+        input.provenance.filter((p) => p.fieldPath === key).flatMap((p) => p.warnings ?? []).filter((w) => w !== ""),
+      )];
+      if (texts.length > 0) fw[key] = texts;
+    }
 
     const [heads] = await tx`select coalesce(max(version), 0) as max_version from document_localized
       where doc_id = ${input.docId} and locale = ${locale}`;
@@ -101,10 +116,12 @@ export async function recordAiDraft(ctx: Ctx, input: RecordAiDraftInput): Promis
 
     await tx`update document_localized set is_head_draft = false
       where doc_id = ${input.docId} and locale = ${locale} and is_head_draft`;
+    // INVARIANT: every writer that creates or copies a DRAFT_AI row must set field_warnings, because the column
+    // default '{}' lets the spec 8.4 acknowledgement gate in approve pass.
     await tx`insert into document_localized
-        (doc_id, locale, version, state, data, source_hashes, is_head_draft, created_at, created_by)
+        (doc_id, locale, version, state, data, source_hashes, field_warnings, is_head_draft, created_at, created_by)
       values (${input.docId}, ${locale}, ${version}, 'DRAFT_AI', ${tx.json(data as Json)},
-              ${tx.json(hashes as Json)}, true, ${t}, ${actor})`;
+              ${tx.json(hashes as Json)}, ${tx.json(fw as Json)}, true, ${t}, ${actor})`;
 
     for (const p of input.provenance) {
       await tx`insert into content_provenance
