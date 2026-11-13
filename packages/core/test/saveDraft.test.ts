@@ -35,6 +35,13 @@ test("undeclared field is rejected", async () => withTestDb(async (sql) => {
   await expect(saveDraft(ctx, { docId, locale: "en", data: { titel: "x" } })).rejects.toThrow(ValidationError);
 }));
 
+test("a U+0000 in a value is a ValidationError and writes no row", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  await expect(saveDraft(ctx, { docId, locale: "en", data: { title: "a\u0000b" } })).rejects.toThrow(ValidationError);
+  const [{ n }] = await sql`select count(*)::int as n from document_localized where doc_id = ${docId}`;
+  expect(n).toBe(0);
+}));
+
 test("a draft with a valid and an undeclared field stores nothing", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
   await expect(saveDraft(ctx, { docId, locale: "en", data: { title: "ok", titel: "x" } })).rejects.toThrow(ValidationError);

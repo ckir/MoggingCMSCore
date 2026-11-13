@@ -7,8 +7,16 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Date);
 }
 
+// Postgres jsonb (and text) cannot store U+0000, so refuse it here rather than at the database.
+function rejectNul(s: string, path: string): void {
+  if (s.includes("\u0000")) throw new ValidationError(`${path}: contains U+0000`);
+}
+
 function nfcDeep(v: unknown, path: string): unknown {
-  if (typeof v === "string") return v.normalize("NFC");
+  if (typeof v === "string") {
+    rejectNul(v, path);
+    return v.normalize("NFC");
+  }
   if (v === null || typeof v === "boolean") return v;
   if (typeof v === "number") {
     if (!Number.isFinite(v)) throw new ValidationError(`${path}: non-finite number is not JSON`);
@@ -17,7 +25,11 @@ function nfcDeep(v: unknown, path: string): unknown {
   if (Array.isArray(v)) return v.map((x, i) => nfcDeep(x, `${path}[${i}]`));
   if (isPlainObject(v)) {
     const out: Record<string, unknown> = {};
-    for (const [k, x] of Object.entries(v)) if (x !== undefined) out[k.normalize("NFC")] = nfcDeep(x, `${path}.${k}`);
+    for (const [k, x] of Object.entries(v)) {
+      if (x === undefined) continue;
+      rejectNul(k, `${path}.${k}`);
+      out[k.normalize("NFC")] = nfcDeep(x, `${path}.${k}`);
+    }
     return out;
   }
   throw new ValidationError(`${path}: value is not JSON-serializable`);
@@ -27,9 +39,11 @@ function normalizeAt(field: Field, value: unknown, path: string): unknown {
   switch (field.kind) {
     case "text":
       if (typeof value !== "string") throw new ValidationError(`${path}: expected text (string)`);
+      rejectNul(value, path);
       return value.normalize("NFC");
     case "slug":
       if (typeof value !== "string") throw new ValidationError(`${path}: expected slug (string)`);
+      rejectNul(value, path);
       return value.normalize("NFC").toLowerCase();
     case "richText":
       if (typeof value !== "string" && typeof value !== "object") {
@@ -47,6 +61,7 @@ function normalizeAt(field: Field, value: unknown, path: string): unknown {
       return value;
     case "reference":
       if (typeof value !== "string") throw new ValidationError(`${path}: expected a document id (string)`);
+      rejectNul(value, path);
       return value;
     case "dateTime": {
       let ms: number;

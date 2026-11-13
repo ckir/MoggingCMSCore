@@ -299,9 +299,12 @@ describe("importFolder", () => {
   });
 
   test("target-file error keeps the docId", async () => {
-    await setup(async (_sql, ctx) => {
-      // A NUL character passes normalization but the database refuses it in jsonb: a pass-2 failure.
-      const dir = writeTree(null, { "en/docs/a.md": "x\n", "de/docs/a.md": '---\ntitle: "a\\0b"\n---\nx\n' });
+    await setup(async (sql, ctx) => {
+      // The database refuses the "boom" title through a trigger in the test schema: a pass-2 failure.
+      await sql`create function refuse_boom() returns trigger language plpgsql as $$ begin
+  if new.data->>'title' = 'boom' then raise exception 'boom'; end if; return new; end $$`;
+      await sql`create trigger refuse_boom before insert on document_localized for each row execute function refuse_boom()`;
+      const dir = writeTree(null, { "en/docs/a.md": "x\n", "de/docs/a.md": "---\ntitle: boom\n---\nx\n" });
       const r = await importFolder(ctx, { dir });
       const a = (await getDocument(ctx, { collection: "docs", slug: "a" }))!;
       const de = r.files.find((f) => f.file === "de/docs/a.md")!;
@@ -309,6 +312,16 @@ describe("importFolder", () => {
       expect(de.docId).toBe(a.id);
       const missing = await importFolder(ctx, { dir: writeTree(null, { "de/docs/zz.md": "x\n" }) });
       expect(missing.files[0]!.docId).toBeNull();
+    });
+  });
+
+  test("a U+0000 in a source file is a file error and creates no document", async () => {
+    await setup(async (_sql, ctx) => {
+      const dir = writeTree(null, { "en/docs/a.md": '---\ntitle: "a\\0b"\n---\nx\n' });
+      const r = await importFolder(ctx, { dir });
+      expect(outcome(r, "en/docs/a.md")).toBe("error");
+      expect(r.errors[0]!.message).toMatch(/U\+0000/);
+      expect((await listDocuments(ctx, { collection: "docs" })).items).toHaveLength(0);
     });
   });
 

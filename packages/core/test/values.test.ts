@@ -88,3 +88,14 @@ test("richText rejects NaN and Infinity nested inside the document, naming the p
   expect(() => normalizeValue(richText(), { children: [{ value: Infinity }] }, "body")).toThrow(ValidationError);
   expect(normalizeValue(richText(), { children: [{ value: 2 }] }, "body")).toEqual({ children: [{ value: 2 }] });
 });
+test("U+0000 is rejected in text, slug, reference and every richText string and key", () => {
+  expect(() => normalizeValue(text(), "a\u0000b")).toThrow(/contains U\+0000/);
+  expect(() => normalizeValue(slug(), "a\u0000b")).toThrow(/contains U\+0000/);
+  expect(() => normalizeValue(reference("posts"), "a\u0000b")).toThrow(/contains U\+0000/);
+  expect(() => normalizeValue(richText(), "a\u0000b")).toThrow(/contains U\+0000/);
+  expect(() => normalizeValue(richText(), { children: [{ text: "a\u0000b" }] })).toThrow(/contains U\+0000/);
+  expect(() => normalizeValue(richText(), { "k\u0000": 1 })).toThrow(/contains U\+0000/);
+});
+test("other control characters stay legal", () => {
+  expect(normalizeValue(text(), "a\u0001b\tc")).toBe("a\u0001b\tc");
+});
