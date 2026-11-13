@@ -108,8 +108,9 @@ describe("mogging compile", () => {
       expect(r.out.split("\n")).toEqual([
         expect.stringMatching(/^job=\d+ doc=\S+ locale=de model=mock\/translate tokens=100\/50 cost_usd=0\.000200 outcome=COMPLETED$/),
         "enqueued 1, duplicates 0, skipped 0",
-        "completed 1, failed 0, cancelled 0, discarded 0, requeued 0",
+        "completed 1, failed 0, cancelled 0, discarded 0, requeued 0, errors 0",
         "spent 0.000200 USD",
+        "budgetRefusals 0, runBudgetStop no",
         "pendingJobs 0",
         "",
       ]);
@@ -145,7 +146,8 @@ describe("mogging compile", () => {
       const r = await compileCmd(sql, model, ["--locales", "de", "--budget", "1"], { budgets: { monthlyCapUsd: 0 } });
       expect(r.code).toBe(0);
       expect(r.out).toContain("pendingJobs 1");
-      expect(r.out).toContain("completed 0, failed 0, cancelled 0, discarded 0, requeued 0");
+      expect(r.out).toContain("completed 0, failed 0, cancelled 0, discarded 0, requeued 0, errors 0");
+      expect(r.out).toContain("budgetRefusals 1, runBudgetStop no");
       expect(model.doGenerateCalls).toHaveLength(0);
     });
   });

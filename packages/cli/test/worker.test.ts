@@ -3,12 +3,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { enqueueStale } from "@mogging/ai";
-import { migrate } from "@mogging/core";
+import type { WorkerReport } from "@mogging/ai";
+import { defineCollection, defineConfig, migrate, richText, slug, text } from "@mogging/core";
 import type { Sql } from "postgres";
+import { workerLines } from "../src/commands/worker.js";
 import { run } from "../src/run.js";
 import type { Deps } from "../src/types.js";
 import { withTestDb } from "./db.js";
-import { aiConfigFor, config, ctxFor, testDeps } from "./fixtures.js";
+import { aiConfigFor, config, ctxFor, docs, testDeps } from "./fixtures.js";
 import type { TestDeps } from "./fixtures.js";
 import { asyncMockModel, identity, mockModel } from "./mockModel.js";
 import type { MockCallOptions } from "./mockModel.js";
@@ -144,6 +146,64 @@ describe("mogging worker", () => {
       expect(model.doGenerateCalls).toHaveLength(0);
       expect((await states(sql)).map((j) => j.state)).toEqual(["QUEUED"]);
     });
+  });
+
+  test("a run stopped by --budget says so in the human output; an idle run says it was not", async () => {
+    await withDb(async (sql) => {
+      await seedJobs(sql, { "en/docs/a.md": EN("A") });
+      const stopped = await workerCmd(sql, mockModel([identity]), ["--once", "--budget", "0.000001"]);
+      expect(stopped.code).toBe(0);
+      expect(stopped.out).toContain("budgetRefusals 0, runBudgetStop yes");
+      await sql`delete from ai_jobs`;
+      const idle = await workerCmd(sql, mockModel([identity]), ["--once"]);
+      expect(idle.out).toContain("budgetRefusals 0, runBudgetStop no");
+    });
+  });
+
+  test("a monthly-cap refusal is shown as budgetRefusals", async () => {
+    await withDb(async (sql) => {
+      await seedJobs(sql, { "en/docs/a.md": EN("A") });
+      const t = workerDeps(sql, mockModel([identity]));
+      t.loadModule = async () => ({ config, ai: aiConfigFor(mockModel([identity]), { budgets: { monthlyCapUsd: 0 } }) });
+      expect(await run(["worker", "--once"], t)).toBe(0);
+      expect(t.stdout()).toContain("budgetRefusals 1, runBudgetStop no");
+    });
+  });
+
+  test("an errors outcome is visible on exit 4: one job completes, one fails to load", async () => {
+    await withDb(async (sql) => {
+      const posts = defineCollection("posts", {
+        slug: slug(),
+        title: text({ localized: true }),
+        body: richText({ localized: true, body: true }),
+      });
+      const locales = { source: "en", chains: { de: ["en"], fr: ["en"] } };
+      const both = defineConfig({ collections: [docs, posts], locales });
+      const onlyPosts = defineConfig({ collections: [posts], locales });
+      const files = { "en/docs/a.md": EN("A"), "en/posts/p.md": EN("P") };
+      const seeding = testDeps(sql, { loadModule: async () => ({ config: both, ai: aiConfigFor(mockModel([])) }) });
+      expect(await run(["import", tree(files), "--publish"], seeding)).toBe(0);
+      await enqueueStale({ ...ctxFor(sql, mockModel([])), config: both }, { locales: ["de"] });
+      expect(await states(sql)).toHaveLength(2);
+
+      // The run's config no longer declares `docs`, so that job fails to load (an `errors` outcome, then back to the queue).
+      const t = testDeps(sql, { loadModule: async () => ({ config: onlyPosts, ai: aiConfigFor(mockModel([identity])) }) });
+      expect(await run(["worker", "--once"], t)).toBe(4);
+      expect(t.stdout()).toContain("completed 1, failed 0, cancelled 0, discarded 0, requeued 1, errors 1");
+      expect(t.stdout()).toMatch(/^job=\d+ error=Unknown collection "docs"$/m);
+    });
+  });
+
+  test("workerLines prints every counter of the report, including errors, budgetRefusals and runBudgetStop", () => {
+    const report: WorkerReport = {
+      completed: 1, failed: 2, cancelled: 3, discarded: 4, requeued: 5, errors: 6, budgetRefusals: 7, runBudgetStop: true,
+      spentMicros: 1_500_000,
+    };
+    expect(workerLines(report)).toEqual([
+      "completed 1, failed 2, cancelled 3, discarded 4, requeued 5, errors 6",
+      "spent 1.500000 USD",
+      "budgetRefusals 7, runBudgetStop yes",
+    ]);
   });
 
   test("a provider error requeues the job and the run exits 1", async () => {

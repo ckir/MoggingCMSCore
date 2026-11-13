@@ -39,8 +39,9 @@ export const usd = (micros: number): string => (micros / 1_000_000).toFixed(6);
 
 export function workerLines(w: WorkerReport): string[] {
   return [
-    `completed ${w.completed}, failed ${w.failed}, cancelled ${w.cancelled}, discarded ${w.discarded}, requeued ${w.requeued}`,
+    `completed ${w.completed}, failed ${w.failed}, cancelled ${w.cancelled}, discarded ${w.discarded}, requeued ${w.requeued}, errors ${w.errors}`,
     `spent ${usd(w.spentMicros)} USD`,
+    `budgetRefusals ${w.budgetRefusals}, runBudgetStop ${w.runBudgetStop ? "yes" : "no"}`,
   ];
 }
 
