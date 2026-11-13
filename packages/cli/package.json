@@ -1,0 +1,28 @@
+{
+  "name": "@mogging/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "engines": { "node": ">=22" },
+  "exports": { ".": "./src/run.ts" },
+  "files": ["src", "README.md"],
+  "scripts": {
+    "test": "vitest run",
+    "dev": "tsx src/bin.ts"
+  },
+  "dependencies": {
+    "@mogging/ai": "workspace:*",
+    "@mogging/core": "workspace:*",
+    "@mogging/markdown": "workspace:*",
+    "jiti": "2.7.0",
+    "postgres": "^4"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "ai": "7.0.154",
+    "tsx": "^4",
+    "typescript": "^5",
+    "vitest": "^5"
+  }
+}
