@@ -609,7 +609,7 @@ connection, schema, actor). Reads: `getDocument`, `listDocuments`, `resolve` (lo
 `rejectDraft`, `publish`, `unpublish`, `createRelease`, `addToRelease`, `removeFromRelease`, `publishRelease`. Pipeline: `enqueueStale`, `runWorker`. Licensing (section 12):
 `verifyKey`, `getLicenceState`, `assertLicensed`, the `LicenceError` class and the `LicencePayload`
 type; key signing is a separate tool, not part of the SDK. Every write takes an actor and is
-recorded (the migrations bootstrap, which has no human actor, is the one exception). `removeFromRelease` takes the actor but records nothing: release membership is staging, and what is audited is what publishes. The worker logs one line per job with job id, model, tokens, cost and outcome.
+recorded (the migrations bootstrap, which has no human actor, is the one exception). `removeFromRelease` takes the actor but records nothing: release membership is staging, and what is audited is what publishes. The worker logs one line per job with job id, model, tokens, cost and outcome. `listDraftHeads` returns `{ items, next }`; `after` is an opaque cursor, to be passed back only as the `next` the previous page returned.
 
 ### 9.4 Wire and file formats that are contracts
 

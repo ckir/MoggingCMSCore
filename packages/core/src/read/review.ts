@@ -48,7 +48,7 @@ const distinctWarnings = (fw: unknown): number => new Set(Object.values((fw ?? {
 
 /**
  * Draft heads (DRAFT_AI, APPROVED, DRAFT_HUMAN) of live documents, localized and shared, in keyset order on
- * (doc_id, locale). `after` is the opaque cursor "<docId>:<locale>" of the last item seen. Unguarded read.
+ * (doc_id, locale). `after` is an opaque cursor: pass back the `next` of the previous page; its format is not part of the contract. Unguarded read.
  */
 export async function listDraftHeads(
   ctx: Ctx,
