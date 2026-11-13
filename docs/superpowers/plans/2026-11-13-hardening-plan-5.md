@@ -56,9 +56,9 @@ Why: Postgres `jsonb` rejects `\u0000`, so `saveDraft` fails at the database wit
 
 ```ts
 test("U+0000 is rejected in text, slug, reference and every richText string and key", () => {
-  expect(() => normalizeValue(text(), "a\u0000b")).toThrow(ValidationError);
-  expect(() => normalizeValue(slug(), "a\u0000b")).toThrow(ValidationError);
-  expect(() => normalizeValue(reference("posts"), "a\u0000b")).toThrow(ValidationError);
+  expect(() => normalizeValue(text(), "a\u0000b")).toThrow(/contains U\+0000/);
+  expect(() => normalizeValue(slug(), "a\u0000b")).toThrow(/contains U\+0000/);
+  expect(() => normalizeValue(reference("posts"), "a\u0000b")).toThrow(/contains U\+0000/);
   expect(() => normalizeValue(richText(), "a\u0000b")).toThrow(/contains U\+0000/);
   expect(() => normalizeValue(richText(), { children: [{ text: "a\u0000b" }] })).toThrow(/contains U\+0000/);
   expect(() => normalizeValue(richText(), { "k\u0000": 1 })).toThrow(/contains U\+0000/);
@@ -72,7 +72,7 @@ and in `saveDraft.test.ts` one test (same style as its neighbours) asserting `sa
 
 - [ ] **Step 2: Run both files; the new tests fail** (`Expected ... ValidationError`, the saveDraft one with a Postgres error).
 - [ ] **Step 3: Implement** a module-private `rejectNul(s: string, path: string): void` in `normalize.ts` that throws `new ValidationError(`${path}: contains U+0000`)`; call it on every string in `nfcDeep` (before `normalize`), on every object key in `nfcDeep` (path `${path}.${k}`), and in the `text`, `slug` and `reference` cases.
-- [ ] **Step 4: Update the markdown import test** `target-file error keeps the docId` (`packages/markdown/test/import.test.ts:301`). Its NUL title now fails in the SCAN (`import.ts:183`), before pass 2, so `de.docId` would be `null` and the test would pass for the wrong reason or fail. Keep its assertions (the `de` file's outcome is `"error"` and `de.docId` equals the source document's id) and change only how the pass-2 failure is forced: in the test body, before `importFolder`, create a database trigger through the `sql` the `setup` callback provides:
+- [ ] **Step 4: Update the markdown import test** `target-file error keeps the docId` (`packages/markdown/test/import.test.ts:301`). Its NUL title now fails in the SCAN (`import.ts:183`), before pass 2, so `de.docId` would be `null` and the test would pass for the wrong reason or fail. Keep its assertions (the `de` file's outcome is `"error"` and `de.docId` equals the source document's id) and change only how the pass-2 failure is forced: in the test body, before `importFolder`, create a database trigger through the `sql` the `setup` callback provides (the existing test names that parameter `_sql`: rename it to `sql`):
 
 ```ts
 await sql`create function refuse_boom() returns trigger language plpgsql as $$ begin
@@ -100,7 +100,8 @@ and give the `de` file the front matter `title: boom` instead of the NUL. The tr
 
 ```ts
 test("runWorker rejects an unusable pollMs with a ValidationError", async () => withTestDb(async (sql) => {
-  const ctx = await migrateAndSeed(sql);   // as the neighbouring tests obtain their ctx
+  await migrateAndSeed(sql);               // returns the seeded docId (a string), not a ctx
+  const ctx = ctxFor(sql, mockModel([identity]));   // as the test at line 81 builds its ctx
   for (const pollMs of [0, -1, 1.5, NaN, Infinity, 2147483648]) {
     await expect(runWorker(ctx, { once: true, pollMs })).rejects.toBeInstanceOf(ValidationError);
   }
@@ -108,7 +109,7 @@ test("runWorker rejects an unusable pollMs with a ValidationError", async () => 
 }));
 ```
 
-(`ValidationError` from `@mogging/core`; if `migrateAndSeed` does not return a ctx, build it the way the test at line 81 does.)
+(`ValidationError` from `@mogging/core`. The `pollMs: 1` line is a positive control: it pins that a valid value is accepted; the rejections above it are what fail before the fix.)
 - [ ] **Step 2: Run** `pnpm vitest run packages/ai/test/worker.test.ts -t "unusable pollMs"`: fails (no rejection).
 - [ ] **Step 3: Implement** the check at the very top of `runWorker` (before any query), importing `ValidationError` next to `NotFoundError` at `worker.ts:2`; update the README sentence ("it polls every `pollMs` (2000 by default)") to add "an integer from 1 to 2147483647 milliseconds".
 - [ ] **Step 4: Run** the worker test file (all pass; existing tests use `pollMs` 1 and 50) and `pnpm typecheck`.
@@ -216,6 +217,6 @@ test("runWorker rejects an unusable pollMs with a ValidationError", async () => 
 
 **Interfaces:** none (documentation only; behaviour of `listDraftHeads` is unchanged).
 
-- [ ] **Step 1: Edit.** In `review.ts` rewrite the comment so it no longer spells the cursor's format: "`after` is an opaque cursor: pass back the `next` of the previous page; its format is not part of the contract." In core design 9.3 add after the Reads list: "`listDraftHeads` returns `{ items, next }`; `after` is an opaque cursor, to be passed back only as the `next` the previous page returned." In `TODO.md` delete the bullet that starts "`@mogging/core` `listDraftHeads` cursor"; remove any remaining plan 5 item still listed (U+0000, `pollMs`, `listProvenance`, rejected text, `release remove`) and confirm none is left with `grep -n "U+0000\|pollMs\|afterId\|resurface\|release remove\|listDraftHeads" TODO.md` (the plan-3 line 8 may keep its other findings).
+- [ ] **Step 1: Edit.** In `review.ts` rewrite the comment so it no longer spells the cursor's format: "`after` is an opaque cursor: pass back the `next` of the previous page; its format is not part of the contract." In core design 9.3 add after the Reads list: "`listDraftHeads` returns `{ items, next }`; `after` is an opaque cursor, to be passed back only as the `next` the previous page returned." In `TODO.md` delete the bullet that starts "`@mogging/core` `listDraftHeads` cursor"; remove any remaining plan 5 item still listed (U+0000, `pollMs`, `listProvenance`, rejected text, `release remove`) and confirm none is left with `grep -n "U+0000\|pollMs\|afterId\|resurface\|release remove\|listDraftHeads" TODO.md` (the plan 3 bullet "`@mogging/ai` deferred Minor review findings" keeps its other findings).
 - [ ] **Step 2: Run** `pnpm typecheck` and `pnpm test` (whole suite green, count = baseline + the tests this plan added).
 - [ ] **Step 3: Commit** `docs: listDraftHeads cursor is opaque; TODO closed for plan 5`.
