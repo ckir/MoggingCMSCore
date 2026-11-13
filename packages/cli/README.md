@@ -247,7 +247,9 @@ works without a build step.
   published while a reviewer is in `$EDITOR` or preparing an `--edit-file`, that is not detected: the AI draft is not
   replaced and `--version` still matches.
 - **`release remove` works by (document, locale).** It needs an unpublished release and records nothing; to repair a
-  release whose draft has moved on, `release remove` the item, then `release add` it again.
+  release whose draft has moved on, `release remove` the item, then `release add` it again. `--locale` may name a locale
+  that has since left the config, so such an item can still be removed; without `--locale` only the declared locales
+  are tried.
 - **`publish <target>` without `--locale` publishes every `DRAFT_HUMAN` and `APPROVED` head** of the document, the shared
   snapshot included, and refuses `DRAFT_AI` heads. It is not atomic across heads: each is reported, and the exit code is
   `4` or `1` by the rule above.

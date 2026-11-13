@@ -466,13 +466,13 @@ describe("mogging release remove", () => {
       await humanDraft(sql, docId, "de");
       await cli(sql, "release", "create", "r1");
       await cli(sql, "release", "add", "r1", "docs/intro", "--locale", "de");
-      // The locale left the config after the item was added: the config declares en and de, the item says fr.
-      await sql`update release_items set locale = 'fr' where doc_id = ${docId}`;
+      // The locale left the config after the item was added: the config declares en, de and fr, the item says ja.
+      await sql`update release_items set locale = 'ja' where doc_id = ${docId}`;
       const typo = await cli(sql, "release", "remove", "r1", "docs/intro", "--locale", "xx");
       expect(typo.code).toBe(1);
       expect(typo.err).toContain('Locale "xx" is not declared in the config');
       expect(await items(sql)).toHaveLength(1);
-      const r = await cli(sql, "release", "remove", "r1", "docs/intro", "--locale", "fr");
+      const r = await cli(sql, "release", "remove", "r1", "docs/intro", "--locale", "ja");
       expect(r.code).toBe(0);
       expect(r.out).toContain("removed");
       expect(await items(sql)).toHaveLength(0);
