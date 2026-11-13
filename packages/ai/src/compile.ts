@@ -1,4 +1,5 @@
 import { ValidationError, assertLicensed, normalizeLocale } from "@mogging/core";
+import { assertActor } from "./actor.js";
 import { usdToMicros, type AiCtx } from "./config.js";
 import { enqueueStale, type EnqueueReport } from "./jobs.js";
 import { runWorker, type WorkerReport } from "./worker.js";
@@ -16,6 +17,7 @@ export type CompileReport = { enqueue: EnqueueReport; worker: WorkerReport; pend
  */
 export async function compile(ctx: AiCtx, input: CompileInput): Promise<CompileReport> {
   await assertLicensed(ctx);
+  assertActor(ctx);
   if (typeof input.budgetUsd !== "number" || !Number.isFinite(input.budgetUsd) || !(input.budgetUsd > 0)) {
     throw new ValidationError(`budgetUsd must be a positive number, got ${input.budgetUsd}`);
   }

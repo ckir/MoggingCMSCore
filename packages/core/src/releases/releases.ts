@@ -1,4 +1,4 @@
-import type { Ctx } from "../ctx.js";
+import { assertActor, type Ctx } from "../ctx.js";
 import { ConflictError, NotFoundError, NotPublishableError, StaleReleaseError, ValidationError } from "../errors.js";
 import { assertLicensed } from "../licence/guard.js";
 import { publishWithinTx } from "../documents/publishCore.js";
@@ -35,6 +35,7 @@ function releaseIdOf(id: string): string {
 
 /** Creates an empty release. The id is a bigint column, returned as a decimal string. Names are unique. */
 export async function createRelease(ctx: Ctx, input: CreateReleaseInput): Promise<{ id: string }> {
+  assertActor(ctx);
   const { sql, actor } = ctx;
   if (typeof input.name !== "string" || input.name.trim() === "") throw new ValidationError("Release name is required");
   rejectNul(input.name, "Release name");
@@ -81,6 +82,7 @@ export async function listReleases(ctx: Ctx): Promise<ReleaseSummary[]> {
  * release. Lock order everywhere: release row, then document rows.
  */
 export async function addToRelease(ctx: Ctx, input: AddToReleaseInput): Promise<void> {
+  assertActor(ctx);
   const { sql } = ctx;
   const { isShared, locale } = resolveLocale(ctx, input.locale);
   const releaseId = releaseIdOf(input.releaseId);
@@ -157,6 +159,7 @@ export async function removeFromRelease(ctx: Ctx, input: RemoveFromReleaseInput)
  */
 export async function publishRelease(ctx: Ctx, input: PublishReleaseInput): Promise<void> {
   await assertLicensed(ctx);
+  assertActor(ctx);
   const { sql, actor, config } = ctx;
   const releaseId = releaseIdOf(input.releaseId);
   const source = config.locales.source;

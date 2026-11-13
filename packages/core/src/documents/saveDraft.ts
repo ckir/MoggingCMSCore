@@ -1,7 +1,7 @@
 import type { Sql } from "postgres";
 
 type Json = Parameters<Sql["json"]>[0];
-import type { Ctx } from "../ctx.js";
+import { assertActor, type Ctx } from "../ctx.js";
 import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
 import { assertLicensed } from "../licence/guard.js";
 import { normalizeLocale } from "../schema/locale.js";
@@ -19,6 +19,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ version: number }> {
   await assertLicensed(ctx);
+  assertActor(ctx);
   const { config, sql, actor } = ctx;
   const isShared = input.locale === "shared";
   const locale = isShared ? "shared" : normalizeLocale(input.locale);

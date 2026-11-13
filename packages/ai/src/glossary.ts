@@ -1,4 +1,5 @@
 import { normalizeLocale, type Ctx } from "@mogging/core";
+import { assertActor } from "./actor.js";
 import type { GlossaryEntry } from "./validate.js";
 
 type Row = {
@@ -22,6 +23,7 @@ export async function listGlossary(
 
 /** Inserts or updates entries by (source locale, target locale, term), all in one transaction. */
 export async function upsertGlossary(ctx: Ctx, entries: GlossaryEntry[]): Promise<{ upserted: number }> {
+  assertActor(ctx);
   // Normalize before opening the transaction so a malformed locale writes nothing.
   const prepared = entries.map((e) => ({
     ...e, sourceLocale: normalizeLocale(e.sourceLocale), targetLocale: normalizeLocale(e.targetLocale),

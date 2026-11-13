@@ -1,4 +1,4 @@
-import type { Ctx } from "../ctx.js";
+import { assertActor, type Ctx } from "../ctx.js";
 import { NotFoundError } from "../errors.js";
 import { assertLicensed } from "../licence/guard.js";
 import { publishWithinTx, resolveLocale } from "./publishCore.js";
@@ -12,6 +12,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Publishes the draft head (or republishes a previously published row by version); spec 6.3 flip rule. */
 export async function publish(ctx: Ctx, input: PublishInput): Promise<void> {
   await assertLicensed(ctx);
+  assertActor(ctx);
   const { sql } = ctx;
   resolveLocale(ctx, input.locale);
   if (!UUID.test(input.docId)) throw new NotFoundError(`Document "${input.docId}" not found`);
@@ -28,6 +29,7 @@ export async function publish(ctx: Ctx, input: PublishInput): Promise<void> {
 
 /** Clears the published head and stamps unpublished_at and unpublished_by; no-op when nothing is published. Draft head untouched. */
 export async function unpublish(ctx: Ctx, input: UnpublishInput): Promise<void> {
+  assertActor(ctx);
   const { sql } = ctx;
   const { isShared, locale } = resolveLocale(ctx, input.locale);
   if (!UUID.test(input.docId)) throw new NotFoundError(`Document "${input.docId}" not found`);

@@ -1,4 +1,4 @@
-import type { Ctx } from "../ctx.js";
+import { assertActor, type Ctx } from "../ctx.js";
 import { ConflictError, NotFoundError, NotPublishableError, ValidationError } from "../errors.js";
 import { normalizeLocale } from "../schema/locale.js";
 import { rejectNul } from "../values/nul.js";
@@ -26,6 +26,7 @@ function resolveLocale(ctx: Ctx, input: string): string {
 export async function rejectDraft(
   ctx: Ctx, input: { docId: string; locale: string; reason?: string; expectedVersion?: number },
 ): Promise<{ version: number }> {
+  assertActor(ctx);
   const { sql, actor } = ctx;
   const locale = resolveLocale(ctx, input.locale);
   if (typeof input.reason === "string") rejectNul(input.reason, "reason");

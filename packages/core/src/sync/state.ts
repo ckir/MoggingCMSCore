@@ -1,5 +1,5 @@
 import type { Sql } from "postgres";
-import type { Ctx } from "../ctx.js";
+import { assertActor, type Ctx } from "../ctx.js";
 import { NotFoundError, ValidationError } from "../errors.js";
 import { normalizeLocale } from "../schema/locale.js";
 import { hashValue } from "../values/hash.js";
@@ -105,6 +105,7 @@ export async function getSyncState(ctx: Ctx, input: SyncStateInput = {}): Promis
  * No new version; one `human:track` provenance row per field.
  */
 export async function trackFields(ctx: Ctx, input: TrackFieldsInput): Promise<void> {
+  assertActor(ctx);
   const { config, sql, actor } = ctx;
   const locale = targetLocale(ctx, input.locale);
   if (!UUID.test(input.docId)) throw new NotFoundError(`Document "${input.docId}" not found`);

@@ -3,6 +3,7 @@ import {
   ValidationError, assertLicensed, getDocument, getSyncState, normalizeLocale,
   type Collection, type DocumentRecord, type Snapshot, type SyncStateRow,
 } from "@mogging/core";
+import { assertActor } from "./actor.js";
 import { priceFor, type AiCtx } from "./config.js";
 import { jobContext } from "./context.js";
 import { estimateRequest, planRequests } from "./estimate.js";
@@ -108,6 +109,7 @@ type Pair = {
  */
 export async function enqueueStale(ctx: AiCtx, input: EnqueueInput): Promise<EnqueueReport> {
   await assertLicensed(ctx);
+  assertActor(ctx);
   const { config } = ctx;
   if (input.docIds !== undefined && input.collection === undefined) {
     throw new ValidationError("docIds requires collection");
@@ -292,6 +294,7 @@ async function retryOne(ctx: AiCtx, tx: TransactionSql, id: number): Promise<Ret
 export async function retryJobs(
   ctx: AiCtx, input: { ids: number[] },
 ): Promise<{ retried: number; skipped: Array<{ id: number; reason: string }> }> {
+  assertActor(ctx);
   const ids = checkIds(input.ids);
   let retried = 0;
   const skipped: Array<{ id: number; reason: string }> = [];
@@ -312,6 +315,7 @@ export async function retryJobs(
 
 /** QUEUED or RUNNING -> CANCELLED, error_message `cancelled by <actor>`; a RUNNING worker then fails its fence. */
 export async function cancelJobs(ctx: AiCtx, input: { ids: number[] }): Promise<{ cancelled: number }> {
+  assertActor(ctx);
   const ids = checkIds(input.ids);
   if (ids.length === 0) return { cancelled: 0 };
   const out = await ctx.sql`update ai_jobs set state = 'CANCELLED', error_message = ${`cancelled by ${ctx.actor}`},

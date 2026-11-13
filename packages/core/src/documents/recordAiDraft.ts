@@ -1,5 +1,5 @@
 import type { Sql } from "postgres";
-import type { Ctx } from "../ctx.js";
+import { assertActor, type Ctx } from "../ctx.js";
 import { NotFoundError, ValidationError } from "../errors.js";
 import { assertLicensed } from "../licence/guard.js";
 import { normalizeLocale } from "../schema/locale.js";
@@ -38,6 +38,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 export async function recordAiDraft(ctx: Ctx, input: RecordAiDraftInput): Promise<RecordAiDraftResult> {
   await assertLicensed(ctx);
+  assertActor(ctx);
   const { config, sql, actor } = ctx;
   if (input.locale === "shared") throw new ValidationError("AI drafts are translations: locale cannot be \"shared\"");
   const locale = normalizeLocale(input.locale);

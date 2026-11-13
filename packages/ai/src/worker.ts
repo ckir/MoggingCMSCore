@@ -1,5 +1,6 @@
 import { hostname } from "node:os";
 import { LicenceError, NotFoundError, ValidationError, assertLicensed, getDocument, normalizeLocale } from "@mogging/core";
+import { assertActor, rejectNul } from "./actor.js";
 import type { AiCtx } from "./config.js";
 import {
   claim, complete, fallbackFailure, reap, release, renewLease, type ClaimFilter, type Completion, type CompleteResult,
@@ -74,6 +75,10 @@ export async function runWorker(ctx: AiCtx, options: WorkerOptions): Promise<Wor
     throw new ValidationError(`pollMs must be an integer from 1 to ${MAX_TIMEOUT_MS}, got ${requestedPollMs}`);
   }
   await assertLicensed(ctx);
+  // Always, not only when the lease is derived from it: complete() persists ctx.actor through recordAiDraft after a
+  // paid provider call, so a bad actor must stop the run before any job is claimed.
+  assertActor(ctx);
+  if (options.workerId !== undefined) rejectNul(options.workerId, "workerId");
   const report: WorkerReport = {
     completed: 0, failed: 0, cancelled: 0, discarded: 0, requeued: 0, errors: 0, budgetRefusals: 0, runBudgetStop: false,
     spentMicros: 0,
