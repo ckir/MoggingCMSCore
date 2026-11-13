@@ -54,6 +54,10 @@ const [doc] = await resolve(ctx, { collection: "posts", locale: "de-CH" });
 `de-CH` has no German-Swiss text, so `title` falls back to `de` and `body` to `en`; `fellBack` says which.
 This example is run as a test (`test/readme.test.ts`), so it matches the real API.
 
+`actor` is attribution, not authentication (spec 8.7): any text is accepted except U+0000, which Postgres cannot store.
+Every function that can record the actor refuses a context whose actor contains it with a `ValidationError` before it
+runs a query (after the licence check, so a licence refusal still wins), whether or not the call would write anything.
+
 ## Licence
 
 MoggingCMSCore is source-available, not open source; the terms are in [LICENSE.md](../../LICENSE.md).

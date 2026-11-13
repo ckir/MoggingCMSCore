@@ -25,7 +25,7 @@ const report = await compile(ctx, { locales: ["de", "fr"], budgetUsd: 2, log: co
 // report.enqueue.enqueued, report.worker.completed, report.pendingJobs ...
 ```
 
-Every function takes the typed context `{ sql, config, actor, ai }`: the core context plus the AI configuration.
+Every function takes the typed context `{ sql, config, actor, ai }`: the core context plus the AI configuration. As in core, the functions that can record the actor (`upsertGlossary`, `enqueueStale`, `retryJobs`, `cancelJobs`, `runWorker`, `compile`) refuse an actor containing U+0000 with a `ValidationError` before any query, and `runWorker` does the same for an explicit `workerId`.
 
 ## Configuration
 
