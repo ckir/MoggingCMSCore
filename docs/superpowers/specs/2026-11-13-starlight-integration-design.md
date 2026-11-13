@@ -81,9 +81,13 @@ The package maps Starlight's layout to Mogging documents: `<docsDir>/<path>.md` 
 configured docs collection with slug `<path>`; `<docsDir>/<localeDir>/<path>.md` is the same document in that locale.
 `<docsDir>` defaults to `src/content/docs`. Both Starlight modes are supported: the default language at the root
 (Starlight `root` locale) and the default language in its own folder. There is no collection segment in the path; a
-Starlight site has one docs collection. A locale file uses the same extension (`.md` or `.mdx`) as its source file.
+Starlight site has one docs collection. In the second mode English and the locales sit at the same depth, so the
+rebasing of 5.9 is a no-op. A locale file uses the same extension (`.md` or `.mdx`) as its source file.
 Files and folders whose name starts with `_` are skipped on import and never written, as Starlight's glob skips them
-(`src/loaders.ts:57`). `index.md` maps to the slug `index`, as it does today. The layout is a setting in
+(`src/loaders.ts:57`). An `index.md` at any depth keeps `index` as the last slug segment (`index`, `guides/index`),
+as import does today; Astro and Starlight strip or normalize `index` in the page id they build
+(`src/utils/routing/index.ts:18-22`), which Mogging never needs.
+The layout is a setting in
 `mogging.config.ts` (written by the preset), so a plain `mogging import` and `mogging export` with no directory
 argument use `<docsDir>`; an import that finds no source file exits non-zero instead of reporting success. Only `.md` and `.mdx`
 files are imported; other extensions Starlight's loader accepts are listed in one warning per run.
@@ -92,6 +96,10 @@ Slugs (panel round 2). Mogging slugs must be lowercase (`packages/markdown/src/i
 may be named `Getting-Started.md`. Starlight mode derives a document's slug from the file path the same way Starlight
 derives the page id, and keeps the real file name for writing the locale files; the plan verifies Astro's id
 derivation from source before relying on it, and a path whose derived slug collides with another is a per-file error.
+A day-one locale file is matched to its English page by derived slug, not by exact name, so `de/getting-started.md`
+next to English `Getting-Started.md` is the same page; export then writes the locale file under the English name and
+removes the old-named one only when it classifies as `published` (its content is in the database), otherwise it
+leaves both and reports them.
 
 Where the layout lives. `defineConfig` has no slot for it (`packages/core/src/schema/config.ts:14-19`), so, as with
 `defineAiConfig` (plan 3 F1; `packages/cli/src/project.ts:92` reads the `ai` export), the Starlight layout is a
@@ -103,7 +111,8 @@ layout; a project with no layout export uses the generic layout, as today.
 Locale lists in two configs. Starlight's `locales` live in `astro.config`, Mogging's in `mogging.config.ts`.
 `init --starlight` writes both from one answer. Afterwards, import and export compare the layout's locale map with a
 static read of `astro.config` and warn on any mismatch (best effort: a config they cannot read statically is
-reported once, not guessed). `init --starlight` reads `astro.config` statically, never by importing it, and asks for
+reported once, not guessed). Export writes no file for a Mogging locale that the static read shows missing from
+Starlight's `locales`, and exits `4`; when the read failed it writes as configured. `init --starlight` reads `astro.config` statically, never by importing it, and asks for
 the values on the command line when it cannot.
 
 Locale identity: folders use Starlight's locale keys (`zh-cn`, or no folder for `root`); the database keeps canonical
@@ -153,10 +162,10 @@ covers text Mogging generates. Day-one files are recorded as human and visibly `
   localized fields are left out of the file (Claude's call). A page without them gets no file, and Starlight serves
   the English page with its fallback notice. No English text Mogging stores as a localized field is ever written into
   a locale file.
-- Shared (non-localized) front matter of the source page (`template`, `sidebar.order`, `tableOfContents`, opaque
-  fields of 5.8, ...) is copied into every locale file, because Starlight reads these per locale entry
-  (`src/utils/navigation.ts:300`, `src/utils/routing/data.ts:54,65`) (Claude's call; today `renderFile` writes shared
-  fields only for the source locale). Reader text inside those keys is a separate localized field (5.8).
+- Non-text front matter is owned per key (owner, 2026-11-13, agy and Claude agreed; section 5.9). "Follows English"
+  keys are copied from the source page into every locale file on every export, because Starlight reads them per
+  locale entry (`src/utils/navigation.ts:300`, `src/utils/routing/data.ts:54,65`); "per locale" keys are written
+  from the locale's own value.
 - Export writes `.mogging/manifest.json` at the repository root: for every file it wrote or adopted, the path, the
   slug, the locale, the version exported (informational only, never compared) and the SHA-256 of the bytes on disk.
   It holds no database ids (agy round 3), so a fresh database or another clone reads it the same way. Entries are
@@ -207,9 +216,13 @@ covers text Mogging generates. Day-one files are recorded as human and visibly `
   and layout, checks it stays inside `<docsDir>`, and ignores (with a warning) a manifest entry whose path does not
   match. The manifest lives at `.mogging/manifest.json` next to `mogging.config.ts`, and its paths are relative to
   that directory, so a docs site in a subdirectory, or two sites in one repository, each have their own.
-- Exit codes (panel round 3), on the CLI's existing scheme: export that left any `pending` or `hand work` file, or
-  skipped any document, exits `4` (partial); an import safety stop exits `4` when other files were imported and `1`
-  when none were; `--dry-run` exits as the real run would.
+- Exit codes (panel rounds 3 and 4), on the CLI's existing scheme. Exit `4` (partial): export left any `pending` or
+  `hand work` file, skipped any document or locale, or rewrote a `behind` file; an import safety stop when other
+  files were imported. Exit `1`: an import safety stop when nothing else was imported; an import that found no source
+  file. Exit `0` with warnings: skipped new `draft: true` files, orphan locale files, unsupported extensions,
+  locale drift reported without skipping, `--restore` on a file that is already current. `--dry-run` exits as the
+  real run would and prints one line per planned action (`write`, `keep`, `remove`, `skip`, `refuse`, `move`) with
+  the path; `--json` carries the same list.
 - An exported page that later goes stale keeps its last approved file until a new translation is approved and
   exported; Starlight serves that older translation in the meantime.
 
@@ -267,12 +280,14 @@ database on a laptop is for evaluation and solo use. The rest of the team works 
 
 Core gains a field kind for opaque values (name left to the plan, e.g. `json`): any JSON value, never localized,
 never sent to the model, hashed with the canonical JSON hash, U+0000 refused like every other value. No migration
-change. The Starlight preset declares Starlight's union-typed keys (`editUrl`, `lastUpdated`, `prev`, `next`,
-`tableOfContents`, `head`, `hero.image`, `sidebar.badge`) with it, and Starlight-mode import stores every front-matter
-key the preset does not declare (the adopter's `docsSchema({ extend })` keys) verbatim in one shared opaque field,
-which export writes back as top-level keys of every file. Text the reader sees inside a mixed object (`hero.title`,
-`hero.tagline`, hero action labels, `sidebar.label`, `banner.content`) stays a localized text field, so it is
-translated. Measured scope: the kind is switched on in about 13 source files (10 `case "object"` sites), a mechanical
+change. The Starlight preset declares the union-typed keys that follow English (`editUrl`, `lastUpdated`,
+`tableOfContents`, `head`) with it, and Starlight-mode import stores every front-matter key the preset does not
+declare (the adopter's `docsSchema({ extend })` keys) verbatim in one shared opaque field, which export writes back as
+top-level keys of every file. Keys that carry reader text (`hero`, `prev`, `next`, `sidebar.label`, `sidebar.badge`,
+`banner`) are per-locale localized fields as specified in 5.9; a union shape is split into a follows-English part
+and a per-locale part there (for example `prev: false` is a shared boolean, `prev: "Back"` a per-locale
+`{ label }`), so the opaque kind is never localized, as ruled. No key is declared both ways; a path declared twice
+in the preset is a configuration error. Measured scope: the kind is switched on in about 13 source files (10 `case "object"` sites), a mechanical
 change; agy's "about 25 lines" estimate is unverified. If the plan finds it larger than a TODO-class fix, the
 escalation rule of section 3 applies.
 
@@ -291,23 +306,40 @@ as a string; Starlight's `lastUpdated` needs a date (`src/schema.ts:52`) and get
 back unquoted. The plan therefore pins that a date-like plain scalar is written back plain (and a quoted one quoted),
 with a round-trip test through Astro's own front-matter parser. No tagged form.
 
-Reader text inside structural keys (panel round 3, replacing the round-2 "localized opaque" fields, which looped
-export output back as hand work and amended the owner's ruling; opaque values are SHARED, as the owner ruled). Some
-Starlight keys mix reader-visible text with structure the model must never touch: `hero.actions` (`text` next to
-`link`, `icon`, `variant`; the AI package sends every text leaf of a localized list, `packages/ai/src/fields.ts:21-28`),
-`prev`/`next` (`false`, a label string, or `{ link, label }`, `src/schemas/prevNextLink.ts:6-12`), `sidebar.badge`
-(a string or `{ text, variant, ... }`), `hero.image.alt`. The path map handles them like `sidebar` (above), with
-two additions:
-- List alignment: a path may address every item of a list, `hero.actions[].text` (a localized list of text,
-  translated) beside `hero.actions[].link`, `[].icon`, `[].variant` (shared). Export zips them by index. When the
-  locale's list length differs from the English list (English added or removed a button and the translation is
-  stale), export writes the English structure with the locale's labels where an index exists and English labels for
-  the rest, and reports the page; the field is `stale` in `status` until a new translation is approved.
-- Union shapes: the preset's table names, per key, which form is text and which is structure, and normalizes on
-  import (`prev: "Back"` is the label; `prev: false` is a shared boolean field; `badge: "New"` is the text). Export
-  writes the object form when a label and a link both exist and the original form otherwise.
-`head` stays a shared opaque value (documented limit: `head` tag text is not translated). The rest of each object
-(`hero.image.file`, `badge.variant`, ...) is shared opaque or a shared field.
+### 5.9 Front-matter ownership per key (owner, 2026-11-13; agy and Claude agreed; replaces the round-3 list alignment)
+
+Seat consult `.clavity/seams/starlight-ownership-first.md`, [VERDICT: ALIGNED], both chose option C.
+- **Follows English** (shared fields or shared opaque values, copied into every locale file on every export):
+  `template`, `sidebar.order`, `sidebar.hidden`, `draft`, `pagefind`, `tableOfContents`, `lastUpdated`, `editUrl`,
+  `head` (its tag text is not translated, a documented limit), the boolean forms of `prev`/`next`, and the adopter's
+  extended keys unless declared otherwise.
+- **Per locale** (one LOCALIZED object or list field per key, holding the whole value): `hero` (title, tagline,
+  image, actions), the label/link forms of `prev` and `next`, `sidebar.label`, `sidebar.badge`, `banner`. A
+  locale's value comes from its file (day one, hand edits) or from an AI draft; a day-one German
+  `hero.actions[].link: /de/start` or `hero-de.png` is kept. A per-locale key the locale has no value for is
+  omitted from its file only when the key is optional for Starlight; the completeness rule of 5.4 decides whether
+  the page is written at all. For an AI draft, the non-translatable leaves come from English (below).
+- **What the AI touches.** Core gains a field option that marks a text leaf as not translatable (name left to the
+  plan, e.g. `translate: false`; `packages/core/src/schema/fields.ts:1-6`); the AI package leaves such leaves out of
+  the request schema and copies them from the English value into the draft (`packages/ai/src/fields.ts`:
+  `isTranslatable`, the output schema, and the `walk` validator that already rejects a changed non-text value). The
+  preset marks links, icons, variants, image files and `head` tag names and attributes as not translatable, and
+  labels, titles, taglines, badge text and image `alt` as translatable. No migration change. Consequence: an AI
+  redraft of a per-locale key takes its links from English again; the reviewer sees that in the side-by-side review
+  and can edit it before approving (documented).
+- **Union shapes** are normalized per key by the preset's table: `prev: "Back"` is `{ label: "Back" }`, `prev: false`
+  stays `false` (Starlight's `src/schemas/prevNextLink.ts:6-12`), `badge: "New"` is `{ text: "New" }`. Export writes
+  the shortest form that carries the value, and the classification of 5.4 compares normalized values, so the form
+  never makes a file look edited.
+- **Relative file references are rebased**, never page links. A locale file sits one folder deeper than its English
+  file (root-locale layout), so every relative reference to a FILE is adjusted by the depth difference when written
+  and reversed when read: front-matter `image()` fields (`hero.image.file`, `.dark`, `.light`; Starlight's example
+  uses `../../assets/houston.webp`, `examples/basics/src/content/docs/index.mdx:8`), MDX `import` specifiers, and
+  Markdown image sources outside code. Measured in Starlight's own translated docs: the English
+  `docs/src/content/docs/environmental-impact.mdx:92` imports `'../../components/...'` and `zh-cn/...:92` imports
+  `'../../../components/...'`. Links between pages (`[x](../guide/)`) resolve inside the locale and are left alone.
+  The database stores references as they are relative to the English file; rebasing is part of the layout, so
+  classification compares the un-rebased values.
 
 Untrusted YAML. The passthrough and path-split code builds plain objects from repository content: it uses
 null-prototype objects or own-key checks throughout (today's guard is `Object.hasOwn`, `contentFile.ts:113`) and
@@ -336,13 +368,20 @@ are resolved by the parser before mapping; custom tags are a per-file error.
   package supplies the configuration. The CLI gains the layout selection, `--prune`, the rename confirmation flag and
   `mogging rename`.
 - Its README states the licence terms and the zero-price noncommercial key before the install command (roadmap
-  section 5).
+  section 5), then the whole first session in order: install `@mogging/cli` and `@mogging/starlight` as dev
+  dependencies (the CLI is a separate package; the Starlight package does not bundle it), provide Postgres
+  (`compose.yaml` from the template, or a hosted URL in `DATABASE_URL`), `mogging init --starlight`, `mogging migrate`,
+  add the `ai` export with a provider key and a monthly cap (`defineAiConfig`), `mogging import`, `mogging compile`,
+  `mogging review`, `mogging publish`, `mogging export`, then commit. The 30-day evaluation needs no key (design
+  12.3); where the key goes when bought is linked.
 - Supported versions: the package declares the Starlight and Astro ranges its CI fixtures test (a peer dependency
   range starting at 0.43.0, the version this design was read against) and the README says which; `init --starlight`
   warns when the adopter's installed Starlight is outside it. Starlight is pre-1.0, so each new minor is a deliberate
   range bump after the fixtures pass.
 - Performance (panel round 2): export and import read heads per page of documents, not per file, and the version
-  hashes for classification in one query per (collection, locale); the plan measures a 2,000-page, 6-locale fixture.
+  hashes for classification in one query per (collection, locale); the plan measures a 2,000-page, 6-locale fixture
+  and records the figure; the acceptance bar is that an unchanged re-export of that fixture issues a number of
+  database queries independent of the page count (per page of documents, not per file).
   The rename search covers only `astro.config.*` and `<docsDir>`.
 
 ## 7. The starter template
@@ -358,8 +397,9 @@ text is changed (formatting and copied shared keys may be, 5.4). `npx astro add`
 
 ### 7.1 Known limits of v0.1 (documented in the package README)
 
-- Links inside translated pages and hero action links point where the English points; Starlight does not localize
-  links itself. Authors use relative links where they want the locale kept.
+- Root-relative links inside a translated page's body (`/guides/x/`) point where the English points; Starlight does
+  not localize links itself. Relative page links stay inside the locale. Hero action and prev/next links are per
+  locale (5.9), but an AI draft takes them from English until a reviewer edits them.
 - A built page does not show whether its text was AI-drafted, human-written or untracked, and a stale translation is
   served without a notice until a new one is exported; `mogging status` is the place to see both.
 - Prune is final for a page's translations (no undelete in core).
@@ -458,6 +498,20 @@ content; how the template's dependencies sit relative to the pnpm workspace; the
     ghost-document pairing shows titles (F-15) (5.6).
   - Citation corrected: the shared-key warning is at `contentFile.ts:105` (and `:121`), not `:106`.
 
+- Panel round 4 (2026-11-13, medium floor; agy seats Adopter Walkthrough, Test Oracle Auditor, Fold Regression:
+  5 findings; Sonnet solo the same three plus the core seats: 9 findings). Root finding (AW1, AW2, F-19): copying
+  English values into locale files overwrites day-one locale values and breaks relative file paths. Owner ruled per-key
+  ownership after an agy-first consult (5.9). Dispositions:
+  - FOLDED, per-key ownership, the not-translatable leaf option, rebasing of file references (AW1, AW2, F-18, F-19,
+    F-20, FR1) (5.9); union shapes split so the opaque kind is never localized, and a key declared twice is a
+    configuration error (F-21, FR2) (5.8, 5.9).
+  - FOLDED, day-one name/case matching (AW3) and `index` at any depth (AW4) (5.2); first-session install order
+    (AW5) (6); locale drift skips the missing locale and exits 4 (FR3) (5.2).
+  - FOLDED, exit codes and `--dry-run` output (OR1) (5.4); testable performance bar (OR2) (6).
+  - FOLDED, rename after `git mv` (F-22): already covered by 5.6 (the source may already be at the new path; locale
+    files are found under the old path); no change.
+  - Citation corrected: Starlight's `index` handling is at `src/utils/routing/index.ts:18-22`.
+
 ## Stand-downs
 
-None in rounds 1 to 3: no finding was discarded below the floor.
+None in rounds 1 to 4: no finding was discarded below the floor.
