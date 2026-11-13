@@ -220,3 +220,16 @@ test("runWorker rejects an unusable pollMs with a ValidationError", async () => 
 - [ ] **Step 1: Edit.** In `review.ts` rewrite the comment so it no longer spells the cursor's format: "`after` is an opaque cursor: pass back the `next` of the previous page; its format is not part of the contract." In core design 9.3 add after the Reads list: "`listDraftHeads` returns `{ items, next }`; `after` is an opaque cursor, to be passed back only as the `next` the previous page returned." In `TODO.md` delete the bullet that starts "`@mogging/core` `listDraftHeads` cursor"; remove any remaining plan 5 item still listed (U+0000, `pollMs`, `listProvenance`, rejected text, `release remove`) and confirm none is left with `grep -n "U+0000\|pollMs\|afterId\|resurface\|release remove\|listDraftHeads" TODO.md` (the plan 3 bullet "`@mogging/ai` deferred Minor review findings" keeps its other findings).
 - [ ] **Step 2: Run** `pnpm typecheck` and `pnpm test` (whole suite green, count = baseline + the tests this plan added).
 - [ ] **Step 3: Commit** `docs: listDraftHeads cursor is opaque; TODO closed for plan 5`.
+
+## Review ledger
+
+Round 1 (2026-11-13, persona relentless-adversarial-auditor; seats Axiom Breaker, Cascade Analyst, State Corruptor, Protocol Pedant, Literal Implementer, Mechanism Gamer; dropped Boundary Smuggler, Resource Vampire, Dependency Cynic, Activation Auditor, Blindspot Auditor, none of whose triggers the plan met), solo panel plus the agy escalation:
+- FOLDED: the CLI could not name a soft-deleted document's release item (`resolveTarget` refuses it, `target.ts`), so Task 6 gained `allowDeleted`; `TODO.md` is edited by bullet text, not line number; Task 1 gained an import test for a NUL in a source file; Task 5 defines `RemoveFromReleaseInput`.
+- FOLDED (agy, each verified): Task 2's snippet took `migrateAndSeed`'s return (a docId string, `packages/ai/test/fixtures.ts:62`) for a ctx; Task 1 Step 4 used `sql` where the existing test names the callback parameter `_sql` (`import.test.ts:302`); Task 1's scalar assertions lacked the message regex.
+- REJECTED: a race between `removeFromRelease` and `publishRelease`: both lock the release row `for update` (`releases.ts:131`), so they serialize. REJECTED (agy F3, "the `pollMs: 1` assertion passes if `pollMs` is ignored"): true (`worker.ts:109` exits before the sleep) but it is a positive control for acceptance; the rejections are what fail before the fix, and the scheduling use of `pollMs` is unchanged code.
+- DEFERRED-TO-ANOMALIES: `saveDraft.ts:74` carry-forward base * 2026-11-13 * unverified; `releases.ts:33` NUL in text columns * 2026-11-13.
+- agy's collision check (TODO.md, `packages/ai/README.md`, design 9.3 edited by several tasks): no conflict, the edits are to different bullets or sentences.
+
+## Stand-downs
+
+None. No finding was discarded below the floor.
