@@ -121,6 +121,8 @@ test("runWorker rejects an unusable pollMs with a ValidationError", async () => 
     await expect(runWorker(ctx, { once: true, pollMs })).rejects.toBeInstanceOf(ValidationError);
   }
   await expect(runWorker(ctx, { once: true, pollMs: 1 })).resolves.toMatchObject({ completed: 0 });
+  // Both ends of the range are valid: the largest delay setTimeout honours is accepted, one more is not (above).
+  await expect(runWorker(ctx, { once: true, pollMs: 2147483647 })).resolves.toMatchObject({ completed: 0 });
 }));
 
 test("a rejected draft is retried with strict, then FAILED, and both calls are discarded rows", async () => withTestDb(async (sql) => {

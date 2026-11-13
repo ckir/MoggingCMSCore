@@ -448,6 +448,18 @@ test("removeFromRelease removes a shared item", async () => withTestDb(async (sq
   await expect(removeFromRelease(ctx, { releaseId, docId, locale: "shared" })).rejects.toThrow(/is not in release/);
 }));
 
+test("removeFromRelease records nothing: content_provenance is identical before and after a removal", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, deVersion } = await docWithSource(ctx, true);
+  const { id: releaseId } = await createRelease(ctx, { name: "records-nothing" });
+  await addToRelease(ctx, { releaseId, docId, locale: "de", version: deVersion });
+  const provenance = async () => (await sql`select * from content_provenance order by id`).map((r) => ({ ...r }));
+  const before = await provenance();
+  await removeFromRelease(ctx, { releaseId, docId, locale: "de" });
+  expect(await itemsOf(sql, releaseId)).toEqual([]);  // the removal did happen
+  expect(await provenance()).toEqual(before);
+}));
+
 test("removeFromRelease of an item that is not in the release throws NotFoundError", async () => withTestDb(async (sql) => {
   const ctx = await setup(sql);
   const { docId, deVersion } = await docWithSource(ctx, true);
