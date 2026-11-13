@@ -80,3 +80,28 @@ test("listProvenance afterId returns the next page with no overlap", async () =>
     await expect(listProvenance(ctx, { afterId: 1.5 })).rejects.toBeInstanceOf(ValidationError);
   });
 });
+
+test("listProvenance orders by id, so afterId is an exact page boundary even when created_at disagrees", async () => {
+  await withTestDb(async (sql) => {
+    const docId = await migrateAndSeed(sql);
+    const ctx = ctxFor(sql, model);
+    // The lower id gets the LATER created_at: ordering by created_at would return the rows in descending id order.
+    const [low, high] = [randomUUID(), randomUUID()];
+    for (const [callId, createdAt] of [[low, "2026-01-02T00:00:00Z"], [high, "2026-01-01T00:00:00Z"]] as const) {
+      await sql`insert into content_provenance
+          (doc_id, locale, call_id, model_id, prompt_version, prompt_tokens, completion_tokens, cost_micros, discarded,
+           discard_reason, created_at)
+        values (${docId}, 'de', ${callId}, 'mock/translate', 'translate.v1.standard', 1, 1, 1, true, 'lease lost',
+                ${createdAt})`;
+    }
+    const all = await listProvenance(ctx, {});
+    expect(all.map((r) => r.callId)).toEqual([low, high]);
+    expect(all[0]!.id).toBeLessThan(all[1]!.id);
+    expect(all[0]!.createdAt.getTime()).toBeGreaterThan(all[1]!.createdAt.getTime());
+
+    const first = await listProvenance(ctx, { limit: 1 });
+    const second = await listProvenance(ctx, { limit: 1, afterId: first[0]!.id });
+    expect([...first, ...second].map((r) => r.callId)).toEqual([low, high]);
+    expect((await listProvenance(ctx, { afterId: 0 })).map((r) => r.callId)).toEqual([low, high]);
+  });
+});

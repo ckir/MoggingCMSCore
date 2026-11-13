@@ -137,9 +137,9 @@ so a reclaimed job can never pass an earlier worker's fence.
 
 Every provider call that reports its usage is recorded, so the money spent is explainable (see Known limits for the
 exceptions). `listProvenance(ctx, { docId?, locale?, discardedOnly?, limit?, afterId? })` lists `content_provenance`
-rows ordered by creation time, then id; `limit` is 200 by default and at most 1000, and `afterId` returns only rows
-with a greater id (pass the last `id` of a page). Rows written by concurrent transactions can be created in a different
-order than their ids, so treat `afterId` as a way to reach rows beyond the cap, not as an exact page boundary:
+rows ordered by `id`; `limit` is 200 by default and at most 1000, and `afterId` returns only rows with a greater id
+(pass the last `id` of a page). A transaction that commits after a page was read can add a row with a lower id than that
+page's last, which a later `afterId` page does not return:
 
 - A kept row per translated field of an accepted draft: model, prompt version, tokens, cost, warnings, `job_id`, and
   `superseded_version` when the draft replaced an earlier AI draft. A call translates several fields at once, so its

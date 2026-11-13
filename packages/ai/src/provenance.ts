@@ -41,7 +41,7 @@ const toProvenanceRow = (r: Row): ProvenanceRow => ({
 });
 
 /**
- * Provenance rows ordered by created_at, id. Without `docId` it lists across documents, so an operator can see the
+ * Provenance rows ordered by id. Without `docId` it lists across documents, so an operator can see the
  * spend that produced no draft (`discardedOnly`) for the whole project. `afterId` is the cursor: only rows with a
  * greater id, so pass the last id of a page to read the next one. Not licence-guarded: a read.
  */
@@ -61,7 +61,7 @@ export async function listProvenance(
       ${input.docId === undefined ? sql`` : sql`and doc_id = ${input.docId}`}
       ${locale === undefined ? sql`` : sql`and locale = ${locale}`}
       ${input.discardedOnly ? sql`and discarded` : sql``}
-    order by created_at, id
+    order by id
     limit ${limit}`) as unknown as Row[];
   return rows.map(toProvenanceRow);
 }
