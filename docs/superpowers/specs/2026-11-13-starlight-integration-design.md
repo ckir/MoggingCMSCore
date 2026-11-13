@@ -96,7 +96,15 @@ derivation from source before relying on it, and a path whose derived slug colli
 Where the layout lives. `defineConfig` has no slot for it (`packages/core/src/schema/config.ts:14-19`), so, as with
 `defineAiConfig` (plan 3 F1; `packages/cli/src/project.ts:92` reads the `ai` export), the Starlight layout is a
 separate named export of `mogging.config.ts` that the CLI reads next to `config`. Core's `MoggingConfig` is
-unchanged.
+unchanged. Unlike `ai` today (cast unvalidated, `packages/cli/src/project.ts:92`), the layout export is validated when
+the project loads: a malformed one is a configuration error (exit `2`, usage), never a silent fallback to the generic
+layout; a project with no layout export uses the generic layout, as today.
+
+Locale lists in two configs. Starlight's `locales` live in `astro.config`, Mogging's in `mogging.config.ts`.
+`init --starlight` writes both from one answer. Afterwards, import and export compare the layout's locale map with a
+static read of `astro.config` and warn on any mismatch (best effort: a config they cannot read statically is
+reported once, not guessed). `init --starlight` reads `astro.config` statically, never by importing it, and asks for
+the values on the command line when it cannot.
 
 Locale identity: folders use Starlight's locale keys (`zh-cn`, or no folder for `root`); the database keeps canonical
 BCP 47 tags as `normalizeLocale` produces them (`packages/core/src/schema/locale.ts:4`). The mapping is declared once
@@ -120,14 +128,17 @@ PR-reviewed page, and compile and sync state read only the source locale's publi
 with `--publish` (Claude's call).
 
 Starlight-mode import ignores shared front-matter keys in a locale file silently when they equal the source page's
-values and warns (today's `contentFile.ts:106` warning) only when they differ, because export writes them (5.4).
+values and warns (today's `contentFile.ts:105` warning) only when they differ, because export writes them (5.4).
 
 A NEW source page (no document yet) whose front matter has `draft: true` is reported as skipped and not imported, so
 an unfinished page is never published into Mogging or queued for AI; it is imported once the flag is removed. An
 EXISTING page that becomes `draft: true` is imported normally: `draft` is shared front matter, so export copies it
 into the locale files and Starlight hides the translations together with the English page (panel round 2). "Source
 file gone", for the safety stop and `--prune`, is computed from the files this run finds on disk: a draft page is
-not gone, a page renamed to a `_` name is.
+not gone, a page renamed to a `_` name is. A document is gone only when neither its published slug nor its draft
+slug has a source file (an interrupted rename leaves the two different). A skipped new `draft: true` file still
+counts as a "source file with no document" for the safety stop, so renaming a page and marking it draft in one change
+stops instead of letting `--prune` delete its translations.
 A locale file whose source page has no live document (for example after a prune) is a warning, not a per-file error.
 
 Pre-existing content is the team's: the promise that no AI text reaches the site without a recorded human approval
@@ -145,43 +156,60 @@ covers text Mogging generates. Day-one files are recorded as human and visibly `
 - Shared (non-localized) front matter of the source page (`template`, `sidebar.order`, `tableOfContents`, opaque
   fields of 5.8, ...) is copied into every locale file, because Starlight reads these per locale entry
   (`src/utils/navigation.ts:300`, `src/utils/routing/data.ts:54,65`) (Claude's call; today `renderFile` writes shared
-  fields only for the source locale). Keys that can carry reader-visible text are handled per locale instead, as
-  localized opaque fields (5.8, panel round 2): `prev`, `next`, `sidebar.badge`, `hero.actions`, `hero.image` and
-  `head`.
+  fields only for the source locale). Reader text inside those keys is a separate localized field (5.8).
 - Export writes `.mogging/manifest.json` at the repository root: for every file it wrote or adopted, the path, the
   slug, the locale, the version exported (informational only, never compared) and the SHA-256 of the bytes on disk.
   It holds no database ids (agy round 3), so a fresh database or another clone reads it the same way. Entries are
   sorted by path, one per line, so a diff is readable. The manifest is replaced atomically (temporary file, then
   rename) after the files.
-- Classifying a locale file (panel round 2, replacing the round-1 rules (a)/(b), which let export revert work in
-  flight). Import and export classify every existing locale file the same way, by its PARSED content, so formatting,
-  CRLF or a BOM never matter:
-  - **published**: equal to the CURRENT published head of that (document, locale);
-  - **behind**: equal to an EARLIER published version of that (document, locale), i.e. a file Mogging exported
-    before a newer translation was published;
-  - **pending**: equal to the current draft head (a hand edit already imported, not yet published);
-  - **hand work**: anything else.
-  Comparing against earlier versions needs a core read that returns the content hashes of a (document, locale)'s
-  published versions (core addition, name left to the plan; no migration change).
-- Import: `published`, `behind` and `pending` files are unchanged, never re-imported as edits, so an old exported
-  file can never revert a newer translation. `hand work` is saved as a human draft (published only with `--publish`,
-  or on day one per 5.3). A pending `DRAFT_AI` or `APPROVED` draft that a hand edit replaces is reported as a warning
+- Classifying a locale file (panel round 2, refined in round 3). Import and export classify every existing locale
+  file the same way, by the canonical hash of its LOCALIZED fields as the layout parses them (shared keys copied from
+  English are ignored, so no history of the shared record is needed; formatting, CRLF or a BOM never matter). The
+  classes are tested in this order and the first match wins:
+  1. **published**: equal to the CURRENT published head of that (document, locale);
+  2. **pending**: equal to the current draft head (a hand edit already imported, not yet published);
+  3. **behind**: equal to an EARLIER published version of that (document, locale), i.e. a file Mogging exported
+     before a newer translation was published;
+  4. **hand work**: anything else.
+  The earlier-version test needs a core read of a (document, locale)'s published versions (core addition, name left
+  to the plan; no migration change: 0001 stores no content hash, `0001_engine.sql:36-56`, so hashes are computed from
+  `data` in the client). It runs only for a file that matched neither 1 nor 2, so its cost is bounded by the number
+  of divergent files.
+- Import: `published`, `pending` and `behind` files are unchanged, never re-imported as edits, so an old exported
+  file can never revert a newer translation; import reports each `behind` file. Restoring an older translation on
+  purpose (a git revert of a locale file) is done with `import --restore <file>`, which saves that file as a human
+  draft (Claude's call, panel round 3). `hand work` is saved as a human draft (published only with `--publish`, or on
+  day one per 5.3). A pending `DRAFT_AI` or `APPROVED` draft that a hand edit replaces is reported as a warning
   (today's import behaviour, kept).
 - Export: a `published` file is left byte for byte when what export would write has the same parsed content
   (day-one hand translations keep their formatting) and is rewritten when it would differ, for example after the
-  English shared front matter changed; a `behind` file is rewritten with the current published head; a `pending` or
-  `hand work` file is left untouched, named, and reported (run import, then review or publish). Every file export
-  leaves or writes is recorded in the manifest with its current hash. Locale-only front-matter keys that the preset
-  does not map are warned about on import and dropped when a file is rewritten.
-- Export skips, with a warning, every locale file of a document whose English source file is missing at the
-  document's slug path (a `git mv` before `mogging rename`, or a deletion not yet pruned), so it never recreates old
+  English shared front matter changed; a rewrite keeps every localized value, so no hand-written TEXT changes. A
+  `behind` file is rewritten with the current published head and reported; a `pending` or `hand work` file is left
+  untouched, named, and reported (run import, then review or publish). Export self-checks every file it writes: the
+  file must re-parse to the published content, otherwise export stops with an internal error, so a serializer
+  defect can never turn published AI text into `hand work` that a later import would record as human. Locale-only
+  front-matter keys that the preset does not map are warned about on import and dropped when a file is rewritten.
+- The manifest lists only files whose content is in the database: files export wrote and files classified
+  `published`. `pending` and `hand work` files are never listed, so 5.5 can never remove them.
+- File paths. The database stores slugs, not file names. Export derives a locale file's path from the English file
+  as it is on disk now (its real name and extension, found by the slug derivation of 5.2), never from the slug alone,
+  so `Getting-Started.md` gets `de/Getting-Started.md`. When the English file's extension changes (`.md` to `.mdx`), a
+  locale file under the other extension is the same file: export replaces it when it is listed in the manifest and
+  classifies as ours, and otherwise leaves it and reports both.
+- Export skips, with a warning, every locale file of a LIVE document whose English source file is missing at the
+  document's slug path (a deleted document follows 5.5 instead) (a `git mv` before `mogging rename`, or a deletion not yet pruned), so it never recreates old
   paths. A manifest-listed locale file deleted by hand is recreated with a warning: the database is the record of
   approved translations, and `mogging unpublish --locale` is how a translation is withdrawn (Claude's call).
 - Files are written one by one through a temporary file and a rename, never through a symbolic link (export checks
   with `lstat` and refuses), so a crash leaves whole files only; a file written before a crash classifies as
   `published` on the next run.
-- Manifest paths are never trusted for a write or delete: export recomputes each path from slug, locale and layout,
-  checks it stays inside `<docsDir>`, and ignores (with a warning) a manifest entry whose path does not match.
+- Manifest paths are never trusted for a write or delete: export recomputes each path from the English file, locale
+  and layout, checks it stays inside `<docsDir>`, and ignores (with a warning) a manifest entry whose path does not
+  match. The manifest lives at `.mogging/manifest.json` next to `mogging.config.ts`, and its paths are relative to
+  that directory, so a docs site in a subdirectory, or two sites in one repository, each have their own.
+- Exit codes (panel round 3), on the CLI's existing scheme: export that left any `pending` or `hand work` file, or
+  skipped any document, exits `4` (partial); an import safety stop exits `4` when other files were imported and `1`
+  when none were; `--dry-run` exits as the real run would.
 - An exported page that later goes stale keeps its last approved file until a new translation is approved and
   exported; Starlight serves that older translation in the meantime.
 
@@ -217,7 +245,9 @@ covers text Mogging generates. Day-one files are recorded as human and visibly `
   source files with no document, it creates none of the new documents and prunes none of the gone ones, with or
   without `--prune`, and exits non-zero (panel round 1: without this, a plain import would create the new slug and a
   later `rename` would then be refused as a duplicate). Everything else in the run is imported normally. When the
-  pairing is unambiguous (exactly one gone and one new in the run) it prints the `mogging rename` command; otherwise
+  pairing is unambiguous (exactly one gone and one new in the run) it prints the `mogging rename` command, with the
+  English title of both sides so the operator can see a stale unpruned document is not the page they renamed;
+  otherwise
   it lists both sides without guessing a pairing (a wrong guess would move translations onto the wrong page). An
   explicit confirmation flag treats them as deletions plus new pages: it creates the new documents, and it
   soft-deletes the gone ones only when `--prune` is also given (without `--prune` they stay live, and export skips
@@ -255,21 +285,29 @@ passthrough field holds only keys and paths the preset does not map; on export a
 key of the same path, with a warning. The adopter's extended keys are copied verbatim into every locale file; an
 extended key that carries reader-visible text must be declared in `mogging.config.ts` as a localized field to be
 translated (documented). The path map lives in the layout export, not in core's field options. Opaque values keep
-YAML types through a round trip, including null inside an opaque value and timestamps: JSON has no date type and
-Starlight's `lastUpdated` accepts a date, not a string (`src/schema.ts:52`), so the opaque kind stores a YAML
-timestamp in a tagged form and export writes it back as a YAML timestamp (representation left to the plan, pinned by
-round-trip tests).
+their YAML form through a round trip, including null inside an opaque value. Dates: the parser uses the YAML `core`
+schema (`packages/markdown/src/contentFile.ts:34`), which yields no timestamps, so `lastUpdated: 2024-01-01` arrives
+as a string; Starlight's `lastUpdated` needs a date (`src/schema.ts:52`) and gets one only if the scalar is written
+back unquoted. The plan therefore pins that a date-like plain scalar is written back plain (and a quoted one quoted),
+with a round-trip test through Astro's own front-matter parser. No tagged form.
 
-Localized opaque values (panel round 2; Claude's call, AMENDS the owner's "shared by every language" wording for
-these keys only, flagged for owner confirmation). Some Starlight keys mix reader-visible text with structure the
-model must never touch: `hero.actions` (`text` next to `link`, `icon`, `variant`; the AI package would send every
-text leaf of a localized list, `packages/ai/src/fields.ts:21-28`), `prev`/`next` (a label, an object or `false`),
-`sidebar.badge`, `hero.image` (its `alt`), `head`. The preset declares them as LOCALIZED opaque fields: stored per
-locale, never sent to the model. Export writes a locale's own value when it has one (from its file on day one or a
-hand edit); otherwise it writes the English value when that value carries no reader text (a boolean such as
-`prev: false`, an image without `alt`), and omits the key when it does, so Starlight's generated default shows.
-Consequence, documented as a v0.1 limit: hero button labels, custom prev/next labels and badges are not AI-translated;
-a translator sets them in the locale file.
+Reader text inside structural keys (panel round 3, replacing the round-2 "localized opaque" fields, which looped
+export output back as hand work and amended the owner's ruling; opaque values are SHARED, as the owner ruled). Some
+Starlight keys mix reader-visible text with structure the model must never touch: `hero.actions` (`text` next to
+`link`, `icon`, `variant`; the AI package sends every text leaf of a localized list, `packages/ai/src/fields.ts:21-28`),
+`prev`/`next` (`false`, a label string, or `{ link, label }`, `src/schemas/prevNextLink.ts:6-12`), `sidebar.badge`
+(a string or `{ text, variant, ... }`), `hero.image.alt`. The path map handles them like `sidebar` (above), with
+two additions:
+- List alignment: a path may address every item of a list, `hero.actions[].text` (a localized list of text,
+  translated) beside `hero.actions[].link`, `[].icon`, `[].variant` (shared). Export zips them by index. When the
+  locale's list length differs from the English list (English added or removed a button and the translation is
+  stale), export writes the English structure with the locale's labels where an index exists and English labels for
+  the rest, and reports the page; the field is `stale` in `status` until a new translation is approved.
+- Union shapes: the preset's table names, per key, which form is text and which is structure, and normalizes on
+  import (`prev: "Back"` is the label; `prev: false` is a shared boolean field; `badge: "New"` is the text). Export
+  writes the object form when a label and a link both exist and the original form otherwise.
+`head` stays a shared opaque value (documented limit: `head` tag text is not translated). The rest of each object
+(`hero.image.file`, `badge.variant`, ...) is shared opaque or a shared field.
 
 Untrusted YAML. The passthrough and path-split code builds plain objects from repository content: it uses
 null-prototype objects or own-key checks throughout (today's guard is `Object.hasOwn`, `contentFile.ts:113`) and
@@ -315,8 +353,8 @@ a README that puts the licence first and then walks the success flow of section 
 template's acceptance flow (import, a mocked compile, approve, export, `astro build`) against the packages at HEAD,
 which is the freeze trigger of ship-sequencing step 3. A second fixture, an "existing adopter" Starlight repository
 with hand-made translations, a splash page, a mixed `sidebar` object, an extended front-matter key and one file with
-CRLF line endings, runs `init --starlight`, the day-one import, a rename and an export, and asserts no hand file is
-changed. `npx astro add` needs the network and is checked by hand before release, not in CI.
+CRLF line endings, runs `init --starlight`, the day-one import, a rename and an export, and asserts no hand-written
+text is changed (formatting and copied shared keys may be, 5.4). `npx astro add` needs the network and is checked by hand before release, not in CI.
 
 ### 7.1 Known limits of v0.1 (documented in the package README)
 
@@ -325,8 +363,9 @@ changed. `npx astro add` needs the network and is checked by hand before release
 - A built page does not show whether its text was AI-drafted, human-written or untracked, and a stale translation is
   served without a notice until a new one is exported; `mogging status` is the place to see both.
 - Prune is final for a page's translations (no undelete in core).
-- Hero button labels, custom prev/next labels, badges, image alt text and `head` tags are not AI-translated; a
-  translator sets them in the locale file (5.8).
+- `head` tag text is not translated (a shared opaque value, 5.8).
+- A git revert of a locale file to an older translation is undone by the next export unless it is imported with
+  `import --restore` (5.4).
 
 ## 8. Slug uniqueness (owner, 2026-11-13: option b; agy and Claude agreed)
 
@@ -398,10 +437,27 @@ content; how the template's dependencies sit relative to the pnpm workspace; the
     rename validation (BS3) (5.2, 5.6).
   - FOLDED, layout export instead of a core config slot (DC1) (5.2); supported versions and extensions (DC2) (6, 5.2).
   - FOLDED, `draft: true` for existing pages and "source file gone" (F-08, FR1) (5.3).
-  - FOLDED, reader text in structural keys (F-09, FR4, AX1): localized opaque fields, flagged for owner
+  - FOLDED, reader text in structural keys (F-09, FR4, AX1): localized opaque fields (withdrawn in round 3), flagged for owner
     confirmation (5.8, 5.4); timestamps (F-11) (5.8).
   - FOLDED, performance (F-12) (6).
 
+- Panel round 3 (2026-11-13, medium floor; agy seats Fold Regression, Literal Implementer, Activation Auditor,
+  Blindspot Auditor: 5 findings; Sonnet solo seats Fold Regression, Mechanism Gamer, Protocol Pedant, Resource
+  Vampire and the two core seats: 17 findings). Dispositions:
+  - FOLDED, round-2 "localized opaque" fields withdrawn (FR1, FR8, FR9, F-14): reader text in structural keys is
+    path-mapped localized text with list alignment and union-shape normalization; opaque stays shared as ruled (5.8).
+  - FOLDED, classification precedence and localized-only hashing (FR3, agy answer 2, F-16); revert path
+    `import --restore` (F-13); bounded earlier-version read (RV1) (5.4).
+  - FOLDED, day-one rewrites keep text (FR2) and the export self-check (MG1) (5.4).
+  - FOLDED, deleted vs live documents with missing English (FR4); manifest lists only content in the database (FR5)
+    (5.4).
+  - FOLDED, file names and extension changes (FR6, FR7) (5.4); dates without a tagged form (PP1) (5.8).
+  - FOLDED, layout export validation (PP2) and locale drift (F-17) (5.2); manifest base (PP3) and exit codes (PP4)
+    (5.4).
+  - FOLDED, "gone" uses published and draft slugs (CA1) and draft files count for the safety stop (MG2) (5.3);
+    ghost-document pairing shows titles (F-15) (5.6).
+  - Citation corrected: the shared-key warning is at `contentFile.ts:105` (and `:121`), not `:106`.
+
 ## Stand-downs
 
-None in rounds 1 and 2: no finding was discarded below the floor.
+None in rounds 1 to 3: no finding was discarded below the floor.
