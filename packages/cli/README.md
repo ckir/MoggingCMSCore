@@ -40,7 +40,8 @@ mogging compile --locales de,fr --budget <usd> [--collection <c>] [<collection>/
 mogging worker [--once] [--poll-ms <n>] [--budget <usd>] [--collection <c>] [--locales a,b]
 mogging jobs [--state <s>] [--collection <c>] [--limit <n>] [--retry <id,...>] [--cancel <id,...>]
 mogging provenance <collection>/<slug> [--locale <l>] [--discarded-only] [--limit <n>]
-mogging review [<collection>/<slug>] [--locale <l>] [--collection <c>]
+mogging review [--locale <l>] [--collection <c>]
+mogging review <collection>/<slug> [--locale <l>]
 mogging review list [--collection <c>] [--locale <l>] [--state DRAFT_AI|APPROVED|DRAFT_HUMAN]
 mogging review show <collection>/<slug> --locale <l>
 mogging review approve <collection>/<slug> --locale <l> --version <n> [--reject-fields a,b] [--edit-file <path>] [--ack-warning <text>]...
@@ -51,7 +52,8 @@ mogging publish --release <name> [--allow-stale]
 mogging unpublish <collection>/<slug> --locale <l>
 mogging release create <name>
 mogging release list
-mogging release add <name> [<collection>/<slug> ...] [--locale <l>] [--all-approved] [--collection <c>]
+mogging release add <name> <collection>/<slug> ... [--locale <l>]
+mogging release add <name> --all-approved [--locale <l>] [--collection <c>]
 mogging release publish <name> [--allow-stale]
 mogging query <collection>[/<slug>] [--locale <l>] [--raw] [--limit <n>]
 mogging help [command]
@@ -59,7 +61,9 @@ mogging version
 ```
 
 Every command also takes the global options `--json`, `--config <file>`, `--database-url <url>`, `--actor <name>` and
-`--help` (which prints that command's usage). `--version` is recognised only before the command
+`--help` (which prints that command's usage); the one exception is the interactive `review`, which refuses `--json`.
+With a target, `review` takes only `--locale`; `--collection` is for the form without one. `release add` needs
+targets or `--all-approved`, not both, and `--collection` only with `--all-approved`. `--version` is recognised only before the command
 (`mogging --version`). A single-value option given twice is a usage error; `export --collection`/`--locale` and
 `review approve --ack-warning` are the repeatable ones. A `<collection>/<slug>` target also accepts a document id
 after the slash, and splits at the first `/`, so a nested slug (`docs/guide/setup`) works.
@@ -186,8 +190,9 @@ is a real person is the deployment's job.
 
 ## Licence lines
 
-Every command that opens the project prints the licence state on stderr (spec 12.3, 12.4), and `--json` carries the same
-facts in its `licence` member, so a redirected stderr does not hide them:
+Every command that opens the project prints the licence state on stderr (spec 12.3, 12.4). With `--json` the same facts
+are also in the `licence` member, so a redirected stderr does not hide them; in human mode the line is on stderr only,
+so `2>/dev/null` hides it:
 
 - During the 30-day evaluation: `MoggingCMS evaluation: <n> days left`, written `warning: MoggingCMS evaluation: <n> days left` from 7 days left.
 - After it, without a valid key: `warning: MoggingCMS evaluation has ended: reads keep working, but content updates, compiles and publishing are paused until a licence key is set`. Guarded writes then exit `3`.
@@ -196,6 +201,10 @@ facts in its `licence` member, so a redirected stderr does not hide them:
 - A valid commercial key prints no line.
 
 `--help`, `--version` and the plain usage text open no project and print no licence line.
+
+The guarded operations are exactly saving drafts (so `import`), recording AI drafts (`compile`, `worker`), `approve` and
+`approveClean`, and `publish` and `publishRelease` (spec 12.3). Reads, `unpublish`, `release create` and `add`, `track` and
+`review reject` are not guarded: `review reject` keeps working after the evaluation has ended.
 
 ## Configuration
 

@@ -564,8 +564,10 @@ live leases, and cap; `--retry`, `--cancel`), `mogging provenance <collection>/<
 spend rose without a draft appearing), `mogging query` (ad hoc reads).
 
 The syntax as shipped in `@mogging/cli` (plan 4). Every command also takes the global options `--json`,
-`--config <file>`, `--database-url <url>`, `--actor <name>` and `--help`, which are left out of the lines below;
-`--version` is accepted only before the command.
+`--config <file>`, `--database-url <url>`, `--actor <name>` and `--help`, which are left out of the lines below (the
+interactive `review` refuses `--json`); `--version` is accepted only before the command. With a target, `review`
+takes only `--locale`; `release add` needs targets or `--all-approved`, not both, and `--collection` only with
+`--all-approved`.
 
 ```text
 mogging init
@@ -578,7 +580,8 @@ mogging compile --locales de,fr --budget <usd> [--collection <c>] [<collection>/
 mogging worker [--once] [--poll-ms <n>] [--budget <usd>] [--collection <c>] [--locales a,b]
 mogging jobs [--state <s>] [--collection <c>] [--limit <n>] [--retry <id,...>] [--cancel <id,...>]
 mogging provenance <collection>/<slug> [--locale <l>] [--discarded-only] [--limit <n>]
-mogging review [<collection>/<slug>] [--locale <l>] [--collection <c>]
+mogging review [--locale <l>] [--collection <c>]
+mogging review <collection>/<slug> [--locale <l>]
 mogging review list [--collection <c>] [--locale <l>] [--state DRAFT_AI|APPROVED|DRAFT_HUMAN]
 mogging review show <collection>/<slug> --locale <l>
 mogging review approve <collection>/<slug> --locale <l> --version <n> [--reject-fields a,b] [--edit-file <path>] [--ack-warning <text>]...
@@ -589,7 +592,8 @@ mogging publish --release <name> [--allow-stale]
 mogging unpublish <collection>/<slug> --locale <l>
 mogging release create <name>
 mogging release list
-mogging release add <name> [<collection>/<slug> ...] [--locale <l>] [--all-approved] [--collection <c>]
+mogging release add <name> <collection>/<slug> ... [--locale <l>]
+mogging release add <name> --all-approved [--locale <l>] [--collection <c>]
 mogging release publish <name> [--allow-stale]
 mogging query <collection>[/<slug>] [--locale <l>] [--raw] [--limit <n>]
 mogging help [command]
