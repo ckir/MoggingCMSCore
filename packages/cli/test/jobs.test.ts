@@ -184,6 +184,12 @@ describe("mogging jobs", () => {
       expect(all.out.split("\n").filter((l) => /\bCANCELLED\b/.test(l))).toHaveLength(205);
       const some = await jobsCmd(sql, ["--state", "cancelled", "--limit", "10"]);
       expect(some.out.split("\n").filter((l) => /\bCANCELLED\b/.test(l))).toHaveLength(10);
+      // Identity, not just a count: --limit returns the FIRST page of the full listing, in the same order.
+      const idsOf = async (args: string[]) =>
+        (JSON.parse((await jobsCmd(sql, args)).out) as { data: { jobs: Array<{ id: number }> } }).data.jobs.map((j) => j.id);
+      const allIds = await idsOf(["--state", "cancelled", "--json"]);
+      expect(allIds).toHaveLength(205);
+      expect(await idsOf(["--state", "cancelled", "--limit", "10", "--json"])).toEqual(allIds.slice(0, 10));
     });
   }, 30_000);
 

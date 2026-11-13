@@ -6,7 +6,7 @@ import { getDocument, migrate } from "@mogging/core";
 import type { Sql } from "postgres";
 import { run } from "../src/run.js";
 import { withTestDb } from "./db.js";
-import { config, testDeps } from "./fixtures.js";
+import { DAY, config, setFirstMigration, testDeps } from "./fixtures.js";
 
 /** A per-test schema with the migrations applied. */
 const withDb = (fn: (sql: Sql) => Promise<void>) =>
@@ -34,6 +34,23 @@ const DE = "---\ntitle: Einleitung\n---\nHallo\n";
 const ctxOf = (sql: Sql) => ({ sql, config, actor: "test" });
 
 describe("mogging import", () => {
+  test("with the evaluation window over, import (with and without --publish) exits 3: a LicenceError ends the run and is never an ImportFailed 1 or 4", async () => {
+    await withDb(async (sql) => {
+      await setFirstMigration(sql, new Date(Date.now() - 31 * DAY));
+      const dir = tree({ "en/docs/intro.md": EN, "de/docs/intro.md": DE });
+      for (const args of [["import", dir], ["import", dir, "--publish"]]) {
+        const t = testDeps(sql);
+        expect(await run(args, t)).toBe(3);
+        expect(t.stderr()).toContain("licence");
+        expect(t.stderr()).not.toContain("ImportFailed");
+      }
+      expect(await getDocument(ctxOf(sql), { collection: "docs", slug: "intro" })).toBeNull();
+      const json = testDeps(sql);
+      expect(await run(["import", dir, "--json"], json)).toBe(3);
+      expect(JSON.parse(json.stdout())).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^LICENCE_/) } });
+    });
+  });
+
   test("imports a two-locale tree as drafts and prints one line per file", async () => {
     await withDb(async (sql) => {
       const dir = tree({ "en/docs/intro.md": EN, "de/docs/intro.md": DE });

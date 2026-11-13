@@ -118,6 +118,56 @@ describe("mogging publish <target>", () => {
     });
   });
 
+  test("--json of a run where every head was refused: exit 1, ok false, partial false, the refused item in data, the error member", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      await aiDraft(sql, docId, "de", "Einleitung");
+      const before = await publishedFlags(sql);
+      const r = await cli(sql, "publish", "docs/intro", "--json");
+      expect(r.code).toBe(1);
+      expect(JSON.parse(r.out)).toMatchObject({
+        ok: false,
+        partial: false,
+        data: { items: [{ target: "docs/intro", locale: "de", outcome: "refused", message: review("docs/intro", "de") }] },
+        error: { code: "PublishFailed" },
+      });
+      expect(await publishedFlags(sql)).toEqual(before);
+    });
+  });
+
+  test("a draft head replaced after it was read is refused (the version pin), and the newer head is not published", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      await saveDraft(coreCtx(sql), { docId, locale: "de", data: { title: "Einleitung" } });
+      await saveDraft(coreCtx(sql), { docId, locale: "fr", data: { title: "Introduction" } });
+      // A concurrent editor, made deterministic: the moment the de head is published, the fr draft head is
+      // replaced by a newer human draft, i.e. AFTER `publish` read the fr head and BEFORE it publishes it.
+      await sql.unsafe(`
+        create function replace_fr_head() returns trigger language plpgsql as $$
+        begin
+          if new.locale = 'de' and new.is_head_published and not old.is_head_published then
+            update document_localized set is_head_draft = false where doc_id = new.doc_id and locale = 'fr' and is_head_draft;
+            insert into document_localized (doc_id, locale, version, state, data, source_hashes, is_head_draft, created_at, created_by)
+              select doc_id, locale, version + 1, 'DRAFT_HUMAN', jsonb_build_object('title', 'Racing edit'), source_hashes, true, now(), 'racer'
+              from document_localized where doc_id = new.doc_id and locale = 'fr' order by version desc limit 1;
+          end if;
+          return new;
+        end $$`);
+      await sql.unsafe(`create trigger replace_fr_head after update on document_localized
+        for each row execute function replace_fr_head()`);
+
+      const r = await cli(sql, "publish", "docs/intro");
+      expect(r.code).toBe(4);
+      expect(r.out).toMatch(/^published docs\/intro de v\d+\nrefused: .*fr.*cannot be published\n$/);
+      const fr = (await sql`select version, state, is_head_published, is_head_draft from document_localized
+        where doc_id = ${docId} and locale = 'fr' order by version`) as unknown as Array<Record<string, unknown>>;
+      expect(fr).toMatchObject([
+        { is_head_published: false, is_head_draft: false },
+        { state: "DRAFT_HUMAN", is_head_published: false, is_head_draft: true },
+      ]);
+    });
+  });
+
   test("publishes the shared snapshot together with the locales when it has a draft head", async () => {
     await withDb(async (sql) => {
       const docId = await publishedDoc(sql);

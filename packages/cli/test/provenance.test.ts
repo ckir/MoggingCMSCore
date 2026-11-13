@@ -121,7 +121,11 @@ describe("mogging provenance", () => {
       expect(all.out.split("\n").filter((l) => l !== "")).toHaveLength(206); // header and 205 rows
       const some = await provenanceCmd(sql, ["docs/a", "--limit", "10"]);
       expect(some.out.split("\n").filter((l) => l !== "")).toHaveLength(11);
-      expect(rowsOf((await provenanceCmd(sql, ["docs/a", "--json"])).out)).toHaveLength(205);
+      const allRows = rowsOf((await provenanceCmd(sql, ["docs/a", "--json"])).out);
+      expect(allRows).toHaveLength(205);
+      // Identity, not just a count: --limit returns the FIRST page of the full listing, in the same order.
+      const firstPage = rowsOf((await provenanceCmd(sql, ["docs/a", "--limit", "10", "--json"])).out);
+      expect(firstPage.map((x) => x.id)).toEqual(allRows.slice(0, 10).map((x) => x.id));
     });
   }, 30_000);
 

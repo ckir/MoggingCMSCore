@@ -104,3 +104,17 @@ test("rejectDraft is not licence-guarded", async () => withTestDb(async (sql) =>
   await expect(assertLicensed(ctx)).rejects.toThrow(LicenceError);
   expect(await rejectDraft(ctx, { docId, locale: "de" })).toEqual({ version: 1 });
 }));
+
+test("a recordAiDraft after a reject stores the next version as the new draft head and keeps the rejected row in history", async () => withTestDb(async (sql) => {
+  const { ctx, docId, draft } = await setup(sql);
+  await rejectDraft(ctx, { docId, locale: "de" });
+  const next = await draft({ title: "Hallo neu", body: "Welt neu" });
+  expect(next).toMatchObject({ version: 2 });
+  expect(await rows(sql, docId)).toMatchObject([
+    { version: 1, state: "DRAFT_AI", is_head_draft: false },
+    { version: 2, state: "DRAFT_AI", is_head_draft: true },
+  ]);
+  const doc = await getDocument(ctx, { collection: "posts", docId });
+  expect(doc!.locales.de?.draft?.version).toBe(2);
+  expect(doc!.locales.de?.draft?.data).toEqual({ title: "Hallo neu", body: "Welt neu" });
+}));
