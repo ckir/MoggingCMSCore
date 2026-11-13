@@ -64,14 +64,51 @@ test("every writer refuses a ctx whose actor contains U+0000 with a ValidationEr
   expect(n).toBe(0);
 }));
 
-test("a licence refusal still wins over the actor check in a guarded writer", async () => withTestDb(async (sql) => {
+// The licence-guarded writers check the licence FIRST (spec 12.3), so an expired evaluation is a LicenceError (CLI exit 3)
+// even with a bad actor; the unguarded writers have no licence check, so the actor check answers.
+const GUARDED = ["saveDraft", "recordAiDraft", "approve", "approveClean", "publish", "publishRelease"];
+
+test("a licence refusal wins over the actor check in every guarded writer, and the actor check answers in the others", async () => withTestDb(async (sql) => {
   await api.migrate(sql);
   await sql`update migrations set applied_at = ${new Date(Date.now() - 31 * DAY)}`;
   const ctx = ctxFor(sql, NUL_ACTOR);
-  await expect(api.saveDraft(ctx, { docId: DOC, locale: "en", data: {} })).rejects.toThrow(api.LicenceError);
-  await expect(api.approveClean(ctx)).rejects.toThrow(api.LicenceError);
-  // An unguarded writer has no licence check, so the actor check answers.
-  await expect(api.createDocument(ctx, { collection: "posts" })).rejects.toThrow(api.ValidationError);
+  for (const name of GUARDED) expect(Object.keys(WRITERS), name).toContain(name);
+  for (const [name, call] of Object.entries(WRITERS)) {
+    const e = await call(ctx).catch((x: unknown) => x);
+    expect(e, name).toBeInstanceOf(GUARDED.includes(name) ? api.LicenceError : api.ValidationError);
+  }
+}));
+
+// The refusal is the FIRST thing a writer does: with a bad actor AND input that is itself invalid, the actor message
+// answers, not the writer's own input error (so the guard cannot move below input validation unnoticed).
+test("the actor check runs before input validation in every writer", async () => withTestDb(async (sql) => {
+  await api.migrate(sql);
+  const ctx = ctxFor(sql, NUL_ACTOR);
+  const fns = api as unknown as Record<string, (c: Ctx, input: unknown) => Promise<unknown>>;
+  for (const name of Object.keys(WRITERS)) {
+    const e = await fns[name]!(ctx, {}).catch((x: unknown) => x);
+    expect(e, name).toBeInstanceOf(api.ValidationError);
+    expect((e as Error).message, name).toBe("actor: contains U+0000");
+  }
+}));
+
+test("U+0000 is refused wherever it sits in the actor", async () => withTestDb(async (sql) => {
+  await api.migrate(sql);
+  for (const actor of ["\u0000", "\u0000x", "x\u0000", "caf\u00e9\u0000\u0301"]) {
+    const e = await api.createDocument(ctxFor(sql, actor), { collection: "posts" }).catch((x: unknown) => x);
+    expect(e, JSON.stringify(actor)).toBeInstanceOf(api.ValidationError);
+    expect((e as Error).message).toBe("actor: contains U+0000");
+  }
+}));
+
+// Near misses of NUL, and other control characters, are ordinary text: the guard must not be wider than NUL.
+test("an actor with other control characters or NUL look-alikes is accepted and stored as given", async () => withTestDb(async (sql) => {
+  await api.migrate(sql);
+  for (const actor of ["tab\there", "line\nbreak", "\u0001", "\u001f", "\u007f", "\ufffd", "\u2400", "a\u0301"]) {
+    const { id } = await api.createDocument(ctxFor(sql, actor), { collection: "posts" });
+    const [row] = await sql`select created_by from documents where id = ${id}`;
+    expect(row!.created_by, JSON.stringify(actor)).toBe(actor);
+  }
 }));
 
 test("an ordinary actor, including non-ASCII text, is unaffected", async () => withTestDb(async (sql) => {

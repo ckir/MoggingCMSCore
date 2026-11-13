@@ -76,3 +76,31 @@ test("a licence refusal still wins over the actor check in the guarded writers",
   await expect(api.cancelJobs(ctx, { ids: [] })).rejects.toThrow(ValidationError);
   await expect(api.upsertGlossary(ctx, [])).rejects.toThrow(ValidationError);
 }));
+
+// The refusal is the FIRST thing an ai writer does: a bad actor with input that is itself invalid is answered with the
+// actor message, so the guard cannot move below input handling (which would otherwise throw its own error).
+test("the actor check runs before input handling in every ai writer", async () => withTestDb(async (sql) => {
+  await migrateAndSeed(sql);
+  const ctx = withActor(ctxFor(sql, mockModel([identity])), NUL_ACTOR);
+  const fns = api as unknown as Record<string, (c: AiCtx, input: unknown) => Promise<unknown>>;
+  for (const name of Object.keys(WRITERS)) {
+    const e = await fns[name]!(ctx, {}).catch((x: unknown) => x);
+    expect(e, name).toBeInstanceOf(ValidationError);
+    expect((e as Error).message, name).toBe("actor: contains U+0000");
+  }
+}));
+
+// Near misses of NUL and other control characters are ordinary text: neither the actor nor an explicit workerId guard
+// may be wider than NUL, and a NUL-only workerId is still refused.
+test("control characters and NUL look-alikes are accepted in the actor and in a workerId; a NUL-only workerId is refused", async () => withTestDb(async (sql) => {
+  await migrateAndSeed(sql);
+  const good = ctxFor(sql, mockModel([identity]));
+  for (const text of ["tab\there", "line\nbreak", "\u0001", "\u007f", "\ufffd", "\u2400"]) {
+    const ctx = withActor(good, text);
+    expect(await api.cancelJobs(ctx, { ids: [] }), JSON.stringify(text)).toEqual({ cancelled: 0 });
+    expect(await api.runWorker(good, { once: true, workerId: `w${text}` }), JSON.stringify(text)).toMatchObject({ completed: 0 });
+  }
+  const e = await api.runWorker(good, { once: true, workerId: "\u0000" }).catch((x: unknown) => x);
+  expect(e).toBeInstanceOf(ValidationError);
+  expect((e as Error).message).toBe("workerId: contains U+0000");
+}));
