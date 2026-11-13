@@ -358,6 +358,22 @@ describe("interactive review: warnings (D-warn)", () => {
     });
   });
 
+  test("a warning with control characters is prompted escaped; answering y still acknowledges the stored text", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      const raw = "tone \u001b[8mhidden\u001b[0m\rover";
+      await draftWith(sql, docId, "de", { title: "Einleitung" }, { title: [raw] });
+      const s = start(sql, ["docs/intro"]);
+      await s.answer(MENU, "a");
+      await s.answer(ack("tone \\x1b[8mhidden\\x1b[0m\\x0dover"), "y");
+      expect(await s.exit).toBe(0);
+      expect(s.output()).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+      const approved = (await head(sql, docId))!;
+      expect(approved.state).toBe("APPROVED");
+      expect((await provenanceOf(sql, docId, approved.version as number)).map((r) => r.acknowledged_warnings)).toEqual([[raw]]);
+    });
+  });
+
   test("end of input at an acknowledgement approves nothing", async () => {
     await withDb(async (sql) => {
       const docId = await publishedDoc(sql);

@@ -171,7 +171,7 @@ importer's or exporter's report; `status` `{ rows }`; `compile` `{ enqueue, work
 worker report; `jobs` `{ jobs, budgets }` (with `--retry` or `--cancel`, the result of that call); `provenance` the row
 array; `review list` `{ items, next: null }`; `review show` the draft review; `review approve` and `review reject`
 `{ version }`; `review --approve-clean` `{ approved, skipped }`; `publish`, `unpublish` and `release add`
-`{ items: [{ target, locale, outcome, version?, message? }] }`; `release create` the new release; `release list` the
+`{ items: [{ target, locale, outcome, version?, message? }] }`; `release create` `{ id }`, the new release's id; `release list` the
 array of releases; `release publish` and `publish --release` `null`, except a stale release, which is exit `1` with
 `data: { stale: [...] }`; `track` `null`; `query` the resolved document `{ id, data, fellBack, missing }`, or an array of
 them for a collection (`--raw`: the document with its heads). `fellBack` maps each field that was taken from another

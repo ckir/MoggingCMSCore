@@ -26,6 +26,25 @@ async function query(sql: Sql, ...args: string[]) {
   return { code, out: t.stdout(), err: t.stderr() };
 }
 
+describe("mogging query: control characters in stored text", () => {
+  test("the human output shows them escaped, the list and the document alike; --json carries the data unchanged", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql, "intro");
+      const title = "Intro \u001b[8mhidden\u001b[0m\rover";
+      await saveDraft(coreCtx(sql), { docId, locale: "en", data: { title, body: "Hello" } });
+      await publish(coreCtx(sql), { docId, locale: "en" });
+      for (const args of [["docs"], ["docs/intro"]]) {
+        const r = await query(sql, ...args);
+        expect([args, r.code]).toEqual([args, 0]);
+        expect(r.out).toContain("Intro \\x1b[8mhidden\\x1b[0m\\x0dover");
+        expect(r.out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+      }
+      const json = JSON.parse((await query(sql, "docs/intro", "--json")).out) as { data: { data: { title: string } } };
+      expect(json.data.data.title).toBe(title);
+    });
+  });
+});
+
 describe("mogging query: a collection", () => {
   test("lists one line per published document: slug, two spaces, the first text field", async () => {
     await withDb(async (sql) => {

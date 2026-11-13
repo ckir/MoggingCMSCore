@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { listGlossary } from "@mogging/ai";
-import { approve, approveClean, getDocument, getDraftReview, listDraftHeads, normalizeLocale, rejectDraft } from "@mogging/core";
+import { approve, approveClean, ConflictError, getDocument, getDraftReview, listDraftHeads, normalizeLocale, rejectDraft } from "@mogging/core";
 import type { Ctx, DraftHead, DraftReview } from "@mogging/core";
 import { intOption } from "../args.js";
 import { applyEdits, parseEditFile, parseJsonEditFile, serializeEditFile } from "../editFile.js";
-import { describeError, table } from "../output.js";
+import { describeError, escapeControl, table } from "../output.js";
 import { renderDraftReview } from "../render.js";
 import { resolveTarget } from "../target.js";
 import { UsageError } from "../types.js";
@@ -247,7 +247,7 @@ async function reviewPair(env: CommandEnv, reader: Reader, pair: Pair, say: (...
   /** One prompt per distinct warning text; `undefined` unless every one was answered `y`. */
   const acknowledge = async (): Promise<string[] | undefined> => {
     for (const w of warnings) {
-      if ((await reader.prompt(`acknowledge "${w}"? [y/n]`))?.trim() !== "y") return undefined;
+      if ((await reader.prompt(`acknowledge "${escapeControl(w)}"? [y/n]`))?.trim() !== "y") return undefined;
     }
     return warnings;
   };
@@ -261,7 +261,7 @@ async function reviewPair(env: CommandEnv, reader: Reader, pair: Pair, say: (...
     } catch (err) {
       const refusal = isRefusal(err);
       const outcome = nameOf(err) === "ConflictError" ? "conflicted" : "failed";
-      if (refusal) say(`${outcome} ${label}: ${describeError(err).message}`);
+      if (refusal) say(escapeControl(`${outcome} ${label}: ${describeError(err).message}`));
       if (keep !== undefined) say(`edit file kept: ${keep}`);
       if (!refusal) throw err;
       return outcome;
@@ -505,6 +505,15 @@ export const reviewSpec: CommandSpec = {
       const content = readFileSync(editFile, "utf8");
       const found = await draftReviewOf(ctx, resolved.docId, locale, label);
       if ("none" in found) return found.none;
+      // Edits are parsed against the head just read, so they are never applied under another `--version`. The
+      // state check stays core's: a head that is not a DRAFT_AI is refused there before any version is compared.
+      if (found.review.state === "DRAFT_AI" && found.review.version !== expectedVersion) {
+        return staleResult(
+          new ConflictError(
+            `Expected draft version ${expectedVersion} of ${resolved.docId}/${found.review.locale} but the head is ${found.review.version}`,
+          ),
+        )!;
+      }
       const parse = editFile.toLowerCase().endsWith(".json") ? parseJsonEditFile : parseEditFile;
       edits = parse(content, found.review, kindsOf(ctx, found.review.collection)); // only the CHANGED fields
     }

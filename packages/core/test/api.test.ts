@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import * as api from "../src/index.js";
 import * as pkg from "@mogging/core";
-import type { Ctx, DocumentRecord, DraftHead, DraftReview, Field, ReviewField, LicencePayload, MoggingConfig, Snapshot } from "../src/index.js";
+import type { Ctx, DocumentRecord, DraftHead, DraftReview, Field, ReviewField, LicencePayload, MoggingConfig, ReleaseSummary, Snapshot } from "../src/index.js";
 
 // THE CONTRACT: this is the complete runtime surface of @mogging/core (spec 9.3). Adding or removing an
 // export must be a deliberate edit here; a leaked internal (encodeKey, stripTopLevelNulls, isEmptyValue,
@@ -57,5 +57,7 @@ test("the listed types are importable and usable", () => {
   const reviewField: Pick<ReviewField, "path"> = { path: "title" };
   expect([config.collections.length, field.kind, payload, snap.version, rec.collection, ctxShape.actor])
     .toEqual([1, "text", undefined, 1, "pages", "a"]);
+  const release: Pick<ReleaseSummary, "name" | "itemCount" | "publishedAt"> = { name: "r", itemCount: 0, publishedAt: null };
   expect([head.warningCount, review.fields.length, reviewField.path]).toEqual([0, 0, "title"]);
+  expect([release.name, release.itemCount, release.publishedAt]).toEqual(["r", 0, null]);
 });

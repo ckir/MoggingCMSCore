@@ -36,6 +36,13 @@ describe("serializeEditFile and parseEditFile", () => {
     expect(parseEditFile(serializeEditFile(draft(), kinds), draft(), kinds)).toEqual({});
   });
 
+  test("a real control character in a text value round-trips byte-faithfully: an untouched file returns no edits", () => {
+    const withEsc = review([field("title", "Hi \u001b[8mhidden\u001b[0m\u0085 there")]);
+    const file = serializeEditFile(withEsc, kinds);
+    expect(file).toContain("\u001b[8m");
+    expect(parseEditFile(file, withEsc, kinds)).toEqual({});
+  });
+
   test("changing only the title returns only the title", () => {
     const text = serializeEditFile(draft(), kinds).replace("Einleitung", "Neue Einleitung");
     expect(parseEditFile(text, draft(), kinds)).toEqual({ title: "Neue Einleitung" });

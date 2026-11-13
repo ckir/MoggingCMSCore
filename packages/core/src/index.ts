@@ -40,7 +40,7 @@ export type { SyncStateKind, SyncStateRow, SyncStateInput, TrackFieldsInput } fr
 
 export { createRelease, addToRelease, publishRelease, listReleases } from "./releases/releases.js";
 export type {
-  CreateReleaseInput, AddToReleaseInput, PublishReleaseInput, StaleReleaseItem, StaleReleaseErrorWithItems,
+  CreateReleaseInput, AddToReleaseInput, PublishReleaseInput, ReleaseSummary, StaleReleaseItem, StaleReleaseErrorWithItems,
 } from "./releases/releases.js";
 
 export { verifyKey } from "./licence/key.js";

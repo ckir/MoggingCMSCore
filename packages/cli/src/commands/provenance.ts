@@ -1,7 +1,7 @@
 import { listProvenance } from "@mogging/ai";
 import type { ProvenanceRow } from "@mogging/ai";
 import { intOption } from "../args.js";
-import { table } from "../output.js";
+import { escapeControl, table } from "../output.js";
 import { resolveTarget } from "../target.js";
 import type { CommandSpec } from "../types.js";
 import { PAGE_SIZE, allPages } from "./jobs.js";
@@ -17,7 +17,7 @@ const row = (p: ProvenanceRow): string[] => [
   `${p.promptTokens}/${p.completionTokens}`,
   usd(p.costMicros),
   p.discarded ? "yes" : "-",
-  p.discardReason === null ? "-" : p.discardReason.replace(/\s+/g, " ").trim(),
+  p.discardReason === null ? "-" : escapeControl(p.discardReason).replace(/\s+/g, " ").trim(),
 ];
 
 export const provenanceSpec: CommandSpec = {

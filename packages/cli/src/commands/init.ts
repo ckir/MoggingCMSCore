@@ -1,14 +1,10 @@
 import { writeFile } from "node:fs/promises";
-import { lstatSync } from "node:fs";
 import { resolve } from "node:path";
 import { getLicenceState, migrate } from "@mogging/core";
 import { licenceInfo, licenceLines } from "../output.js";
-import { loadProject, resolveDatabaseUrl } from "../project.js";
+import { CONFIG_NAMES, configFlag, loadProject, present, resolveDatabaseUrl } from "../project.js";
 import type { CommandSpec, Deps, Flags } from "../types.js";
 import { appliedLines } from "./migrate.js";
-
-/** The discovery order `loadProject` uses (project.ts); `init` must agree with it on what counts as an existing config. */
-const CONFIG_NAMES = ["mogging.config.ts", "mogging.config.mts", "mogging.config.js", "mogging.config.mjs"];
 
 /** Fixed text: `init` writes it verbatim and never edits `.gitignore` or `.env`. */
 export const CONFIG_TEMPLATE = `import { defineConfig, defineCollection, slug, text, richText } from "@mogging/core";
@@ -39,24 +35,15 @@ export const config = defineConfig({
 // });
 `;
 
-/** `lstat`, not `existsSync`: a dangling symlink counts as present. */
-function present(path: string): boolean {
-  try {
-    lstatSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Writes the template unless a config already exists. `wx` fails with `EEXIST` for any existing path, a symlink
  * (dangling or not) included, so an existing file is never written through. Returns whether the file was created.
  */
 async function writeTemplate(deps: Deps, flags: Flags): Promise<{ path: string; created: boolean }> {
   let path: string;
-  if (typeof flags.config === "string") {
-    path = resolve(deps.cwd, flags.config);
+  const given = configFlag(flags);
+  if (given !== undefined) {
+    path = resolve(deps.cwd, given);
   } else {
     const found = CONFIG_NAMES.map((name) => resolve(deps.cwd, name)).find(present);
     if (found !== undefined) return { path: found, created: false };

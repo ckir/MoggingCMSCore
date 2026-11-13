@@ -140,6 +140,23 @@ describe("mogging init", () => {
     });
   });
 
+  test("init with a blank --database-url or --config exits 2 and writes no file", async () => {
+    await withTestDb(async (sql) => {
+      for (const [flag, message] of [
+        ["--database-url", "--database-url must not be empty"],
+        ["--config", "--config must not be empty"],
+      ] as const) {
+        const dir = tempDir();
+        const connect = vi.fn(() => connectionOver(sql));
+        const t = realLoader(sql, dir, { connect });
+        expect(await run(["init", flag, ""], t.deps)).toBe(2);
+        expect(readdirSync(dir)).toEqual([]);
+        expect(connect).not.toHaveBeenCalled();
+        expect(t.base.stderr()).toContain(message);
+      }
+    });
+  });
+
   test("a dangling mogging.config.ts symlink is not written through; its load failure exits 1", async () => {
     await withTestDb(async (sql) => {
       const dir = tempDir();

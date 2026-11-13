@@ -24,7 +24,8 @@ export async function resolveTarget(
   const doc = UUID.test(rest)
     ? await getDocument(ctx, { collection, docId: rest.toLowerCase() })
     : await getDocument(ctx, { collection, slug: rest.toLowerCase() });
-  if (doc === null) throw new NotFoundError(`Document "${collection}/${rest}" not found`);
+  // `getDocument` returns a soft-deleted document too (it carries `deletedAt`); a target never names one
+  if (doc === null || doc.deletedAt !== null) throw new NotFoundError(`Document "${collection}/${rest}" not found`);
   const slug = doc.shared.published?.data.slug ?? doc.shared.draft?.data.slug;
   return { collection, docId: doc.id, slug: typeof slug === "string" ? slug : null };
 }

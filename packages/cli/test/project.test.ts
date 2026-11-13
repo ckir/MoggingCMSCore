@@ -42,7 +42,18 @@ describe("resolveDatabaseUrl", () => {
     expect(resolveDatabaseUrl({ "database-url": "f" }, env)).toBe("f");
     expect(resolveDatabaseUrl({}, env)).toBe("m");
     expect(resolveDatabaseUrl({}, { DATABASE_URL: "d" })).toBe("d");
-    expect(resolveDatabaseUrl({ "database-url": "" }, { DATABASE_URL: "d" })).toBe("d");
+  });
+
+  test("a blank --database-url is a UsageError, never a fall-through to the environment", () => {
+    for (const blank of ["", "   ", "\t"]) {
+      expect(() => resolveDatabaseUrl({ "database-url": blank }, { DATABASE_URL: "d", MOGGING_DATABASE_URL: "m" })).toThrow(
+        new UsageError("--database-url must not be empty"),
+      );
+    }
+  });
+
+  test("blank environment variables still fall through", () => {
+    expect(resolveDatabaseUrl({}, { MOGGING_DATABASE_URL: "", DATABASE_URL: "d" })).toBe("d");
   });
 
   test("none set is a UsageError", () => {
@@ -122,6 +133,17 @@ describe("loadProject: config discovery", () => {
     const abs = recording(dir, { config: goodConfig });
     await loadProject(abs.deps, { config: join(tempDir(), "x.ts") });
     expect(abs.loaded[0]).toMatch(/x\.ts$/);
+  });
+
+  test("a blank --config is a UsageError, never discovery or the working directory; nothing connects", async () => {
+    const dir = tempDir();
+    touch(dir, "mogging.config.ts");
+    for (const blank of ["", "  "]) {
+      const r = recording(dir, { config: goodConfig });
+      await expect(loadProject(r.deps, { config: blank })).rejects.toThrow(new UsageError("--config must not be empty"));
+      expect(r.loaded).toEqual([]);
+      expect(r.connected).toEqual([]);
+    }
   });
 });
 

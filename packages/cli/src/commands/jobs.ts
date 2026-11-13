@@ -1,7 +1,7 @@
 import { cancelJobs, listJobs, retryJobs } from "@mogging/ai";
 import type { AiCtx, BudgetRow, JobRow } from "@mogging/ai";
 import { intOption } from "../args.js";
-import { table } from "../output.js";
+import { escapeControl, table } from "../output.js";
 import { UsageError } from "../types.js";
 import type { CommandSpec, Flags } from "../types.js";
 import { exitRule, usd } from "./worker.js";
@@ -33,7 +33,7 @@ function parseIds(name: "retry" | "cancel", flags: Flags): number[] | undefined 
   return text.split(",").map((id) => intOption(name, id, 1)!);
 }
 
-const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
+const oneLine = (text: string): string => escapeControl(text).replace(/\s+/g, " ").trim();
 
 const jobRow = (j: JobRow): string[] => [
   String(j.id),

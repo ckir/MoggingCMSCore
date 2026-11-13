@@ -12,3 +12,18 @@ Tracked debt promoted from local anomaly captures (see the clavity open-issues s
 - [ ] `@mogging/core` `listDraftHeads` cursor: document the `after` value as opaque (the CLI only passes back the `next` it was given) in the SDK docs, so its format can change without a break. Recorded 2026-11-13, plan 4 Task 10.
 - [ ] `@mogging/cli` and `@mogging/core` `release remove`: spec 9.2 has no way to take an item out of a release. `addToRelease` of a pair held at another version is refused, and a release holding an item whose draft moved on cannot be published or repaired in v0.1. Needs an SDK call and a CLI verb. Recorded 2026-11-13, plan 4 Task 10.
 - [ ] `@mogging/core` `approve` source-change guard (plan 4 owner flag R3-2): an edit is recorded as in sync with the source at approval time (spec 6.4, `approve.ts`), so a source change published while a reviewer is in `$EDITOR` or preparing an `--edit-file` is not detected. Add an optional `expectedSourceVersion` on `approve`, passed by the CLI whenever it passes edits (the `expectedVersion` pattern); switch to it if concurrent or automated reviewers arrive. Recorded 2026-11-13, plan 4 Task 10.
+- [ ] `@mogging/cli` Plan 4 follow-ups (from the final review, 2026-11-13):
+  - a shared locale-normalizing helper for `export`, `status`, `track`, `query`, `provenance` and `review` messages (some are case-sensitive and some normalized today);
+  - `track` on an unknown collection exits 1 while `status` and `export` exit 2: make it a usage error;
+  - `release add` on an already-published release prints N identical `refused:` lines: refuse once;
+  - `jobs --retry` and `--cancel` silently ignore `--state`, `--collection` and `--limit`, and `query --limit` with a slug is ignored: make them usage errors;
+  - move the `withDb`, `tree` and `cli` test helpers copied across about 13 test files into `test/fixtures.ts`;
+  - move `exitRule` and the shared command helpers out of `worker.ts` and `jobs.ts` into a shared module;
+  - split the interactive review into `commands/reviewSession.ts`;
+  - `1 days left` wording in the evaluation licence line;
+  - the `--json` failure document after `init` has opened the project carries `licence: null`;
+  - rejected-draft text can resurface in the next AI draft for a never-published locale (the rejected row stays the `recordAiDraft` base, `recordAiDraft.ts:86-95`; also in `.clavity/local-anomalies.md` as solo F-S3);
+  - `listProvenance` orders by `(created_at, id)` but pages by `id > afterId` (`packages/ai/src/provenance.ts:60-64`);
+  - `prepack` does not build, so a bare `pnpm pack` can ship a stale `dist`;
+  - `maskSecrets` misses passwords with an unencoded `/`, a quote or whitespace, and URLs split across two writes;
+  - control characters: `escapeControl` covers the review view, `query`, `jobs` and `provenance` text, but not the error text `run.ts` prints (core's unacknowledged-warnings `ValidationError` quotes warning texts), nor `export`/`import` warning messages, and not Unicode bidi or line-separator characters.

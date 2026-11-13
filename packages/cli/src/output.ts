@@ -12,6 +12,18 @@ export function maskSecrets(text: string): string {
   return text.replace(URL_PASSWORD, "$1***@");
 }
 
+/**
+ * Makes stored or AI-derived text safe to print: every C0 control except `\n` and `\t`, DEL and the C1 range becomes a
+ * visible escape (`\x1b`, `\x0d`, `\x7f`; `\u0085` for C1), so a terminal never acts on it (conceal, cursor moves,
+ * a bare `\r` that overwrites the line). Display only: it is never applied to `--json` data or to edit-file text.
+ */
+export function escapeControl(text: string): string {
+  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, (c) => {
+    const code = c.charCodeAt(0);
+    return code >= 0x80 && code <= 0x9f ? `\\u${code.toString(16).padStart(4, "0")}` : `\\x${code.toString(16).padStart(2, "0")}`;
+  });
+}
+
 /** Left-aligned columns padded to the longest cell, separated by two spaces; no trailing whitespace. */
 export function table(rows: string[][], header?: string[]): string[] {
   const all = header === undefined ? rows : [header, ...rows];

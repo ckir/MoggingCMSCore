@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Sql } from "postgres";
-import { createDocument, migrate, saveDraft } from "@mogging/core";
+import { createDocument, deleteDocument, migrate, saveDraft } from "@mogging/core";
 import type { Ctx } from "@mogging/core";
 import { resolveTarget } from "../src/target.js";
 import { UsageError } from "../src/types.js";
@@ -63,6 +63,19 @@ describe("resolveTarget", () => {
       const err = await resolveTarget(ctx, "posts/intro").catch((e: unknown) => e);
       expect((err as Error).name).toBe("NotFoundError");
       expect((err as Error).message).toBe('Unknown collection "posts"');
+    });
+  });
+
+  test("a soft-deleted document is a NotFoundError by slug and by id, the same text as an unknown one", async () => {
+    await withTestDb(async (sql) => {
+      const ctx = await setup(sql);
+      const id = await docWithSlug(ctx, "gone");
+      await deleteDocument(ctx, { docId: id });
+      for (const rest of ["gone", id]) {
+        const err = await resolveTarget(ctx, `docs/${rest}`).catch((e: unknown) => e);
+        expect([rest, (err as Error).name]).toEqual([rest, "NotFoundError"]);
+        expect((err as Error).message).toBe(`Document "docs/${rest}" not found`);
+      }
     });
   });
 

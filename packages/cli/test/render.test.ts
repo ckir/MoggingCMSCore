@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { GlossaryEntry } from "@mogging/ai";
 import type { DraftReview, ReviewField } from "@mogging/core";
 import { markdownToTree } from "@mogging/markdown";
+import { escapeControl } from "../src/output.js";
 import { renderDraftReview, valueText } from "../src/render.js";
 
 const field = (path: string, over: Partial<ReviewField> = {}): ReviewField => ({
@@ -138,5 +139,48 @@ describe("renderDraftReview", () => {
     expect(lines).toContain("glossary: guide -> Anleitung");
     expect(lines).toContain("glossary: widget -> (keep)");
     expect(lines.some((l) => l.includes("invoice"))).toBe(false);
+  });
+
+  test("control characters in stored text are shown escaped: no raw ESC, CR or other control byte reaches the output", () => {
+    const hidden = "\u001b[8mhidden\u001b[0m";
+    const lines = renderDraftReview(
+      review(
+        [
+          field("title", {
+            source: `src ${hidden}`,
+            previous: "prev\rovertyped",
+            draft: `dr ${hidden}\r`,
+            warnings: [`warn ${hidden}`],
+          }),
+        ],
+        { slug: "in\u001b[2Jtro" },
+      ),
+      { title: "text" },
+      { width: 80, color: false, glossary: [entry("src", "t\u009bx")] },
+    );
+    const out = lines.join("\n");
+    expect(out).toContain("\\x1b[8mhidden\\x1b[0m");
+    expect(out).toContain("prev\\x0dovertyped");
+    expect(out).toContain("! warn \\x1b[8mhidden\\x1b[0m");
+    expect(out).toContain("docs/in\\x1b[2Jtro de v3");
+    expect(out).toContain("glossary: src -> t\\u009bx");
+    expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+  });
+
+  test("the renderer's own bold survives with color on while stored escapes are still escaped", () => {
+    const lines = renderDraftReview(review([field("title", { draft: "a\u001b[8mb" })]), { title: "text" }, { width: 40, color: true });
+    expect(lines).toContain("\u001b[1mtitle\u001b[22m");
+    expect(lines.join("\n")).toContain("a\\x1b[8mb");
+    expect(lines.filter((l) => l.includes("\u001b"))).toEqual(["\u001b[1mtitle\u001b[22m"]);
+  });
+});
+
+describe("escapeControl", () => {
+  test("C0 (but not newline and tab), DEL and C1 become visible escapes; everything else is untouched", () => {
+    expect(escapeControl("a\nb\tc")).toBe("a\nb\tc");
+    expect(escapeControl("\u0000\u0007\r\u001b\u001f")).toBe("\\x00\\x07\\x0d\\x1b\\x1f");
+    expect(escapeControl("\u007f")).toBe("\\x7f");
+    expect(escapeControl("\u0080\u0085\u009f")).toBe("\\u0080\\u0085\\u009f");
+    expect(escapeControl("Einführung \u00a0 ünï \u00a0 日本")).toBe("Einführung \u00a0 ünï \u00a0 日本");
   });
 });

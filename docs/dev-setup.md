@@ -26,6 +26,10 @@ pnpm typecheck
 Each test uses `withTestDb` (`packages/core/test/db.ts`), which creates a schema `t_<random8>`,
 runs the test inside it and drops it afterwards.
 
+Databases created before plan 4 must be recreated (drop and create the database, then run `migrate` again): migration
+`0001` was edited in place (the `field_warnings` column and the unique release name), and `migrate` tracks applied
+migrations by name only. An old database therefore reports "up to date", and `approve` then fails on the missing column.
+
 ## Running one test file
 
 Put the file filter directly after `test`: `pnpm --filter @mogging/ai test claim` runs only the matching file.

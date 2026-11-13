@@ -143,6 +143,27 @@ describe("review routing", () => {
   });
 });
 
+describe("review show: control characters", () => {
+  test("a draft, source and warning carrying escape sequences print escaped; --json keeps the data", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      const bad = "Einleitung \u001b[8mhidden\u001b[0m\rover";
+      const warning = "tone \u001b[2Jgone";
+      const v = await draftWith(sql, docId, "de", { title: bad }, { title: [warning] });
+      const r = await cli(sql, "review", "show", "docs/intro", "--locale", "de");
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("Einleitung \\x1b[8mhidden\\x1b[0m\\x0dover");
+      expect(r.out).toContain("! tone \\x1b[2Jgone");
+      expect(r.out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+      const json = JSON.parse((await cli(sql, "review", "show", "docs/intro", "--locale", "de", "--json")).out) as {
+        data: { version: number; fields: Array<{ draft: unknown; warnings: string[] }> };
+      };
+      expect(json.data.version).toBe(v);
+      expect(json.data.fields[0]).toMatchObject({ draft: bad, warnings: [warning] });
+    });
+  });
+});
+
 describe("review list", () => {
   test("shows the pending DRAFT_AI head with the version --version takes, and --json gives { items, next: null }", async () => {
     await withDb(async (sql) => {
@@ -385,6 +406,23 @@ describe("review approve", () => {
   });
 
   describe("D-stale", () => {
+    test("approve --edit-file under a --version other than the head's is the stale conflict before the file is read against the head", async () => {
+      await withDb(async (sql) => {
+        const docId = await publishedDoc(sql);
+        const v = await draftWith(sql, docId, "de", { title: "Einleitung" });
+        const edited = tempFile("stale-edit.txt", "=== title ===\nNeue Einleitung\n");
+        const unparseable = tempFile("stale-bad.txt", "no header here\n");
+        for (const file of [edited, unparseable]) {
+          const r = await cli(sql, "review", "approve", "docs/intro", "--locale", "de", "--version", String(v + 1), "--edit-file", file);
+          expect([file, r.code]).toEqual([file, 1]); // not 2: the file is never parsed
+          expect(r.out).toBe("");
+          expect(r.err).toContain(`Expected draft version ${v + 1} of ${docId}/de but the head is ${v}`);
+          expect(r.err.trimEnd().endsWith("run `mogging review show` again")).toBe(true);
+        }
+        expect((await rows(sql, docId)).map((x) => [x.version, x.state, x.is_head_draft])).toEqual([[v, "DRAFT_AI", true]]);
+      });
+    });
+
     test.each([["approve"], ["reject"]])("%s without --version, or with 0, 1e1 or 0x10, exits 2 before anything runs", async (verb) => {
       await withDb(async (sql) => {
         const docId = await publishedDoc(sql);

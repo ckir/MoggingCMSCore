@@ -1,6 +1,7 @@
 import { getDocument, NotFoundError, resolve } from "@mogging/core";
 import type { Collection, Ctx, ResolvedDocument } from "@mogging/core";
 import { intOption } from "../args.js";
+import { escapeControl } from "../output.js";
 import { resolveTarget } from "../target.js";
 import { UsageError } from "../types.js";
 import type { CommandResult, CommandSpec, Flags } from "../types.js";
@@ -20,15 +21,17 @@ function listLine(col: Collection, doc: ResolvedDocument): string {
   const slug = slugField === undefined ? undefined : doc.data[slugField];
   const title = Object.entries(doc.data).find(([k, v]) => col.fields[k]?.kind === "text" && typeof v === "string")?.[1];
   const label = typeof slug === "string" ? slug : doc.id;
-  return typeof title === "string" ? `${label}  ${title}` : label;
+  return escapeControl(typeof title === "string" ? `${label}  ${title}` : label);
 }
 
 /** One line per field: shared ones say so; localized ones name the locale the value came from. */
 function documentLines(col: Collection, doc: ResolvedDocument, locale: string): string[] {
   const lines = Object.entries(doc.data).map(([field, value]) => {
-    if (col.fields[field]?.localized !== true) return `${field} [shared]: ${valueText(value)}`;
+    if (col.fields[field]?.localized !== true) return escapeControl(`${field} [shared]: ${valueText(value)}`);
     const from = doc.fellBack[field];
-    return `${field} [${from ?? locale}${from === undefined ? "" : ` (fell back from ${locale})`}]: ${valueText(value)}`;
+    return escapeControl(
+      `${field} [${from ?? locale}${from === undefined ? "" : ` (fell back from ${locale})`}]: ${valueText(value)}`,
+    );
   });
   if (doc.missing.length > 0) lines.push(`missing: ${doc.missing.join(", ")}`);
   return lines;
