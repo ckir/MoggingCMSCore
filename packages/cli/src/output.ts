@@ -4,9 +4,10 @@ import type { CommandResult, LicenceInfo } from "./types.js";
 /**
  * `scheme://user:pass@host`: the password is everything after the first `:` of the userinfo up to the last `@`
  * before a `/`, whitespace or a quote. Stopping at quotes keeps a serialized JSON document parseable; stopping at
- * `/` leaves `http://host:8080/x@y` alone.
+ * `/` leaves `http://host:8080/x@y` alone. The match starts at `://` and never scans the scheme: the scheme is not
+ * masked, and scanning it from every letter made the match quadratic on long runs of scheme characters.
  */
-const URL_PASSWORD = /([a-z][a-z0-9+.-]*:\/\/[^\s:@/"'\\]*:)[^\s/"'\\]*@/gi;
+const URL_PASSWORD = /(:\/\/[^\s:@/"'\\]*:)[^\s/"'\\]*@/g;
 
 export function maskSecrets(text: string): string {
   return text.replace(URL_PASSWORD, "$1***@");

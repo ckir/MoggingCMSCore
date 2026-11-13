@@ -233,7 +233,7 @@ test("key rotation: a token signed by the second listed key verifies; empty or u
   expect(licenceCode(() => verifyKey(byOther, []))).toBe("LICENCE_INVALID");
   expect(licenceCode(() => verifyKey(byOther, ["not a pem"]))).toBe("LICENCE_INVALID");
   // An RSA public key in the list is not an Ed25519 key and never verifies.
-  const rsa = generateKeyPairSync("rsa", { modulusLength: 1024 }).publicKey.export({ type: "spki", format: "pem" }).toString();
+  const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 }).publicKey.export({ type: "spki", format: "pem" }).toString();
   expect(licenceCode(() => verifyKey(byOther, [rsa]))).toBe("LICENCE_INVALID");
 });
 

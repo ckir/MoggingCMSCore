@@ -23,6 +23,13 @@ describe("maskSecrets", () => {
     }
   });
 
+  test("a long run of scheme characters is masked in linear time", () => {
+    const start = Date.now();
+    expect(maskSecrets("a".repeat(200_000))).toBe("a".repeat(200_000));
+    expect(maskSecrets("a://".repeat(20_000))).toBe("a://".repeat(20_000));
+    expect(Date.now() - start).toBeLessThan(1000);
+  });
+
   test("masking a serialized JSON document keeps it parseable", () => {
     const json = JSON.stringify({ a: "postgres://u:secret@h/db", b: "x@y", c: "postgres://u:p" });
     const masked = maskSecrets(json);

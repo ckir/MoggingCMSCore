@@ -72,7 +72,7 @@ describe("restoreDraft", () => {
 
   test("SENTINEL_DUPLICATED", () => {
     const p = prep();
-    const draft = p.markdown.replace("\n", " ⟦MOGGING:0⟧\n");
+    const draft = p.markdown.replace(/\n/, " ⟦MOGGING:0⟧\n");
     expect(codesOf(restoreDraft(p, draft))).toEqual(["SENTINEL_DUPLICATED"]);
   });
 
