@@ -26,6 +26,12 @@ pnpm typecheck
 Each test uses `withTestDb` (`packages/core/test/db.ts`), which creates a schema `t_<random8>`,
 runs the test inside it and drops it afterwards.
 
+## Running one test file
+
+Put the file filter directly after `test`: `pnpm --filter @mogging/ai test claim` runs only the matching file.
+Do not write `pnpm --filter @mogging/ai test -- claim`: the `--` is passed to vitest literally, the filter is lost,
+and the whole package suite runs (measured 2026-11-13: 17 files, 278 tests instead of 1 file, 32 tests).
+
 ## Live provider test (optional)
 
 `packages/ai/test/live.test.ts` translates the seeded document through the real OpenRouter API with
