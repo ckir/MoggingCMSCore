@@ -1,15 +1,20 @@
 import { readFileSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { listGlossary } from "@mogging/ai";
-import { approve, approveClean, getDraftReview, listDraftHeads, normalizeLocale, rejectDraft } from "@mogging/core";
+import { approve, approveClean, getDocument, getDraftReview, listDraftHeads, normalizeLocale, rejectDraft } from "@mogging/core";
 import type { Ctx, DraftHead, DraftReview } from "@mogging/core";
 import { intOption } from "../args.js";
-import { parseEditFile, parseJsonEditFile } from "../editFile.js";
+import { applyEdits, parseEditFile, parseJsonEditFile, serializeEditFile } from "../editFile.js";
 import { describeError, table } from "../output.js";
 import { renderDraftReview } from "../render.js";
 import { resolveTarget } from "../target.js";
 import { UsageError } from "../types.js";
-import type { CommandResult, CommandSpec, Flags } from "../types.js";
-import { labelOf } from "./publish.js";
+import type { CommandEnv, CommandResult, CommandSpec, Flags, Io } from "../types.js";
+import { draftHeads, isRefusal, labelOf } from "./publish.js";
+import { exitRule } from "./worker.js";
 
 type Form = "approve-clean" | "interactive" | "list" | "show" | "approve" | "reject";
 
@@ -137,6 +142,248 @@ async function listAll(ctx: Ctx, state: State, scope: { collection?: string; loc
   }
 }
 
+const MENU = "[a]pprove [r]eject [e]dit [s]kip [q]uit";
+const POST_EDIT = "[a]pprove [s]kip";
+
+type Counts = { approved: number; rejected: number; skipped: number; conflicted: number; failed: number };
+type Outcome = keyof Counts | "gone" | "stop";
+type Pair = { docId: string; locale: string };
+type Reader = ReturnType<typeof lineReader>;
+
+/**
+ * The reviewer's answers: one `readline` interface over stdin, read ONLY through its `line` and `close` events
+ * (`question()` never settles for a line that arrived before it was called and throws once the input has ended).
+ */
+function lineReader(io: Io, signal: AbortSignal) {
+  const rl = createInterface({ input: io.stdin, terminal: false, crlfDelay: Infinity });
+  const queue: string[] = [];
+  let waiting: ((line: string | null) => void) | undefined;
+  let closed = false;
+  const settle = (line: string | null) => {
+    const resolve = waiting;
+    waiting = undefined;
+    resolve?.(line);
+  };
+  rl.on("line", (line) => {
+    if (waiting === undefined) queue.push(line);
+    else settle(line);
+  });
+  rl.on("close", () => {
+    closed = true;
+    settle(null);
+  });
+  const onAbort = () => settle(null);
+  signal.addEventListener("abort", onAbort);
+  return {
+    /** Discards what was typed ahead, prints `text`, and resolves with the next line, or `null` at end of input or abort. */
+    async prompt(text: string): Promise<string | null> {
+      queue.length = 0;
+      if (closed || signal.aborted) return null;
+      io.out(`${text} `);
+      return new Promise((resolve) => {
+        waiting = resolve;
+      });
+    },
+    /** Runs `fn` (the editor) with the input paused, then lets what arrived meanwhile flush into the queue to be discarded. */
+    async paused<T>(fn: () => Promise<T>): Promise<T> {
+      rl.pause();
+      try {
+        return await fn();
+      } finally {
+        rl.resume();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    },
+    close() {
+      signal.removeEventListener("abort", onAbort);
+      rl.close();
+    },
+  };
+}
+
+/** The pending `DRAFT_AI` pairs in scope: those of one document, or the pages of `listDraftHeads` as they are reached. */
+async function* pendingPairs(
+  ctx: Ctx, scope: { collection?: string; locale?: string }, target: { collection: string; docId: string } | undefined,
+): AsyncGenerator<Pair> {
+  if (target !== undefined) {
+    const doc = await getDocument(ctx, { collection: target.collection, docId: target.docId });
+    if (doc === null) return;
+    for (const h of draftHeads(doc, scope.locale)) {
+      if (h.locale !== "shared" && h.draft.state === "DRAFT_AI") yield { docId: doc.id, locale: h.locale };
+    }
+    return;
+  }
+  let after: string | undefined;
+  for (;;) {
+    const page = await listDraftHeads(ctx, { state: "DRAFT_AI", ...scope, limit: PAGE_SIZE, ...(after === undefined ? {} : { after }) });
+    for (const h of page.items) yield { docId: h.docId, locale: h.locale };
+    if (page.next === null) return;
+    after = page.next;
+  }
+}
+
+const summaryLine = (c: Counts): string =>
+  `approved ${c.approved}, rejected ${c.rejected}, skipped ${c.skipped}, conflicted ${c.conflicted}, failed ${c.failed}`;
+
+/** One pair, from its review to its outcome; `stop` ends the whole session (`q`, end of input, abort). */
+async function reviewPair(env: CommandEnv, reader: Reader, pair: Pair, say: (...lines: string[]) => void): Promise<Outcome> {
+  const { ctx } = env.project;
+  let review: DraftReview;
+  try {
+    review = await getDraftReview(ctx, pair);
+  } catch (err) {
+    if (nameOf(err) !== "NotFoundError") throw err;
+    return "gone"; // the draft went away since the list was read
+  }
+  if (review.state !== "DRAFT_AI") return "gone";
+  const label = `${labelOf(review)} ${review.locale}`;
+  const kinds = kindsOf(ctx, review.collection);
+  const glossary = await listGlossary(ctx, { sourceLocale: review.sourceLocale, targetLocale: review.locale });
+  const show = (r: DraftReview) =>
+    say("", ...renderDraftReview(r, kinds, { width: env.io.width ?? 100, color: env.io.color, glossary }));
+  show(review);
+
+  const warnings = [...new Set(review.fields.flatMap((f) => f.warnings).filter((w) => w !== ""))];
+  /** One prompt per distinct warning text; `undefined` unless every one was answered `y`. */
+  const acknowledge = async (): Promise<string[] | undefined> => {
+    for (const w of warnings) {
+      if ((await reader.prompt(`acknowledge "${w}"? [y/n]`))?.trim() !== "y") return undefined;
+    }
+    return warnings;
+  };
+
+  /** Runs `approve` or `rejectDraft`; `keep` is the edit file, which survives anything but a success. */
+  const attempt = async (call: () => Promise<{ version: number }>, done: "approved" | "rejected", keep?: string): Promise<Outcome> => {
+    try {
+      const result = await call();
+      say(`${done} ${label} v${result.version}`);
+      return done;
+    } catch (err) {
+      const refusal = isRefusal(err);
+      const outcome = nameOf(err) === "ConflictError" ? "conflicted" : "failed";
+      if (refusal) say(`${outcome} ${label}: ${describeError(err).message}`);
+      if (keep !== undefined) say(`edit file kept: ${keep}`);
+      if (!refusal) throw err;
+      return outcome;
+    }
+  };
+
+  const approveArgs = (acks: string[], edits: Record<string, unknown>) => ({
+    ...pair,
+    expectedVersion: review.version,
+    ...(Object.keys(edits).length === 0 ? {} : { edits }),
+    ...(acks.length === 0 ? {} : { acknowledgedWarnings: acks }),
+  });
+
+  /** The `e` key. Returns `menu` when the step failed before its prompt: the reviewer is back at the menu. */
+  const editStep = async (): Promise<Outcome | "menu"> => {
+    let dir: string | undefined;
+    let file: string | undefined;
+    let edits: Record<string, unknown>;
+    try {
+      const content = serializeEditFile(review, kinds);
+      dir = await mkdtemp(join(tmpdir(), "mogging-review-"));
+      const written = join(dir, "edit.md");
+      await writeFile(written, content, { flag: "wx", mode: 0o600 });
+      file = written;
+      await reader.paused(() => env.deps.editor(written));
+      edits = parseEditFile(await readFile(written, "utf8"), review, kinds);
+    } catch (err) {
+      say(describeError(err).message);
+      if (file !== undefined) say(`edit file kept: ${file}`);
+      else if (dir !== undefined) await rm(dir, { recursive: true, force: true });
+      return "menu";
+    }
+    const kept = file!;
+    const removeFile = () => rm(dir!, { recursive: true, force: true });
+    show(applyEdits(review, edits));
+    for (;;) {
+      const answer = (await reader.prompt(POST_EDIT))?.trim();
+      if (answer === undefined) {
+        say(`edit file kept: ${kept}`);
+        return "stop";
+      }
+      if (answer === "s") {
+        await removeFile();
+        say(`skipped ${label}`);
+        return "skipped";
+      }
+      if (answer === "a") {
+        const acks = await acknowledge();
+        if (acks === undefined) continue;
+        const outcome = await attempt(() => approve(ctx, approveArgs(acks, edits)), "approved", kept);
+        if (outcome === "approved") await removeFile();
+        return outcome;
+      }
+    }
+  };
+
+  for (;;) {
+    const answer = (await reader.prompt(MENU))?.trim();
+    if (answer === undefined || answer === "q") return "stop";
+    if (answer === "s") {
+      say(`skipped ${label}`);
+      return "skipped";
+    }
+    if (answer === "a") {
+      const acks = await acknowledge();
+      if (acks === undefined) continue;
+      return attempt(() => approve(ctx, approveArgs(acks, {})), "approved");
+    }
+    if (answer === "r") {
+      const reason = await reader.prompt("reason (optional, enter to skip):");
+      if (reason === null) return "stop";
+      const text = reason.trim();
+      return attempt(
+        () => rejectDraft(ctx, { ...pair, expectedVersion: review.version, ...(text === "" ? {} : { reason: text }) }),
+        "rejected",
+      );
+    }
+    if (answer === "e") {
+      const outcome = await editStep();
+      if (outcome !== "menu") return outcome;
+    }
+  }
+}
+
+/** The interactive review: every pending AI draft in scope, one at a time, each decided by a person. */
+async function interactiveReview(env: CommandEnv): Promise<CommandResult> {
+  const { ctx } = env.project;
+  const scope = scopeOf(ctx, env.flags);
+  const first = env.positionals[0];
+  const target = first === undefined ? undefined : await resolveTarget(ctx, first);
+  const say = (...lines: string[]) => env.io.out(lines.map((l) => `${l}\n`).join(""));
+  const counts: Counts = { approved: 0, rejected: 0, skipped: 0, conflicted: 0, failed: 0 };
+  let reviewed = 0;
+  const reader = lineReader(env.io, env.signal);
+  try {
+    for await (const pair of pendingPairs(ctx, scope, target)) {
+      if (env.signal.aborted) break;
+      const outcome = await reviewPair(env, reader, pair, say);
+      if (outcome === "stop") {
+        reviewed += 1; // a pair was shown, so there was something to review
+        break;
+      }
+      if (outcome === "gone") continue;
+      reviewed += 1;
+      counts[outcome] += 1;
+    }
+  } catch (err) {
+    say(summaryLine(counts)); // a licence refusal (or any other error) still ends with the summary, then propagates
+    throw err;
+  } finally {
+    reader.close();
+  }
+  if (reviewed === 0) return { data: counts, lines: ["nothing to review"] };
+  return {
+    data: counts,
+    lines: [summaryLine(counts)],
+    ...exitRule(counts.conflicted + counts.failed, counts.approved + counts.rejected, {
+      code: "ReviewFailed", message: `no draft was approved or rejected (conflicted ${counts.conflicted}, failed ${counts.failed})`,
+    }),
+  };
+}
+
 export const reviewSpec: CommandSpec = {
   name: "review",
   summary: "review AI drafts: list, show, approve, reject, or approve the clean ones",
@@ -164,7 +411,7 @@ export const reviewSpec: CommandSpec = {
   usesSignal: (flags, positionals) =>
     flags["approve-clean"] !== true && (positionals.length === 0 || positionals[0]!.includes("/")),
   arity: [0, 2],
-  validate(flags, positionals) {
+  validate(flags, positionals, io) {
     const r = route(flags, positionals);
     const label = labelFor(r);
     for (const name of FORM_OPTIONS) {
@@ -172,6 +419,9 @@ export const reviewSpec: CommandSpec = {
     }
     if (r.form === "interactive") {
       if (flags.json === true) throw new UsageError("interactive review has no --json form (use `review list|show|approve|reject --json`)");
+      if (!io.isTTY) {
+        throw new UsageError("interactive review needs a terminal; use review list|show|approve|reject or --approve-clean");
+      }
       return;
     }
     if (r.form === "approve-clean") return;
@@ -200,13 +450,7 @@ export const reviewSpec: CommandSpec = {
     const { flags, positionals } = env;
     const r = route(flags, positionals);
 
-    if (r.form === "interactive") {
-      // Task 8: the interactive review replaces this.
-      return {
-        data: null, lines: [], exitCode: 1,
-        error: { code: "NotImplemented", message: "interactive review is implemented in the next task" },
-      };
-    }
+    if (r.form === "interactive") return interactiveReview(env);
 
     if (r.form === "approve-clean") {
       const result = await approveClean(ctx, scopeOf(ctx, flags));

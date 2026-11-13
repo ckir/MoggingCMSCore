@@ -126,12 +126,12 @@ describe("review routing", () => {
     });
   });
 
-  test("the interactive forms are routed but not implemented yet (Task 8): exit 1 with NotImplemented; --json is a usage error", async () => {
+  test("the interactive forms need a terminal (exit 2, nothing written to stdout); --json is a usage error", async () => {
     await withDb(async (sql) => {
       for (const args of [["review"], ["review", "docs/intro"], ["review", "--locale", "de"]]) {
         const r = await cli(sql, ...args);
-        expect([r.code, args.join(" ")]).toEqual([1, args.join(" ")]);
-        expect(r.err).toContain("interactive review is implemented in the next task");
+        expect([r.code, args.join(" ")]).toEqual([2, args.join(" ")]);
+        expect(r.err).toContain("interactive review needs a terminal");
         expect(r.out).toBe("");
       }
       for (const args of [["review", "--json"], ["review", "docs/intro", "--json"]]) {
