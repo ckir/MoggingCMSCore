@@ -34,7 +34,7 @@
 1. A U+0000 inside a `richText` object KEY (not only a leaf string): must be a `ValidationError`, not a database error (Task 1).
 2. `removeFromRelease` on an item whose document was soft-deleted: this is the repair path, so it must succeed, in the SDK (Task 5) and through the CLI target syntax (Task 6).
 3. A release emptied by removals, then published: `publishRelease` still refuses it with its existing "empty" error (Task 5).
-4. Reject, then redraft, where the rejected draft had superseded an `APPROVED` draft: the next draft carries the approved text and none of the rejected text (Task 4).
+4. Reject, then redraft, where the rejected draft had superseded an `APPROVED` draft: in a never-published locale the next draft carries the approved text and none of the rejected text; in a published locale it restarts from the published head, as before (Task 4).
 5. `listProvenance` with `afterId: 0`, and rows whose `created_at` order differs from their `id` order: no row skipped, none repeated (Task 3).
 6. `runWorker` `pollMs` of `0`, `NaN`, `-1`, `1.5`, `Infinity`, `2147483648`: each a `ValidationError`, never a busy loop (Task 2).
 
@@ -141,7 +141,7 @@ test("runWorker rejects an unusable pollMs with a ValidationError", async () => 
 - Test: `packages/core/test/rejectDraft.test.ts` (next to the test at line 108; reuse its `setup`, `prov`, `rows` helpers)
 
 **Interfaces:**
-- Produces: the base row of `recordAiDraft` is chosen by `where doc_id = ... and locale = ... and (is_head_draft or state <> 'DRAFT_AI') order by is_head_draft desc, is_head_published desc, version desc limit 1`. A non-head `DRAFT_AI` row is either superseded (its successor carried its data) or rejected; neither is a base. Behaviour for a published locale, an unpublished-after-publish locale (the `PUBLISHED` row keeps `state = 'PUBLISHED'`, `publish.ts:44`) and a draft head is unchanged. `superseded` (line 92) keeps its meaning.
+- Produces: the base row of `recordAiDraft` is chosen by `where doc_id = ... and locale = ... and (is_head_draft or state <> 'DRAFT_AI') order by is_head_draft desc, is_head_published desc, version desc limit 1`. A non-head `DRAFT_AI` row is either superseded (its successor carried its data) or rejected; neither is a base. Behaviour for a published locale, an unpublished-after-publish locale (the `PUBLISHED` row keeps `state = 'PUBLISHED'`, `publish.ts:44`) and a draft head is unchanged; the unpublished-after-publish case changes only by no longer picking a rejected non-head `DRAFT_AI` row of a higher version over the `PUBLISHED` row. `superseded` (line 92) keeps its meaning.
 
 - [ ] **Step 1: Write the failing tests** (three, in `rejectDraft.test.ts`):
   1. `redraft after reject carries no rejected text`: `setup` leaves a `DRAFT_AI` de v1 (`title` "Hallo", `body` "Welt"); `rejectDraft`; `recordAiDraft` with `fields: { title: "Neu" }` only; the new head's `data` is `{ title: "Neu" }` (no `body`) and its `field_warnings` is `{}`.

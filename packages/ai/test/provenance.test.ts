@@ -58,7 +58,7 @@ test("listProvenance without docId lists discarded rows across documents", async
     expect(spend.map((r) => [r.docId, r.callId, r.discarded])).toEqual([[first, a, true], [second, b, true]]);
     const all = await listProvenance(ctx, {});
     expect(all).toHaveLength(3);
-    expect(all.map((r) => r.discarded)).toEqual([false, true, true]); // ordered by created_at, id
+    expect(all.map((r) => r.discarded)).toEqual([false, true, true]); // ordered by id
     expect(await listProvenance(ctx, { docId: second })).toHaveLength(1);
     expect(await listProvenance(ctx, { limit: 1 })).toHaveLength(1);
   });

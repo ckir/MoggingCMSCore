@@ -136,7 +136,7 @@ describe("mogging provenance", () => {
       const rows = rowsOf((await provenanceCmd(sql, ["docs/a", "--json"])).out);
       expect(rows).toHaveLength(1005);
       expect(new Set(rows.map((x) => x.id)).size).toBe(1005);
-      const ids = (await sql`select id from content_provenance order by created_at, id`).map((r) => Number(r.id));
+      const ids = (await sql`select id from content_provenance order by id`).map((r) => Number(r.id));
       expect(rows.map((x) => x.id)).toEqual(ids);
     });
   }, 30_000);

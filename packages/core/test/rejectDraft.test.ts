@@ -154,3 +154,15 @@ test("redraft after unpublish still starts from the published row", async () => 
   await draft({ title: "X" });
   expect((await headData(sql, docId)).data).toEqual({ title: "X", body: "Welt" });
 }));
+
+// Pins Task 4: a rejected non-head DRAFT_AI row of a higher version must not beat the PUBLISHED row as the base.
+test("redraft after reject and unpublish still starts from the published row", async () => withTestDb(async (sql) => {
+  const { ctx, docId, draft } = await setup(sql);
+  await approve(ctx, { docId, locale: "de" });
+  await publish(ctx, { docId, locale: "de" });
+  await draft({ title: "AI" });
+  await rejectDraft(ctx, { docId, locale: "de" });
+  await unpublish(ctx, { docId, locale: "de" });
+  await draft({ body: "B2" });
+  expect((await headData(sql, docId)).data).toEqual({ title: "Hallo", body: "B2" });
+}));

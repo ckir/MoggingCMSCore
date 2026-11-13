@@ -84,7 +84,7 @@ after the slash, and splits at the first `/`, so a nested slug (`docs/guide/setu
 | `review` | Four forms, see below. |
 | `publish` | Publishes the draft heads of one document (`--locale` for one locale or `shared`), or a named release (`--release`, with `--allow-stale` to publish a release whose items are stale). A `DRAFT_AI` head is refused: review it first. |
 | `unpublish` | Takes one locale, or `shared`, offline. Already offline is reported as `not published` and is not a failure. |
-| `release` | `create` a named release, `list` releases, `add` approved heads (named targets, or every `APPROVED` head with `--all-approved`, narrowed by `--collection` and `--locale`), `publish` it. |
+| `release` | `create` a named release, `list` releases, `add` approved heads (named targets, or every `APPROVED` head with `--all-approved`, narrowed by `--collection` and `--locale`), `remove` an item (by document and locale) from an unpublished release, `publish` it. |
 | `query` | Read-only. `<collection>` lists published documents with locale fallback (`--limit` 1 to 200, default 20); `<collection>/<slug>` shows one document and which locale each field came from; `--raw` shows the document's heads and versions instead. `--locale` defaults to the source locale. |
 | `help`, `version` | Print the usage, or the version. |
 
@@ -147,8 +147,8 @@ errors (`error: <message>`) go to stderr. Every write to either stream has datab
 One rule decides `1` versus `4`. Commands that attempt several items (`import` files, `publish` heads, `release add`
 and `release remove` items, `compile` and `worker` jobs, `jobs --retry` ids, interactive review) count `failed` and `done`: `failed = 0`
 gives `0`, `done = 0` with `failed > 0` gives `1`, both greater than zero gives `4`. An item that is already in the
-wanted state (`unchanged`, `already in release`) is done. Skips by `review --approve-clean` are not failures. For
-`compile` and `worker`, a requeued job (provider error) or a discarded one (lease lost, or cancelled while running)
+wanted state (`unchanged`, `already in release`, `not in release`) is done. Skips by `review --approve-clean` are not
+failures. For `compile` and `worker`, a requeued job (provider error) or a discarded one (lease lost, or cancelled while running)
 counts as failed; a job refused by the budget stays pending and counts as neither.
 
 ### `--json`
