@@ -19,6 +19,7 @@
 
 ## Global Constraints
 
+- `TODO.md` is edited by bullet text, never by line number: each task deletes a bullet, so line numbers move.
 - No schema change: `packages/core/migrations/0001_engine.sql` is NOT edited in this plan.
 - The licence-guarded set is exactly `saveDraft`, `recordAiDraft`, `approve` (and `approveClean`), `publish`, `publishRelease`, `compile` (design 12.3). `removeFromRelease` is NOT guarded.
 - Every operation is an SDK function before it is a CLI verb. CLI exit codes: `0` ok, `1` error, `2` usage, `3` licence refusal, `4` partial failure (spec 9.2, plan 4).
@@ -31,7 +32,7 @@
 ## Review Focus
 
 1. A U+0000 inside a `richText` object KEY (not only a leaf string): must be a `ValidationError`, not a database error (Task 1).
-2. `removeFromRelease` on an item whose document was soft-deleted: this is the repair path, so it must succeed (Task 5).
+2. `removeFromRelease` on an item whose document was soft-deleted: this is the repair path, so it must succeed, in the SDK (Task 5) and through the CLI target syntax (Task 6).
 3. A release emptied by removals, then published: `publishRelease` still refuses it with its existing "empty" error (Task 5).
 4. Reject, then redraft, where the rejected draft had superseded an `APPROVED` draft: the next draft carries the approved text and none of the rejected text (Task 4).
 5. `listProvenance` with `afterId: 0`, and rows whose `created_at` order differs from their `id` order: no row skipped, none repeated (Task 3).
@@ -43,7 +44,7 @@
 
 **Files:**
 - Modify: `packages/core/src/values/normalize.ts` (`nfcDeep` at line 10, `normalizeAt` at line 26 with cases `text` 28-30, `slug` 31-33, `reference` 48-50)
-- Test: `packages/core/test/values.test.ts`, `packages/core/test/saveDraft.test.ts`, `packages/markdown/test/import.test.ts` (the test at line 301)
+- Test: `packages/core/test/values.test.ts`, `packages/core/test/saveDraft.test.ts`, `packages/markdown/test/import.test.ts` (the test at line 301 and one new test)
 
 **Interfaces:**
 - Consumes: `ValidationError` from `packages/core/src/errors.ts` (already imported in normalize.ts).
@@ -80,8 +81,9 @@ await sql`create trigger refuse_boom before insert on document_localized for eac
 ```
 
 and give the `de` file the front matter `title: boom` instead of the NUL. The trigger lives in the test's own schema (`withTestDb`), so it cannot leak. Fix the comment above it to say the failure is a database refusal in pass 2. If `create function` lands outside the test schema (`select proname, pronamespace::regnamespace from pg_proc where proname = 'refuse_boom'`), STOP and report `STATE_MISMATCH`.
+- [ ] **Step 4b: Pin the new import behaviour** with one more test in `import.test.ts`: `a U+0000 in a source file is a file error and creates no document`. Tree `{ "en/docs/a.md": '---\ntitle: "a\\0b"\n---\nx\n' }`; after `importFolder` the file's outcome is `"error"`, `r.errors[0].message` matches `/U\+0000/`, and `listDocuments(ctx, { collection: "docs" })` is empty (before this task the NUL was found only in pass 2, after pass 1 had created a document holding just its slug).
 - [ ] **Step 5: Run** `pnpm vitest run packages/core/test/values.test.ts packages/core/test/saveDraft.test.ts packages/markdown/test/import.test.ts` (all pass) then `pnpm test` (whole suite green).
-- [ ] **Step 6: Commit** `fix(core): reject U+0000 in normalizeValue with a ValidationError`. Delete the U+0000 bullet from `TODO.md` (line 5) in the same commit.
+- [ ] **Step 6: Commit** `fix(core): reject U+0000 in normalizeValue with a ValidationError`. Delete the bullet that starts "`@mogging/core` `normalizeValue` accepts a `text`, `slug` or nested `richText` string containing U+0000" from `TODO.md` in the same commit.
 
 ---
 
@@ -110,7 +112,7 @@ test("runWorker rejects an unusable pollMs with a ValidationError", async () => 
 - [ ] **Step 2: Run** `pnpm vitest run packages/ai/test/worker.test.ts -t "unusable pollMs"`: fails (no rejection).
 - [ ] **Step 3: Implement** the check at the very top of `runWorker` (before any query), importing `ValidationError` next to `NotFoundError` at `worker.ts:2`; update the README sentence ("it polls every `pollMs` (2000 by default)") to add "an integer from 1 to 2147483647 milliseconds".
 - [ ] **Step 4: Run** the worker test file (all pass; existing tests use `pollMs` 1 and 50) and `pnpm typecheck`.
-- [ ] **Step 5: Commit** `fix(ai): runWorker validates pollMs`. Delete the `pollMs` bullet from `TODO.md` (line 9) in the same commit.
+- [ ] **Step 5: Commit** `fix(ai): runWorker validates pollMs`. Delete the bullet that starts "`@mogging/ai` `runWorker` passes `options.pollMs`" from `TODO.md` in the same commit.
 
 ---
 
@@ -127,7 +129,7 @@ test("runWorker rejects an unusable pollMs with a ValidationError", async () => 
 - [ ] **Step 2: Run** `pnpm vitest run packages/ai/test/provenance.test.ts`: the order test fails (rows come back by `created_at`).
 - [ ] **Step 3: Implement** `order by id` at `provenance.ts:64` and rewrite the doc comment ("Provenance rows ordered by id"). In `README.md:139-143` replace "ordered by creation time, then id" and the sentence "Rows written by concurrent transactions can be created in a different order than their ids, so treat `afterId` as a way to reach rows beyond the cap, not as an exact page boundary" with: rows are ordered by `id`; `afterId` returns only rows with a greater id (pass the last `id` of a page); a transaction that commits after a page was read can add a row with a lower id than that page's last, which a later `afterId` page does not return.
 - [ ] **Step 4: Run** `pnpm vitest run packages/ai/test/provenance.test.ts packages/cli/test/provenance.test.ts` (the CLI test with 1005 rows must still pass) then `pnpm test`.
-- [ ] **Step 5: Commit** `fix(ai): listProvenance orders by id so afterId is an exact page boundary`. In `TODO.md` delete the `listProvenance` sub-bullet (line 28) and the `afterId` clause of line 8.
+- [ ] **Step 5: Commit** `fix(ai): listProvenance orders by id so afterId is an exact page boundary`. In `TODO.md` delete the sub-bullet that starts "`listProvenance` orders by `(created_at, id)` but pages by" and, in the plan 3 bullet ("`@mogging/ai` deferred Minor review findings"), the clause "`afterId` cursor on `listProvenance` pages by id while ordering is `(created_at, id)`;".
 
 ---
 
@@ -148,7 +150,7 @@ test("runWorker rejects an unusable pollMs with a ValidationError", async () => 
 - [ ] **Step 2: Run** `pnpm vitest run packages/core/test/rejectDraft.test.ts`: tests 1 and 2 fail, test 3 passes already (it pins existing behaviour; keep it).
 - [ ] **Step 3: Implement** the `where` clause change in the base query and rewrite the comment at lines 80-81 to say why a non-head `DRAFT_AI` row is excluded.
 - [ ] **Step 4: Run** `pnpm vitest run packages/core packages/ai` (recordAiDraft is exercised by many tests; all must pass) then `pnpm test`.
-- [ ] **Step 5: Commit** `fix(core): a rejected or superseded AI draft is never the base of the next draft`. Delete the rejected-text sub-bullet (`TODO.md` line 27).
+- [ ] **Step 5: Commit** `fix(core): a rejected or superseded AI draft is never the base of the next draft`. Delete the sub-bullet that starts "rejected-draft text can resurface in the next AI draft" from `TODO.md`.
 
 ---
 
@@ -160,7 +162,7 @@ test("runWorker rejects an unusable pollMs with a ValidationError", async () => 
 
 **Interfaces:**
 - Consumes: the file's own `resolveLocale`, `releaseIdOf`, `UUID` (as `addToRelease` uses them).
-- Produces: `removeFromRelease(ctx: Ctx, input: { releaseId: string; docId: string; locale: string }): Promise<void>`. `locale` is a declared locale or `"shared"`. Semantics: one transaction; lock the release row `for update` (the documents row is NOT locked, so an item of a soft-deleted document can be removed); `NotFoundError` for an unknown or malformed release id and for a non-UUID `docId` (same messages as `addToRelease`); `ValidationError("release already published")` for a published release; `NotFoundError(`${docId}/${locale} is not in release ${releaseId}`)` when no item matches `(release_id, doc_id, coalesce(locale, ''))`; otherwise delete that one row. Not licence-guarded. Records nothing.
+- Produces: `type RemoveFromReleaseInput = { releaseId: string; docId: string; locale: string | "shared" }` (exported as a type from `releases.ts` and the type list at `index.ts:43-44`, like `AddToReleaseInput`, `releases.ts:8`) and `removeFromRelease(ctx: Ctx, input: RemoveFromReleaseInput): Promise<void>`. `locale` is a declared locale or `"shared"`. Semantics: one transaction; lock the release row `for update` (the documents row is NOT locked, so an item of a soft-deleted document can be removed); `NotFoundError` for an unknown or malformed release id and for a non-UUID `docId` (same messages as `addToRelease`); `ValidationError("release already published")` for a published release; `NotFoundError(`${docId}/${locale} is not in release ${releaseId}`)` when no item matches `(release_id, doc_id, coalesce(locale, ''))`; otherwise delete that one row. Not licence-guarded. Records nothing.
 
 - [ ] **Step 1: Write the failing tests** in `releases.test.ts` (names are the contract; reuse `docWithSource`, `setup`):
   - `removeFromRelease removes an item and the pair can be added again at a newer version`: add de v1; `saveDraft` de (v2); `publishRelease` refuses (existing behaviour); `removeFromRelease`; `addToRelease` at v2; `publishRelease` succeeds.
@@ -187,6 +189,7 @@ test("runWorker rejects an unusable pollMs with a ValidationError", async () => 
 
 **Interfaces:**
 - Consumes: `removeFromRelease` (Task 5); `releaseIdOf`, `resolveTarget`, `getDocument`, `labelOf`, `scopeLocale`, `isRefusal`, `refusal`, `itemsResult`, `Item` as `release add` uses them.
+- Modifies: `resolveTarget(ctx, text, options?: { allowDeleted?: boolean })` in `packages/cli/src/target.ts`. Today it throws `NotFoundError` for a soft-deleted document (`target.ts`, the `doc.deletedAt !== null` check), so a release item of a deleted document, the case `publishRelease` refuses at `releases.test.ts:398`, could not be named. With `allowDeleted: true` that check is skipped; every other caller keeps the default (false) and its behaviour. `release remove` passes `allowDeleted: true`.
 - Produces: `mogging release remove <name> <collection>/<slug> ... [--locale <l>] [--json]`. Exactly one `<name>` and at least one target; the only option is `--locale`; any other verb option (`--all-approved`, `--collection`, `--allow-stale`) is `release remove: --<option> does not apply` (exit 2). Per target and scope the outcome is `removed` (line `removed <target> <locale>`), `not in release` (a NotFoundError whose message matches `/is not in release/`; not a failure), or `refused` (any other refusal, e.g. a published release). Scopes: with `--locale`, that one (`scopeLocale`); without it, every scope in `[...new Set(["shared", source, ...Object.keys(chains)])]` of `ctx.config.locales`; a scope that is not in the release is silent when `--locale` is absent, and a target with no item in any scope yields one `not in release` item with locale `-`. A refusal other than `not in release` ends that target's remaining scopes (so a published release prints one `refused:` line per target, not one per scope). `data` is `{ items }` via `itemsResult(items, "ReleaseRemoveFailed", ["nothing to remove"])`; `removed` and `not in release` count as done for the exit rule.
 
 - [ ] **Step 1: Write the failing tests** (names are the contract):
@@ -196,12 +199,13 @@ test("runWorker rejects an unusable pollMs with a ValidationError", async () => 
   - `release remove of an absent item reports not in release and exits 0` (with and without `--locale`).
   - `release remove on a published release exits 1 with one refused line per target`.
   - `release remove: an unknown release or an unknown target exits 1 like release add`.
+  - `release remove names a soft-deleted document's item` (`deleteDocument` after adding; `release remove r1 posts/<slug> --locale de` exits 0 and prints `removed`); and, in `packages/cli/test/target.test.ts`, that the default still refuses a soft-deleted document.
   - usage errors, as rows in the existing table at line 342: `["remove without a release name", ["release","remove"], "release remove"]`, `["remove without a target", ["release","remove","r1"], "release remove"]`, `["remove with --all-approved", ...]`, `["remove with --allow-stale", ...]`, each exit 2.
 - [ ] **Step 2: Run** `pnpm vitest run packages/cli/test/release.test.ts`: the new tests fail (`unknown verb "remove"`).
 - [ ] **Step 3: Implement** the verb in `release.ts`: add `"remove"` to `VERBS`, `remove: ["locale"]` to `OPTIONS_OF`, the validate branch (`release remove: expected <name> and at least one <collection>/<slug> target`), the usage line `mogging release remove <name> <collection>/<slug> ... [--locale <l>] [--json]` and the summary `create, list, fill, trim and publish releases`; a `remove(ctx, name, targets, flags)` function next to `add` following the Interfaces block; the `switch` case in `run`. Resolve every target first, before removing anything (as `add` does), so an unknown target fails the run with nothing half done.
 - [ ] **Step 4: Edit the docs.** `packages/cli/README.md`: add `mogging release remove <name> <collection>/<slug> ... [--locale <l>]` after the `release add` lines; add `release remove` beside `release add` at lines 146 and 173; replace the "No `release remove`" bullet at line 248 with a one-sentence note that removal is by (document, locale), needs an unpublished release and records nothing. Core design: 9.2 verb list `create|add|remove|publish` and a syntax line; 9.3 add `removeFromRelease` to Writes and append to the actor sentence "`removeFromRelease` takes the actor but records nothing: release membership is staging, and what is audited is what publishes."; 12.3 add `removeFromRelease` to the "Not guarded" list (the guarded set is unchanged); line 636 delete `release remove` from "Not built in v0.1" and say it shipped in plan 5.
 - [ ] **Step 5: Run** `pnpm vitest run packages/cli` then `pnpm test` and `pnpm typecheck`.
-- [ ] **Step 6: Commit** `feat(cli): release remove`. Delete the `release remove` bullet from `TODO.md` (line 15).
+- [ ] **Step 6: Commit** `feat(cli): release remove`. Delete the bullet that starts "`@mogging/cli` and `@mogging/core` `release remove`" from `TODO.md`.
 
 ---
 
@@ -212,6 +216,6 @@ test("runWorker rejects an unusable pollMs with a ValidationError", async () => 
 
 **Interfaces:** none (documentation only; behaviour of `listDraftHeads` is unchanged).
 
-- [ ] **Step 1: Edit.** In `review.ts` rewrite the comment so it no longer spells the cursor's format: "`after` is an opaque cursor: pass back the `next` of the previous page; its format is not part of the contract." In core design 9.3 add after the Reads list: "`listDraftHeads` returns `{ items, next }`; `after` is an opaque cursor, to be passed back only as the `next` the previous page returned." In `TODO.md` delete the `listDraftHeads` bullet (line 14); remove any remaining plan 5 item still listed (U+0000, `pollMs`, `listProvenance`, rejected text, `release remove`) and confirm none is left with `grep -n "U+0000\|pollMs\|afterId\|resurface\|release remove\|listDraftHeads" TODO.md` (the plan-3 line 8 may keep its other findings).
+- [ ] **Step 1: Edit.** In `review.ts` rewrite the comment so it no longer spells the cursor's format: "`after` is an opaque cursor: pass back the `next` of the previous page; its format is not part of the contract." In core design 9.3 add after the Reads list: "`listDraftHeads` returns `{ items, next }`; `after` is an opaque cursor, to be passed back only as the `next` the previous page returned." In `TODO.md` delete the bullet that starts "`@mogging/core` `listDraftHeads` cursor"; remove any remaining plan 5 item still listed (U+0000, `pollMs`, `listProvenance`, rejected text, `release remove`) and confirm none is left with `grep -n "U+0000\|pollMs\|afterId\|resurface\|release remove\|listDraftHeads" TODO.md` (the plan-3 line 8 may keep its other findings).
 - [ ] **Step 2: Run** `pnpm typecheck` and `pnpm test` (whole suite green, count = baseline + the tests this plan added).
 - [ ] **Step 3: Commit** `docs: listDraftHeads cursor is opaque; TODO closed for plan 5`.
