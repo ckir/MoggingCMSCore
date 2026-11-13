@@ -78,13 +78,15 @@ export async function recordAiDraft(ctx: Ctx, input: RecordAiDraftInput): Promis
     if (!src || src.version !== input.sourceVersion) return { cancelled: "SOURCE_MOVED" };
 
     // Base = draft head, else published head, else the latest row by version in any state (e.g. after
-    // unpublish), else none. Read under the documents lock before any head flag is cleared.
+    // unpublish), else none. A non-head DRAFT_AI row is never a base: it was either superseded (its successor
+    // already carried its data) or rejected, and a rejected draft's text must not resurface. Read under the
+    // documents lock before any head flag is cleared.
     type Base = {
       version: number; state: string; is_head_draft: boolean; data: Record<string, unknown>;
       source_hashes: Record<string, string>; field_warnings: Record<string, string[]>;
     };
     const [base] = (await tx`select version, state, is_head_draft, data, source_hashes, field_warnings from document_localized
-      where doc_id = ${input.docId} and locale = ${locale}
+      where doc_id = ${input.docId} and locale = ${locale} and (is_head_draft or state <> 'DRAFT_AI')
       order by is_head_draft desc, is_head_published desc, version desc limit 1`) as unknown as Array<Base | undefined>;
     if (base && base.is_head_draft && base.state === "DRAFT_HUMAN") return { cancelled: "DRAFT_HUMAN" };
 

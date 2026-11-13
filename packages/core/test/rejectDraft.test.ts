@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import type { Sql } from "postgres";
 import {
   ConflictError, LicenceError, NotFoundError, NotPublishableError, ValidationError, approve, assertLicensed,
-  createDocument, getDocument, getSyncState, hashValue, migrate, publish, recordAiDraft, rejectDraft, saveDraft,
+  createDocument, getDocument, getSyncState, hashValue, migrate, publish, recordAiDraft, rejectDraft, saveDraft, unpublish,
 } from "../src/index.js";
 import { ctxFor } from "./fixtures.js";
 import { withTestDb } from "./db.js";
@@ -117,4 +117,40 @@ test("a recordAiDraft after a reject stores the next version as the new draft he
   const doc = await getDocument(ctx, { collection: "posts", docId });
   expect(doc!.locales.de?.draft?.version).toBe(2);
   expect(doc!.locales.de?.draft?.data).toEqual({ title: "Hallo neu", body: "Welt neu" });
+}));
+
+const headData = async (sql: Sql, docId: string) => {
+  const [h] = await sql`select data, field_warnings from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
+  return h!;
+};
+
+test("redraft after reject carries no rejected text", async () => withTestDb(async (sql) => {
+  const { ctx, docId, draft } = await setup(sql);
+  await rejectDraft(ctx, { docId, locale: "de" });
+  await draft({ title: "Neu" });
+  const head = await headData(sql, docId);
+  expect(head.data).toEqual({ title: "Neu" });
+  expect(head.field_warnings).toEqual({});
+}));
+
+test("redraft after reject restarts from the approved predecessor", async () => withTestDb(async (sql) => {
+  const { ctx, docId, draft } = await setup(sql);
+  await approve(ctx, { docId, locale: "de" }); // v2 APPROVED
+  await draft({ title: "AI" }); // v3 supersedes v2
+  await rejectDraft(ctx, { docId, locale: "de" }); // rejects v3
+  expect(await draft({ body: "B2" })).toEqual({ version: 4 });
+  expect((await headData(sql, docId)).data).toEqual({ title: "Hallo", body: "B2" });
+  const p = await sql`select superseded_version from content_provenance
+    where doc_id = ${docId} and locale = 'de' and version = 4`;
+  expect(p).toHaveLength(1);
+  expect(p[0]!.superseded_version).toBeNull();
+}));
+
+test("redraft after unpublish still starts from the published row", async () => withTestDb(async (sql) => {
+  const { ctx, docId, draft } = await setup(sql);
+  await approve(ctx, { docId, locale: "de" });
+  await publish(ctx, { docId, locale: "de" });
+  await unpublish(ctx, { docId, locale: "de" });
+  await draft({ title: "X" });
+  expect((await headData(sql, docId)).data).toEqual({ title: "X", body: "Welt" });
 }));

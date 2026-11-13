@@ -22,7 +22,6 @@ Tracked debt promoted from local anomaly captures (see the clavity open-issues s
   - split the interactive review into `commands/reviewSession.ts`;
   - `1 days left` wording in the evaluation licence line;
   - the `--json` failure document after `init` has opened the project carries `licence: null`;
-  - rejected-draft text can resurface in the next AI draft for a never-published locale (the rejected row stays the `recordAiDraft` base, `recordAiDraft.ts:86-95`; also in `.clavity/local-anomalies.md` as solo F-S3);
   - `prepack` does not build, so a bare `pnpm pack` can ship a stale `dist`;
   - `maskSecrets` misses passwords with an unencoded `/`, a quote or whitespace, and URLs split across two writes;
   - control characters: `escapeControl` covers the review view, `query`, `jobs` and `provenance` text, but not the error text `run.ts` prints (core's unacknowledged-warnings `ValidationError` quotes warning texts), nor `export`/`import` warning messages, and not Unicode bidi or line-separator characters.

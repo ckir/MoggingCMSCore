@@ -686,12 +686,15 @@ test("the gate holds after track", async () => withTestDb(async (sql) => {
   expect(await approveClean(ctx)).toEqual({ approved: 0, skipped: [{ docId, locale: "de", reason: "has warnings" }] });
 }));
 
-test("the gate holds after a reject", async () => withTestDb(async (sql) => {
+test("a reject discards the rejected draft's text and its warnings: the next draft carries neither", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
   await aiDraft(ctx, docId, { title: "Katze", body: "Welt" }, { title: [W1] });
   await rejectDraft(ctx, { docId, locale: "de" });
-  await aiDraft(ctx, docId, { body: "Welt 2" }); // v2 is based on the rejected v1 row and carries title
-  await expect(approve(ctx, { docId, locale: "de" })).rejects.toThrow(W1);
+  await aiDraft(ctx, docId, { body: "Welt 2" }); // v2 has no base: the rejected v1 row is not carried
+  expect(await fieldWarnings(sql, docId)).toEqual([[1, "DRAFT_AI", { title: [W1] }], [2, "DRAFT_AI", {}]]);
+  const review = await getDraftReview(ctx, { docId, locale: "de" });
+  expect(review.fields.every((f) => f.warnings.length === 0)).toBe(true);
+  expect(await approve(ctx, { docId, locale: "de" })).toEqual({ version: 3 });
 }));
 
 test("the gate holds with no provenance rows", async () => withTestDb(async (sql) => {
