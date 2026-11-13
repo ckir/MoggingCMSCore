@@ -13,7 +13,7 @@ const FUNCTIONS = [
   "createDocument", "deleteDocument", "getDocument", "listDocuments",
   "saveDraft", "publish", "unpublish", "recordAiDraft", "approve", "approveClean",
   "resolve", "resolveReference", "getSyncState", "trackFields",
-  "createRelease", "addToRelease", "publishRelease",
+  "createRelease", "addToRelease", "removeFromRelease", "publishRelease",
   "rejectDraft", "listDraftHeads", "getDraftReview", "listReleases",
   "hashValue", "normalizeValue", "verifyKey", "getLicenceState", "assertLicensed",
 ];

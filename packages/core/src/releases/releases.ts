@@ -6,6 +6,7 @@ import { normalizeLocale } from "../schema/locale.js";
 
 export type CreateReleaseInput = { name: string };
 export type AddToReleaseInput = { releaseId: string; docId: string; locale: string | "shared"; version: number };
+export type RemoveFromReleaseInput = { releaseId: string; docId: string; locale: string | "shared" };
 export type PublishReleaseInput = { releaseId: string; allowStale?: boolean };
 export type StaleReleaseItem = { docId: string; locale: string; fields: string[] };
 /** Machine-readable payload of a StaleReleaseError, attached as `err.items`. */
@@ -101,7 +102,7 @@ export async function addToRelease(ctx: Ctx, input: AddToReleaseInput): Promise<
     }
     const itemLocale = isShared ? null : locale;
     // An item already there at ANOTHER version would make publishRelease refuse later (its version is no longer
-    // the draft head) and nothing removes an item, so say so now; the same version stays the "already in" error.
+    // the draft head) until removeFromRelease takes it out, so say so now; the same version stays the "already in" error.
     const [held] = await tx`select draft_version from release_items
       where release_id = ${releaseId} and doc_id = ${input.docId} and coalesce(locale, '') = ${itemLocale ?? ""}`;
     if (held && held.draft_version !== input.version) {
@@ -113,6 +114,28 @@ export async function addToRelease(ctx: Ctx, input: AddToReleaseInput): Promise<
       values (${releaseId}, ${input.docId}, ${itemLocale}, ${input.version}, ${ctx.actor})
       on conflict do nothing returning 1 as x`;
     if (inserted.length === 0) throw new ValidationError(`${label} is already in release ${releaseId}`);
+  });
+}
+
+/**
+ * Takes the (document, locale) or shared item out of an unpublished release. Locks the release row only: the
+ * documents row stays unlocked, so the item of a soft-deleted document can still be removed. An emptied release
+ * stays. Not licence-guarded; records nothing.
+ */
+export async function removeFromRelease(ctx: Ctx, input: RemoveFromReleaseInput): Promise<void> {
+  const { sql } = ctx;
+  const { isShared, locale } = resolveLocale(ctx, input.locale);
+  const releaseId = releaseIdOf(input.releaseId);
+  if (!UUID.test(input.docId)) throw new NotFoundError(`Document "${input.docId}" not found`);
+
+  await sql.begin(async (tx) => {
+    const [rel] = await tx`select id, published_at from releases where id = ${releaseId} for update`;
+    if (!rel) throw new NotFoundError(`Release "${releaseId}" not found`);
+    if (rel.published_at !== null) throw new ValidationError("release already published");
+    const removed = await tx`delete from release_items
+      where release_id = ${releaseId} and doc_id = ${input.docId} and coalesce(locale, '') = ${isShared ? "" : locale}
+      returning 1 as x`;
+    if (removed.length === 0) throw new NotFoundError(`${input.docId}/${locale} is not in release ${releaseId}`);
   });
 }
 

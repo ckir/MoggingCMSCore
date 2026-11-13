@@ -1,9 +1,9 @@
 import { expect, test } from "vitest";
 import type { Sql } from "postgres";
 import {
-  ConflictError, NotFoundError, NotPublishableError, StaleReleaseError, ValidationError, addToRelease, approve,
-  createDocument, createRelease, deleteDocument, getSyncState, hashValue, listReleases, migrate, publish, publishRelease,
-  recordAiDraft, saveDraft,
+  ConflictError, LicenceError, NotFoundError, NotPublishableError, StaleReleaseError, ValidationError, addToRelease,
+  approve, assertLicensed, createDocument, createRelease, deleteDocument, getSyncState, hashValue, listReleases, migrate,
+  publish, publishRelease, recordAiDraft, removeFromRelease, saveDraft,
 } from "../src/index.js";
 import { ctxFor, extraConnection, insertAiDraftLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
@@ -303,7 +303,7 @@ test("the public API exposes the release and publish functions but not publishWi
   const api = await import("../src/index.js");
   expect("publishWithinTx" in api).toBe(false);
   expect("resolveLocale" in api).toBe(false);
-  for (const name of ["publish", "unpublish", "createRelease", "addToRelease", "publishRelease"] as const) {
+  for (const name of ["publish", "unpublish", "createRelease", "addToRelease", "removeFromRelease", "publishRelease"] as const) {
     expect(typeof api[name]).toBe("function");
   }
 });
@@ -409,6 +409,129 @@ test("publishRelease fails atomically when a document in the release was soft-de
   expect(n).toBe(0);
   const [rel] = await sql`select published_at from releases where id = ${releaseId}`;
   expect(rel!.published_at).toBeNull();
+}));
+
+// ---- removeFromRelease ----
+
+const itemsOf = async (sql: Sql, releaseId: string) =>
+  (await sql`select doc_id, locale, draft_version from release_items where release_id = ${releaseId} order by doc_id, locale nulls first`)
+    .map((r) => [r.doc_id, r.locale, r.draft_version]);
+
+test("removeFromRelease removes an item and the pair can be added again at a newer version", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, deVersion } = await docWithSource(ctx, true);
+  const { id: releaseId } = await createRelease(ctx, { name: "re-add" });
+  await addToRelease(ctx, { releaseId, docId, locale: "de", version: deVersion });
+  const { version: v2 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de 2", body: "B de" } });
+  // The item is no longer the draft head, so the release cannot publish (and addToRelease at v2 conflicts).
+  await expect(publishRelease(ctx, { releaseId })).rejects.toThrow(NotPublishableError);
+  await expect(addToRelease(ctx, { releaseId, docId, locale: "de", version: v2 })).rejects.toThrow(ConflictError);
+  expect(await removeFromRelease(ctx, { releaseId, docId, locale: "de" })).toBeUndefined();
+  expect(await itemsOf(sql, releaseId)).toEqual([]);
+  await addToRelease(ctx, { releaseId, docId, locale: "de", version: v2 });
+  expect(await itemsOf(sql, releaseId)).toEqual([[docId, "de", v2]]);
+  await publishRelease(ctx, { releaseId });
+  const [head] = await sql`select version, state from document_localized where doc_id = ${docId} and locale = 'de' and is_head_published`;
+  expect(head).toMatchObject({ version: v2, state: "PUBLISHED" });
+}));
+
+test("removeFromRelease removes a shared item", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, deVersion } = await docWithSource(ctx, true);
+  const { version: sharedVersion } = await saveDraft(ctx, { docId, locale: "shared", data: {} });
+  const { id: releaseId } = await createRelease(ctx, { name: "shared" });
+  await addToRelease(ctx, { releaseId, docId, locale: "shared", version: sharedVersion });
+  await addToRelease(ctx, { releaseId, docId, locale: "de", version: deVersion });
+  await removeFromRelease(ctx, { releaseId, docId, locale: "shared" });
+  // Only the shared row went; the localized item of the same document stays.
+  expect(await itemsOf(sql, releaseId)).toEqual([[docId, "de", deVersion]]);
+  await expect(removeFromRelease(ctx, { releaseId, docId, locale: "shared" })).rejects.toThrow(/is not in release/);
+}));
+
+test("removeFromRelease of an item that is not in the release throws NotFoundError", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, deVersion } = await docWithSource(ctx, true);
+  const { id: releaseId } = await createRelease(ctx, { name: "absent" });
+  const err = removeFromRelease(ctx, { releaseId, docId, locale: "de" });
+  await expect(err).rejects.toThrow(NotFoundError);
+  await expect(err).rejects.toThrow(/is not in release/);
+  await expect(err).rejects.toThrow(`${docId}/de is not in release ${releaseId}`);
+  // An item of another locale does not match, and neither does the same pair in another release.
+  await addToRelease(ctx, { releaseId, docId, locale: "de", version: deVersion });
+  await expect(removeFromRelease(ctx, { releaseId, docId, locale: "shared" })).rejects.toThrow(/is not in release/);
+  const { id: other } = await createRelease(ctx, { name: "other" });
+  await expect(removeFromRelease(ctx, { releaseId: other, docId, locale: "de" })).rejects.toThrow(/is not in release/);
+  expect(await itemsOf(sql, releaseId)).toEqual([[docId, "de", deVersion]]);
+}));
+
+test("removeFromRelease on a published release throws ValidationError \"release already published\" and leaves the item", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, deVersion } = await docWithSource(ctx, true);
+  const { id: releaseId } = await createRelease(ctx, { name: "published" });
+  await addToRelease(ctx, { releaseId, docId, locale: "de", version: deVersion });
+  await publishRelease(ctx, { releaseId });
+  const err = removeFromRelease(ctx, { releaseId, docId, locale: "de" });
+  await expect(err).rejects.toThrow(ValidationError);
+  await expect(err).rejects.toThrow("release already published");
+  expect(await itemsOf(sql, releaseId)).toEqual([[docId, "de", deVersion]]);
+}));
+
+test("removeFromRelease validates the release id and the document id", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, deVersion } = await docWithSource(ctx, true);
+  const { id: releaseId } = await createRelease(ctx, { name: "validate" });
+  await addToRelease(ctx, { releaseId, docId, locale: "de", version: deVersion });
+  await expect(removeFromRelease(ctx, { releaseId: "999999", docId, locale: "de" })).rejects.toThrow(NotFoundError);
+  await expect(removeFromRelease(ctx, { releaseId: "abc", docId, locale: "de" })).rejects.toThrow(NotFoundError);
+  await expect(removeFromRelease(ctx, { releaseId, docId: "nope", locale: "de" })).rejects.toThrow(NotFoundError);
+  await expect(removeFromRelease(ctx, { releaseId, docId, locale: "fr" })).rejects.toThrow(ValidationError);
+  expect(await itemsOf(sql, releaseId)).toEqual([[docId, "de", deVersion]]);
+}));
+
+test("removeFromRelease works after the document was soft-deleted", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const keep = await docWithSource(ctx, true);
+  const gone = await docWithSource(ctx, true);
+  const { id: releaseId } = await createRelease(ctx, { name: "soft-deleted" });
+  await addToRelease(ctx, { releaseId, docId: keep.docId, locale: "de", version: keep.deVersion });
+  await addToRelease(ctx, { releaseId, docId: gone.docId, locale: "de", version: gone.deVersion });
+  await deleteDocument(ctx, { docId: gone.docId });
+  await expect(publishRelease(ctx, { releaseId })).rejects.toThrow(NotFoundError);
+  await removeFromRelease(ctx, { releaseId, docId: gone.docId, locale: "de" });
+  expect(await itemsOf(sql, releaseId)).toEqual([[keep.docId, "de", keep.deVersion]]);
+  await publishRelease(ctx, { releaseId });
+  const [rel] = await sql`select published_at from releases where id = ${releaseId}`;
+  expect(rel!.published_at).toBeInstanceOf(Date);
+}));
+
+test("a release emptied by removal stays and publishRelease still refuses it", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, deVersion } = await docWithSource(ctx, true);
+  const { id: releaseId } = await createRelease(ctx, { name: "emptied" });
+  await addToRelease(ctx, { releaseId, docId, locale: "de", version: deVersion });
+  await removeFromRelease(ctx, { releaseId, docId, locale: "de" });
+  expect((await listReleases(ctx)).find((r) => r.id === releaseId)).toMatchObject({ name: "emptied", itemCount: 0, publishedAt: null });
+  const err = publishRelease(ctx, { releaseId });
+  await expect(err).rejects.toThrow(ValidationError);
+  await expect(err).rejects.toThrow("release is empty");
+}));
+
+test("removeFromRelease is not licence-guarded", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, deVersion } = await docWithSource(ctx, true);
+  const { id: releaseId } = await createRelease(ctx, { name: "unlicensed" });
+  await addToRelease(ctx, { releaseId, docId, locale: "de", version: deVersion });
+  const DAY = 24 * 60 * 60 * 1000;
+  const savedKey = process.env.MOGGING_LICENSE_KEY; // hermetic against a developer shell that exports a key
+  delete process.env.MOGGING_LICENSE_KEY;
+  try {
+    await sql`update migrations set applied_at = ${new Date(Date.now() - 31 * DAY)}`;
+    await expect(assertLicensed(ctx)).rejects.toThrow(LicenceError);
+    await removeFromRelease(ctx, { releaseId, docId, locale: "de" });
+    expect(await itemsOf(sql, releaseId)).toEqual([]);
+  } finally {
+    if (savedKey !== undefined) process.env.MOGGING_LICENSE_KEY = savedKey;
+  }
 }));
 
 test("publishRelease records the releasing actor as unpublished_by on the heads it supersedes", async () => withTestDb(async (sql) => {

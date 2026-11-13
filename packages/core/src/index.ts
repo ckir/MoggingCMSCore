@@ -38,9 +38,9 @@ export type { DraftHead, DraftReview, ReviewField } from "./read/review.js";
 export { getSyncState, trackFields } from "./sync/state.js";
 export type { SyncStateKind, SyncStateRow, SyncStateInput, TrackFieldsInput } from "./sync/state.js";
 
-export { createRelease, addToRelease, publishRelease, listReleases } from "./releases/releases.js";
+export { createRelease, addToRelease, removeFromRelease, publishRelease, listReleases } from "./releases/releases.js";
 export type {
-  CreateReleaseInput, AddToReleaseInput, PublishReleaseInput, ReleaseSummary, StaleReleaseItem, StaleReleaseErrorWithItems,
+  CreateReleaseInput, AddToReleaseInput, RemoveFromReleaseInput, PublishReleaseInput, ReleaseSummary, StaleReleaseItem, StaleReleaseErrorWithItems,
 } from "./releases/releases.js";
 
 export { verifyKey } from "./licence/key.js";
