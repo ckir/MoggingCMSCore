@@ -81,7 +81,11 @@ The package maps Starlight's layout to Mogging documents: `<docsDir>/<path>.md` 
 configured docs collection with slug `<path>`; `<docsDir>/<localeDir>/<path>.md` is the same document in that locale.
 `<docsDir>` defaults to `src/content/docs`. Both Starlight modes are supported: the default language at the root
 (Starlight `root` locale) and the default language in its own folder. There is no collection segment in the path; a
-Starlight site has one docs collection.
+Starlight site has one docs collection. A locale file uses the same extension (`.md` or `.mdx`) as its source file.
+Files and folders whose name starts with `_` are skipped on import and never written, as Starlight's glob skips them
+(`src/loaders.ts:57`). `index.md` maps to the slug `index`, as it does today. The layout is a setting in
+`mogging.config.ts` (written by the preset), so a plain `mogging import` and `mogging export` with no directory
+argument use `<docsDir>`; an import that finds no source file exits non-zero instead of reporting success.
 
 Locale identity: folders use Starlight's locale keys (`zh-cn`, or no folder for `root`); the database keeps canonical
 BCP 47 tags as `normalizeLocale` produces them (`packages/core/src/schema/locale.ts:4`). The mapping is declared once
@@ -107,52 +111,82 @@ with `--publish` (Claude's call).
 Starlight-mode import ignores shared front-matter keys in a locale file silently when they equal the source page's
 values and warns (today's `contentFile.ts:106` warning) only when they differ, because export writes them (5.4).
 
+A source page whose front matter has `draft: true` is reported as skipped and not imported, so an unfinished page is
+never published into Mogging or queued for AI; it is imported once the flag is removed (Claude's call, panel round 1).
+A locale file whose source page has no live document (for example after a prune) is a warning, not a per-file error.
+
+Pre-existing content is the team's: the promise that no AI text reaches the site without a recorded human approval
+covers text Mogging generates. Day-one files are recorded as human and visibly `untracked`, whatever their origin.
+
 ### 5.4 Export, the manifest and hand edits
 
 - Starlight-mode export never writes, moves or deletes a source-locale (English) file.
-- Export writes a locale file only when the locale's published head has every REQUIRED localized field of the
-  collection (Starlight's `title` and the body); missing optional localized fields are left out of the file
-  (Claude's call, replacing "every field English has", which would have deleted translations whenever English gained
-  an optional field). A page without them gets no file, and Starlight serves the English page with its fallback
-  notice. No English text is ever written into a locale file.
+- Export writes a locale file only when the locale's published head has every REQUIRED localized field that the
+  source page's published head has (Starlight's `title`, and the body when the English page has one: a splash page
+  with an empty body, which import treats as absent at `contentFile.ts:128`, needs no body); missing optional
+  localized fields are left out of the file (Claude's call). A page without them gets no file, and Starlight serves
+  the English page with its fallback notice. No English text Mogging stores as a localized field is ever written into
+  a locale file.
 - Shared (non-localized) front matter of the source page (`template`, `sidebar.order`, `tableOfContents`, opaque
   fields of 5.8, ...) is copied into every locale file, because Starlight reads these per locale entry
   (`src/utils/navigation.ts:300`, `src/utils/routing/data.ts:54,65`) (Claude's call; today `renderFile` writes shared
-  fields only for the source locale).
+  fields only for the source locale). Exception: opaque keys that can carry reader-visible text (`prev`, `next`,
+  `sidebar.badge`) are written to the source file only, so a locale page falls back to Starlight's own generated
+  value instead of showing English (panel round 1).
 - Export writes `.mogging/manifest.json` at the repository root: for every file it wrote or adopted, the path, the
-  slug, the locale, the version exported and the SHA-256 of the bytes on disk. It holds no database ids (agy round 3),
-  so a fresh database or another clone reads it the same way.
-- A locale file not in the manifest whose parsed content equals the published head (a day-one hand translation) is
-  left byte for byte and adopted into the manifest; it is not rewritten into the serializer's canonical form
-  (Claude's call).
-- The locale folders are two-way. A hand edit to a locale file (bytes differ from the manifest) is imported as a
-  human draft like any changed file. Export refuses to overwrite a locale file whose bytes differ from the manifest
-  and whose content has not been imported, names the file, and tells the user to run import first. A pending
-  `DRAFT_AI` or `APPROVED` draft that a hand edit replaces is reported as a warning (today's import behaviour, kept).
-- When the manifest and the database disagree (a revert, a branch switch, a fresh database), export reports each
-  disagreeing file and changes none of them; it never resolves the disagreement on its own.
+  slug, the locale, the version exported (informational only, never compared) and the SHA-256 of the bytes on disk.
+  It holds no database ids (agy round 3), so a fresh database or another clone reads it the same way. Entries are
+  sorted by path, one per line, so a diff is readable. The manifest is replaced atomically (temporary file, then
+  rename) after the files.
+- The overwrite rule (panel round 1, replacing "differs from the manifest and has not been imported", which left
+  "imported" undefined and wedged fresh databases). Export may replace an existing locale file only when (a) its bytes
+  equal the manifest's hash (Mogging wrote it), or (b) its parsed content equals the locale's current published or
+  draft head in the database (its content is already in Mogging, however it is formatted). Otherwise the file holds
+  work Mogging does not have: export leaves it untouched, names it, and tells the operator to run import. The rule is
+  the same for files in and not in the manifest, and comparing parsed content means a CRLF checkout, a BOM or a
+  formatter never makes a file look hand-edited. A file that passes (b) but is not byte-identical to what export
+  would write is left as is and adopted into the manifest with its current hash (so day-one hand translations keep
+  their formatting); a file whose content is behind a newer published head is rewritten.
+- Files are written one by one through a temporary file and a rename, so a crash leaves whole files only; a file
+  written before a crash and missing from the manifest passes rule (b) on the next run.
+- The locale folders are two-way. A hand edit to a locale file is imported as a human draft like any changed file.
+  A pending `DRAFT_AI` or `APPROVED` draft that a hand edit replaces is reported as a warning (today's import
+  behaviour, kept).
 - An exported page that later goes stale keeps its last approved file until a new translation is approved and
   exported; Starlight serves that older translation in the meantime.
 
 ### 5.5 Deletions
 
 - `import --prune` soft-deletes every document of the docs collection whose source-locale file is gone (core
-  `deleteDocument`).
+  `deleteDocument`). Core has no undelete, so a prune is final for that page's translations. Guards (panel round 1):
+  prune refuses when the run found no source file at all (a wrong directory or an empty checkout), and every command
+  that writes, moves or deletes (`import`, `import --prune`, `export`, `rename`) takes `--dry-run`, which prints
+  exactly what it would do and changes nothing.
 - Export removes a locale file only when the manifest lists it, its bytes still match the manifest, and its document
   is deleted or its locale is unpublished. A file never becomes removable only because English changed. A file the
   manifest does not list is never removed.
 
 ### 5.6 Renames
 
-- `mogging rename <old-slug> <new-slug>` keeps the document and every locale's history: it saves and publishes the
-  shared slug through the existing SDK (core refuses a duplicate, section 8), moves the source file unless it is
-  already at the new path (a `git mv` done first is fine, Claude's call), moves the locale files, and updates the
-  manifest.
+- `mogging rename <old-slug> <new-slug>` keeps the document and every locale's history. It validates `<new-slug>`
+  with the existing slug rules (`isSafeSlug`, `packages/markdown/src/slug.ts`, lowercase, no `..`, stays inside
+  `<docsDir>`). It saves and publishes the WHOLE shared head with only the slug changed (a shared save stores the data
+  it is given, `packages/core/src/documents/saveDraft.ts:51`), so no other shared field is lost; core refuses a
+  duplicate (section 8). Then it moves the source file unless it is already at the new path (a `git mv` done first is
+  fine), moves the locale files that exist on disk under the old path, and updates the manifest. Database first, files
+  second; every step is idempotent, so re-running an interrupted rename completes it.
+- After a rename, the command searches `astro.config.*` and the Markdown files under `<docsDir>` for the old slug as
+  text and lists every hit, because Starlight fails the build when a sidebar entry names a slug that no longer exists
+  (`src/utils/navigation.ts:157-160`); it does not edit them. It also reminds the operator that old URLs need a
+  redirect.
 - Import safety stop: when one import run finds, in the docs collection, both documents whose source file is gone and
-  source files with no document, it creates and prunes none of them silently. When the pairing is unambiguous (exactly
-  one gone and one new in the run) it prints the `mogging rename` command; otherwise it lists both sides without
-  guessing a pairing (Claude's call: a wrong guess would move translations onto the wrong page). An explicit
-  confirmation flag treats them as deletions plus new pages. Without `--prune` the deleted side is only reported.
+  source files with no document, it creates none of the new documents and prunes none of the gone ones, with or
+  without `--prune`, and exits non-zero (panel round 1: without this, a plain import would create the new slug and a
+  later `rename` would then be refused as a duplicate). Everything else in the run is imported normally. When the
+  pairing is unambiguous (exactly one gone and one new in the run) it prints the `mogging rename` command; otherwise
+  it lists both sides without guessing a pairing (a wrong guess would move translations onto the wrong page). An
+  explicit confirmation flag treats them as deletions plus new pages. An unrelated deletion plus addition in one run
+  also stops and needs the flag; that is the accepted cost of not guessing.
 - No persistent id is written into the team's files (rejected by both reviewers: undeclared front-matter keys are an
   error today, and a copied page would duplicate its id).
 
@@ -176,6 +210,17 @@ translated. Measured scope: the kind is switched on in about 13 source files (10
 change; agy's "about 25 lines" estimate is unverified. If the plan finds it larger than a TODO-class fix, the
 escalation rule of section 3 applies.
 
+Mixed objects (panel round 1). Core's localization is per top-level field (a localized field cannot be saved under
+`shared`, `saveDraft.ts:43-47`), so one `sidebar` object cannot be half shared and half localized. Starlight mode
+therefore maps each front-matter PATH to its own top-level field: the preset declares, for example, `sidebarOrder`
+(shared, path `sidebar.order`) and `sidebarLabel` (localized, path `sidebar.label`); import splits the YAML object
+into those fields and export reassembles it. This is a `@mogging/markdown` layout feature, not a core change. The
+passthrough field holds only keys and paths the preset does not map; on export a mapped field wins over a passthrough
+key of the same path, with a warning. The adopter's extended keys are copied verbatim into every locale file; an
+extended key that carries reader-visible text must be declared in `mogging.config.ts` as a localized field to be
+translated (documented). Opaque values keep YAML types through a round trip, including dates (`lastUpdated`) and
+null inside an opaque value; the plan pins this with round-trip tests.
+
 ## 6. The package `@mogging/starlight`
 
 - A preset for `mogging.config.ts`: a docs collection declaring the Starlight front-matter keys of section 3 with
@@ -183,9 +228,16 @@ escalation rule of section 3 applies.
   front-matter keys (Starlight `docsSchema({ extend })`) as additional fields.
 - `mogging init --starlight`: reads the adopter's Astro config for the Starlight `locales`, `defaultLocale` and docs
   path, and writes `mogging.config.ts` with the preset. Like `init` today, it never overwrites an existing config
-  (`packages/cli/src/commands/init.ts:39-53`).
+  (`packages/cli/src/commands/init.ts:39-53`), and it says so instead of silently ignoring `--starlight`. A
+  single-language site has no `locales` to read: `init --starlight` then needs the target locales on the command line
+  and prints the matching Starlight `locales` block to paste into `astro.config`. Adding a language later means
+  changing both configs (documented); import already skips, with a warning, a locale folder not declared in
+  `mogging.config.ts` (`packages/markdown/src/import.ts:144`).
 - A default export that is a no-op Astro integration, so `npx astro add @mogging/starlight` leaves a working Astro
-  config. It must not read the database, the network or the licence, and must print nothing during a build.
+  config. It must not read the database, the network or the licence, and must print nothing during a build. Because
+  `astro.config` then imports the package, its root entry point must import nothing from `@mogging/core` or the
+  database driver; the preset lives in a separate subpath export used only by `mogging.config.ts`. The README says to
+  install the package where the site's CI installs dependencies.
 - The import and export path mapping, the manifest, the complete-page rule and pruning live in `@mogging/markdown`
   as options of `importFolder` and `exportFolder`, so the CLI and the SDK share one implementation; the Starlight
   package supplies the configuration. The CLI gains the layout selection, `--prune`, the rename confirmation flag and
@@ -199,7 +251,18 @@ escalation rule of section 3 applies.
 preset already configured, a `compose.yaml` that runs a local Postgres, an `.env.example` for a hosted Postgres, and
 a README that puts the licence first and then walks the success flow of section 1. This repository's CI runs the
 template's acceptance flow (import, a mocked compile, approve, export, `astro build`) against the packages at HEAD,
-which is the freeze trigger of ship-sequencing step 3.
+which is the freeze trigger of ship-sequencing step 3. A second fixture, an "existing adopter" Starlight repository
+with hand-made translations, a splash page, a mixed `sidebar` object, an extended front-matter key and one file with
+CRLF line endings, runs `init --starlight`, the day-one import, a rename and an export, and asserts no hand file is
+changed. `npx astro add` needs the network and is checked by hand before release, not in CI.
+
+### 7.1 Known limits of v0.1 (documented in the package README)
+
+- Links inside translated pages and hero action links point where the English points; Starlight does not localize
+  links itself. Authors use relative links where they want the locale kept.
+- A built page does not show whether its text was AI-drafted, human-written or untracked, and a stale translation is
+  served without a notice until a new one is exported; `mogging status` is the place to see both.
+- Prune is final for a page's translations (no undelete in core).
 
 ## 8. Slug uniqueness (owner, 2026-11-13: option b; agy and Claude agreed)
 
@@ -232,3 +295,34 @@ content; how the template's dependencies sit relative to the pnpm workspace; the
   (`.clavity/seams/starlight-builder-first.md`, [VERDICT: ALIGNED]).
 - agy round 3 corrections folded: day-one locale files are published on import (5.3); the manifest holds no database
   ids (5.4).
+- Panel round 1 (2026-11-13; Sonnet solo seats Axiom Breaker, Cascade Analyst, Literal Implementer, Protocol Pedant,
+  Mechanism Gamer, Blindspot Auditor, Activation Auditor: 29 findings; agy seats Axiom Breaker, Cascade Analyst, State
+  Corruptor, Boundary Smuggler, Dependency Cynic: 7 findings; seats dropped: Resource Vampire, no unbounded loop or
+  external call in this design). Dispositions:
+  - FOLDED, export overwrite rule and manifest (AX1, AX2, CA2, CA3, PP3, F-02, F-04): bytes-or-content rule, version
+    informational, atomic writes (5.4).
+  - FOLDED, completeness (CA5): required fields the English page has; splash pages export (5.4).
+  - FOLDED, reader text in opaque keys (F-06, AX4): `prev`/`next`/`sidebar.badge` source-only; extended keys copied,
+    declare to translate (5.4, 5.8).
+  - FOLDED, mixed objects (F-01): path-mapped top-level fields in the layout (5.8).
+  - FOLDED, prune and footguns (CA1, BA2): no-source-file guard, `--dry-run` everywhere (5.5).
+  - FOLDED, rename (CA4, F-05, BA1, F-03, LI3, MG2): whole shared head, slug validation, idempotent order, search for
+    the old slug, safety stop with or without `--prune` (5.6).
+  - FOLDED, layout details (LI2, LI5): extension, `_` files, `index`, layout in config, empty import fails (5.2).
+  - FOLDED, `draft: true` and orphan locale files (agy answer 2, CA6) (5.3); day-one provenance stance (MG1) (5.3).
+  - FOLDED, opaque collisions and YAML types (F-07, PP1) (5.8).
+  - FOLDED, init and the integration entry point (AC1, AC2) (6); acceptance fixtures (AC3) (7).
+  - FOLDED as documented limits (LI1, BA3, BA4, MG3) (7.1).
+  - FOLDED, manifest shape (LI4): root path, sorted one entry per line; cross-PR conflicts are outside the supported
+    setup (5.7).
+  - FOLDED, exit codes (PP2): see 5.4 and 5.6; the plan maps them onto the CLI's existing codes (0 ok, 1 error,
+    2 usage, 3 licence, 4 partial: a run that skipped refused files is partial).
+  - REJECTED (LI6, "a hand file next to a DRAFT_AI is marked current without review"): a human save is recorded as in
+    sync by design (spec 6.4, `saveDraft.ts:90-107`), the text is human-written, and import already reports the
+    replaced AI draft (`import.ts:365`).
+  - FOLDED (AX3, "day-one pages never go stale"): untracked fields are listed by `status`; `mogging track` makes them
+    current, after which English edits flag them. The plan checks whether `track` needs a whole-collection form.
+
+## Stand-downs
+
+None in round 1: no finding was discarded below the floor.
