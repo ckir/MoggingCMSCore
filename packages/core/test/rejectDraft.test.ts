@@ -180,6 +180,22 @@ test("saveDraft after a reject does not inherit the rejected draft's source hash
   expect(h!.source_hashes).toEqual({ title: hashValue("Hello2"), body: hashes.body });
 }));
 
+// The APPROVED predecessor is a legitimate base even when it is not a head: approve, an AI draft supersedes it, the
+// reviewer rejects that draft. A human save then keeps the approved row's hash for the field it left unchanged,
+// instead of stamping it in sync with a source that moved on.
+test("saveDraft after approve, a superseding AI draft and its reject still carries the approved row's hash forward", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes, draft } = await setup(sql);
+  await approve(ctx, { docId, locale: "de" }); // v2 APPROVED, source hashes of the Hello/World source
+  await draft({ title: "AI" }); // v3 supersedes v2
+  await rejectDraft(ctx, { docId, locale: "de" }); // rejects v3: no draft head, base is the APPROVED v2
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello2", body: "World" } });
+  await publish(ctx, { docId, locale: "en" });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt 2" } });
+  const [h] = await sql`select source_hashes from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
+  // title is unchanged against the approved base (its old hash is carried, not hashValue("Hello2")); body changed.
+  expect(h!.source_hashes).toEqual({ title: hashes.title, body: hashValue("World") });
+}));
+
 test("rejectDraft refuses a reason containing U+0000 with a ValidationError and changes nothing", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
   const e = await rejectDraft(ctx, { docId, locale: "de", reason: "bad\u0000tone" }).catch((x: unknown) => x);
