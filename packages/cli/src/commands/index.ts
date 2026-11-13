@@ -7,8 +7,12 @@ import { initSpec } from "./init.js";
 import { jobsSpec } from "./jobs.js";
 import { migrateSpec } from "./migrate.js";
 import { provenanceSpec } from "./provenance.js";
+import { publishSpec } from "./publish.js";
+import { querySpec } from "./query.js";
+import { releaseSpec } from "./release.js";
 import { statusSpec } from "./status.js";
 import { trackSpec } from "./track.js";
+import { unpublishSpec } from "./unpublish.js";
 import { versionCommand } from "./version.js";
 import { workerSpec } from "./worker.js";
 
@@ -16,4 +20,5 @@ import { workerSpec } from "./worker.js";
 export const commands: CommandSpec[] = [
   helpCommand, versionCommand, initSpec, migrateSpec, importSpec, exportSpec, statusSpec, trackSpec,
   compileSpec, workerSpec, jobsSpec, provenanceSpec,
+  publishSpec, unpublishSpec, releaseSpec, querySpec,
 ];

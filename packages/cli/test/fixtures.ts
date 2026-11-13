@@ -7,7 +7,10 @@ import type { Sql } from "postgres";
 import type { LanguageModel } from "ai";
 import { defineAiConfig } from "@mogging/ai";
 import type { AiConfigInput, AiCtx } from "@mogging/ai";
-import { defineCollection, defineConfig, richText, slug, text } from "@mogging/core";
+import {
+  createDocument, defineCollection, defineConfig, hashValue, publish, recordAiDraft, richText, saveDraft, slug, text,
+} from "@mogging/core";
+import type { Ctx } from "@mogging/core";
 import type { Deps, Io } from "../src/types.js";
 
 export const docs = defineCollection("docs", {
@@ -52,6 +55,34 @@ export function connectionOver(sql: Sql, end: () => Promise<void> = async () => 
   return new Proxy(sql, {
     get: (target, prop, receiver) => (prop === "end" ? end : Reflect.get(target, prop, receiver)),
   });
+}
+
+export const DAY = 86_400_000;
+
+/** Copy of the helper in packages/core/test/licence.test.ts: moves the evaluation window's start. */
+export const setFirstMigration = (sql: Sql, at: Date) => sql`update migrations set applied_at = ${at}`;
+
+/** A core `Ctx` over `sql` for the fixture config, for seeding documents from a test. */
+export const coreCtx = (sql: Sql): Ctx => ({ sql, config: structuredClone(config), actor: "test" });
+
+/** A `docs/<slug>` document whose shared and `en` heads are published (en v1: title "Intro", body "Hello"). */
+export async function publishedDoc(sql: Sql, slugText = "intro"): Promise<string> {
+  const ctx = coreCtx(sql);
+  const { id: docId } = await createDocument(ctx, { collection: "docs" });
+  await saveDraft(ctx, { docId, locale: "shared", data: { slug: slugText } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Intro", body: "Hello" } });
+  await publish(ctx, { docId, locale: "shared" });
+  await publish(ctx, { docId, locale: "en" });
+  return docId;
+}
+
+/** A `DRAFT_AI` head for `locale` translating the title of a `publishedDoc`; returns its version. */
+export async function aiDraft(sql: Sql, docId: string, locale: string, title: string): Promise<number> {
+  const result = await recordAiDraft(coreCtx(sql), {
+    docId, locale, fields: { title }, sourceVersion: 1, sourceHashes: { title: hashValue("Intro") }, provenance: [],
+  });
+  if (!("version" in result)) throw new Error(`setup: the AI draft was cancelled (${result.cancelled})`);
+  return result.version;
 }
 
 export type TestDeps = Deps & {
