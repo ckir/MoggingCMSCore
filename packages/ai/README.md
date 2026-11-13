@@ -179,9 +179,9 @@ take `GlossaryEntry` values (`sourceLocale`, `targetLocale`, `term`, `translatio
 
 `runWorker(ctx, { once, runBudgetMicros?, pollMs?, filter?, workerId?, log?, signal? })` claims and processes jobs one
 at a time. With `once: true` it returns when nothing runnable is left; otherwise it polls every `pollMs` (2000 by
-default) until `signal` aborts. `filter` limits it by collection, document ids and locales. The report counts
-`completed`, `failed`, `cancelled`, `discarded`, `requeued`, `errors`, `budgetRefusals`, `runBudgetStop` and
-`spentMicros`.
+default; an integer from 1 to 2147483647 milliseconds) until `signal` aborts. `filter` limits it by collection,
+document ids and locales. The report counts `completed`, `failed`, `cancelled`, `discarded`, `requeued`, `errors`,
+`budgetRefusals`, `runBudgetStop` and `spentMicros`.
 
 `compile(ctx, { locales, budgetUsd, collection?, docIds?, log? })` is `enqueueStale` followed by one `runWorker` pass
 over the same scope with `budgetUsd` as the run budget. `budgetUsd` must be above zero. `pendingJobs` is the number of

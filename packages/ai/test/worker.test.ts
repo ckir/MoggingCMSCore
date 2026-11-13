@@ -114,6 +114,15 @@ test("a valid translation is recorded as DRAFT_AI with provenance per field and 
   ]);
 }));
 
+test("runWorker rejects an unusable pollMs with a ValidationError", async () => withTestDb(async (sql) => {
+  await migrateAndSeed(sql);               // returns the seeded docId (a string), not a ctx
+  const ctx = ctxFor(sql, mockModel([identity]));   // as the test at line 81 builds its ctx
+  for (const pollMs of [0, -1, 1.5, NaN, Infinity, 2147483648]) {
+    await expect(runWorker(ctx, { once: true, pollMs })).rejects.toBeInstanceOf(ValidationError);
+  }
+  await expect(runWorker(ctx, { once: true, pollMs: 1 })).resolves.toMatchObject({ completed: 0 });
+}));
+
 test("a rejected draft is retried with strict, then FAILED, and both calls are discarded rows", async () => withTestDb(async (sql) => {
   const docId = await migrateAndSeed(sql);
   const model = mockModel([{ nope: 1 }, { nope: 1 }]);

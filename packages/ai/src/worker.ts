@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { LicenceError, NotFoundError, assertLicensed, getDocument, normalizeLocale } from "@mogging/core";
+import { LicenceError, NotFoundError, ValidationError, assertLicensed, getDocument, normalizeLocale } from "@mogging/core";
 import type { AiCtx } from "./config.js";
 import {
   claim, complete, fallbackFailure, reap, release, renewLease, type ClaimFilter, type Completion, type CompleteResult,
@@ -17,6 +17,7 @@ export type WorkerReport = { completed: number; failed: number; cancelled: numbe
   errors: number; budgetRefusals: number; runBudgetStop: boolean; spentMicros: number };
 
 const DEFAULT_POLL_MS = 2000;
+const MAX_TIMEOUT_MS = 2147483647; // setTimeout takes a signed 32-bit delay; a larger one fires after 1 ms
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -68,6 +69,10 @@ async function overRunBudget(ctx: AiCtx, filter: ClaimFilter, maxEstimateMicros:
  * the first claim, so a missing key or an unknown model fails the run with nothing claimed.
  */
 export async function runWorker(ctx: AiCtx, options: WorkerOptions): Promise<WorkerReport> {
+  const { pollMs: requestedPollMs } = options;
+  if (requestedPollMs !== undefined && !(Number.isSafeInteger(requestedPollMs) && requestedPollMs >= 1 && requestedPollMs <= MAX_TIMEOUT_MS)) {
+    throw new ValidationError(`pollMs must be an integer from 1 to ${MAX_TIMEOUT_MS}, got ${requestedPollMs}`);
+  }
   await assertLicensed(ctx);
   const report: WorkerReport = {
     completed: 0, failed: 0, cancelled: 0, discarded: 0, requeued: 0, errors: 0, budgetRefusals: 0, runBudgetStop: false,
