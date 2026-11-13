@@ -72,7 +72,10 @@ describe("restoreDraft", () => {
 
   test("SENTINEL_DUPLICATED", () => {
     const p = prep();
-    const draft = p.markdown.replace(/\n/, " ⟦MOGGING:0⟧\n");
+    // Insert a second copy of sentinel 0 before the first line break (an index splice, not a one-shot replace).
+    const at = p.markdown.indexOf("\n");
+    expect(at).toBeGreaterThan(-1);
+    const draft = `${p.markdown.slice(0, at)} ⟦MOGGING:0⟧${p.markdown.slice(at)}`;
     expect(codesOf(restoreDraft(p, draft))).toEqual(["SENTINEL_DUPLICATED"]);
   });
 
