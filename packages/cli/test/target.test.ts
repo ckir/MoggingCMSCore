@@ -79,6 +79,23 @@ describe("resolveTarget", () => {
     });
   });
 
+  test("allowDeleted: true resolves a soft-deleted document by slug and by id; the default still refuses it", async () => {
+    await withTestDb(async (sql) => {
+      const ctx = await setup(sql);
+      const id = await docWithSlug(ctx, "gone");
+      await deleteDocument(ctx, { docId: id });
+      for (const rest of ["gone", id]) {
+        expect(await resolveTarget(ctx, `docs/${rest}`, { allowDeleted: true })).toEqual({
+          collection: "docs", docId: id, slug: "gone",
+        });
+        const err = await resolveTarget(ctx, `docs/${rest}`, { allowDeleted: false }).catch((e: unknown) => e);
+        expect([rest, (err as Error).name]).toEqual([rest, "NotFoundError"]);
+      }
+      const missing = await resolveTarget(ctx, "docs/missing", { allowDeleted: true }).catch((e: unknown) => e);
+      expect((missing as Error).message).toBe('Document "docs/missing" not found');
+    });
+  });
+
   test("an unknown slug or an unknown id is a NotFoundError naming the target", async () => {
     await withTestDb(async (sql) => {
       const ctx = await setup(sql);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { approve, migrate, publish, saveDraft } from "@mogging/core";
+import { approve, deleteDocument, migrate, publish, saveDraft } from "@mogging/core";
 import type { Sql } from "postgres";
 import { run } from "../src/run.js";
 import { withTestDb } from "./db.js";
@@ -332,6 +332,161 @@ describe("mogging release add <targets>", () => {
   });
 });
 
+describe("mogging release remove", () => {
+  test("release remove takes an item out", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      await humanDraft(sql, docId, "de");
+      await cli(sql, "release", "create", "r1");
+      await cli(sql, "release", "add", "r1", "docs/intro", "--locale", "de");
+      expect(await items(sql)).toHaveLength(1);
+
+      const r = await cli(sql, "release", "remove", "r1", "docs/intro", "--locale", "de");
+      expect(r).toMatchObject({ code: 0, out: "removed docs/intro de\n" });
+      expect(await items(sql)).toEqual([]);
+
+      await cli(sql, "release", "add", "r1", "docs/intro", "--locale", "de");
+      const json = await cli(sql, "release", "remove", "r1", "docs/intro", "--locale", "de", "--json");
+      expect(json.code).toBe(0);
+      expect(JSON.parse(json.out)).toMatchObject({
+        ok: true,
+        partial: false,
+        data: { items: [{ target: "docs/intro", locale: "de", outcome: "removed" }] },
+      });
+      expect(await items(sql)).toEqual([]);
+    });
+  });
+
+  test("release remove repairs a release whose draft moved on", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      await humanDraft(sql, docId, "de");
+      await cli(sql, "release", "create", "r1");
+      await cli(sql, "release", "add", "r1", "docs/intro", "--locale", "de");
+      await humanDraft(sql, docId, "de"); // the head moved on past the version the release holds
+      expect((await cli(sql, "release", "publish", "r1")).code).toBe(1);
+
+      expect((await cli(sql, "release", "remove", "r1", "docs/intro", "--locale", "de")).code).toBe(0);
+      expect((await cli(sql, "release", "add", "r1", "docs/intro", "--locale", "de")).code).toBe(0);
+      expect(await cli(sql, "release", "publish", "r1")).toMatchObject({ code: 0, out: "published release r1\n" });
+    });
+  });
+
+  test("release remove without --locale removes every item of the document", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      const other = await publishedDoc(sql, "other");
+      await humanDraft(sql, docId, "de");
+      await approved(sql, docId, "fr");
+      const otherDe = await humanDraft(sql, other, "de");
+      await cli(sql, "release", "create", "r1");
+      await cli(sql, "release", "add", "r1", "docs/intro", "docs/other");
+      expect(await items(sql)).toHaveLength(3);
+
+      const r = await cli(sql, "release", "remove", "r1", "docs/intro");
+      expect(r.code).toBe(0);
+      // scopes without an item (shared, en) print nothing
+      expect(r.out).toBe("removed docs/intro de\nremoved docs/intro fr\n");
+      expect(await items(sql)).toEqual([{ doc_id: other, locale: "de", draft_version: otherDe }]);
+    });
+  });
+
+  test("release remove of an absent item reports not in release and exits 0", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      await humanDraft(sql, docId, "de");
+      await cli(sql, "release", "create", "r1");
+
+      const withLocale = await cli(sql, "release", "remove", "r1", "docs/intro", "--locale", "de");
+      expect(withLocale).toMatchObject({ code: 0, out: "not in release docs/intro de\n" });
+
+      const without = await cli(sql, "release", "remove", "r1", "docs/intro");
+      expect(without).toMatchObject({ code: 0, out: "not in release docs/intro -\n" });
+      const json = await cli(sql, "release", "remove", "r1", "docs/intro", "--json");
+      expect(JSON.parse(json.out)).toMatchObject({
+        ok: true,
+        partial: false,
+        data: { items: [{ target: "docs/intro", locale: "-", outcome: "not in release" }] },
+      });
+    });
+  });
+
+  test("release remove on a published release exits 1 with one refused line per target", async () => {
+    await withDb(async (sql) => {
+      const a = await publishedDoc(sql, "a");
+      const b = await publishedDoc(sql, "b");
+      await humanDraft(sql, a, "de");
+      await humanDraft(sql, a, "fr");
+      await humanDraft(sql, b, "de");
+      await cli(sql, "release", "create", "r1");
+      await cli(sql, "release", "add", "r1", "docs/a", "docs/b");
+      expect((await cli(sql, "release", "publish", "r1")).code).toBe(0);
+
+      const r = await cli(sql, "release", "remove", "r1", "docs/a", "docs/b");
+      expect(r.code).toBe(1);
+      expect(r.out).toBe("refused: release already published\nrefused: release already published\n");
+      expect(r.err).toContain("release already published");
+      expect(await items(sql)).toHaveLength(3);
+
+      const json = await cli(sql, "release", "remove", "r1", "docs/a", "--locale", "de", "--json");
+      expect(json.code).toBe(1);
+      expect(JSON.parse(json.out)).toMatchObject({
+        ok: false,
+        data: { items: [{ target: "docs/a", locale: "de", outcome: "refused", message: "release already published" }] },
+        error: { code: "ReleaseRemoveFailed" },
+      });
+    });
+  });
+
+  test("release remove: an unknown release or an unknown target exits 1 like release add", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      await humanDraft(sql, docId, "de");
+      const noRelease = await cli(sql, "release", "remove", "nope", "docs/intro");
+      expect(noRelease.code).toBe(1);
+      expect(noRelease.err).toContain('Release "nope" not found');
+
+      await cli(sql, "release", "create", "r1");
+      await cli(sql, "release", "add", "r1", "docs/intro");
+      const r = await cli(sql, "release", "remove", "r1", "docs/intro", "docs/nope");
+      expect(r.code).toBe(1);
+      expect(r.err).toContain("not found");
+      expect(r.out).toBe("");
+      expect(await items(sql)).toHaveLength(1); // nothing half done: the known target was not removed either
+
+      const locale = await cli(sql, "release", "remove", "r1", "docs/intro", "--locale", "xx");
+      expect(locale.code).toBe(1);
+      expect(locale.err).toContain('Locale "xx" is not declared in the config');
+    });
+  });
+
+  test("release remove names a soft-deleted document's item", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      await humanDraft(sql, docId, "de");
+      await cli(sql, "release", "create", "r1");
+      await cli(sql, "release", "add", "r1", "docs/intro", "--locale", "de");
+      await deleteDocument(coreCtx(sql), { docId });
+      expect(await items(sql)).toHaveLength(1);
+
+      const r = await cli(sql, "release", "remove", "r1", "docs/intro", "--locale", "de");
+      expect(r).toMatchObject({ code: 0, out: "removed docs/intro de\n" });
+      expect(await items(sql)).toEqual([]);
+    });
+  });
+
+  test("is not licence-guarded", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      await humanDraft(sql, docId, "de");
+      await cli(sql, "release", "create", "r1");
+      await cli(sql, "release", "add", "r1", "docs/intro");
+      await setFirstMigration(sql, new Date(Date.now() - 31 * DAY));
+      expect((await cli(sql, "release", "remove", "r1", "docs/intro")).code).toBe(0);
+    });
+  });
+});
+
 describe("mogging release: usage", () => {
   const cases: Array<[string, string[], string]> = [
     ["no verb", ["release"], "missing argument"],
@@ -347,6 +502,11 @@ describe("mogging release: usage", () => {
     ["publish with two names", ["release", "publish", "a", "b"], "release publish"],
     ["--locale on create", ["release", "create", "r1", "--locale", "de"], "--locale"],
     ["--allow-stale on add", ["release", "add", "r1", "docs/intro", "--allow-stale"], "--allow-stale"],
+    ["remove without a release name", ["release", "remove"], "release remove"],
+    ["remove without a target", ["release", "remove", "r1"], "release remove"],
+    ["remove with --all-approved", ["release", "remove", "r1", "docs/intro", "--all-approved"], "--all-approved"],
+    ["remove with --allow-stale", ["release", "remove", "r1", "docs/intro", "--allow-stale"], "--allow-stale"],
+    ["remove with --collection", ["release", "remove", "r1", "docs/intro", "--collection", "docs"], "--collection"],
     ["--all-approved on publish", ["release", "publish", "r1", "--all-approved"], "--all-approved"],
   ];
   for (const [name, args, mention] of cases) {

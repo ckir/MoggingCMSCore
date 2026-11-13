@@ -54,6 +54,7 @@ mogging release create <name>
 mogging release list
 mogging release add <name> <collection>/<slug> ... [--locale <l>]
 mogging release add <name> --all-approved [--locale <l>] [--collection <c>]
+mogging release remove <name> <collection>/<slug> ... [--locale <l>]
 mogging release publish <name> [--allow-stale]
 mogging query <collection>[/<slug>] [--locale <l>] [--raw] [--limit <n>]
 mogging help [command]
@@ -144,7 +145,7 @@ errors (`error: <message>`) go to stderr. Every write to either stream has datab
 | `4` | Partial failure: a command that attempts several items and at least one succeeded (or was already in the wanted state) and at least one failed or was refused. |
 
 One rule decides `1` versus `4`. Commands that attempt several items (`import` files, `publish` heads, `release add`
-items, `compile` and `worker` jobs, `jobs --retry` ids, interactive review) count `failed` and `done`: `failed = 0`
+and `release remove` items, `compile` and `worker` jobs, `jobs --retry` ids, interactive review) count `failed` and `done`: `failed = 0`
 gives `0`, `done = 0` with `failed > 0` gives `1`, both greater than zero gives `4`. An item that is already in the
 wanted state (`unchanged`, `already in release`) is done. Skips by `review --approve-clean` are not failures. For
 `compile` and `worker`, a requeued job (provider error) or a discarded one (lease lost, or cancelled while running)
@@ -170,7 +171,7 @@ With `--json` stdout is exactly one JSON document, with these members:
 importer's or exporter's report; `status` `{ rows }`; `compile` `{ enqueue, worker, pendingJobs }`; `worker` the final
 worker report; `jobs` `{ jobs, budgets }` (with `--retry` or `--cancel`, the result of that call); `provenance` the row
 array; `review list` `{ items, next: null }`; `review show` the draft review; `review approve` and `review reject`
-`{ version }`; `review --approve-clean` `{ approved, skipped }`; `publish`, `unpublish` and `release add`
+`{ version }`; `review --approve-clean` `{ approved, skipped }`; `publish`, `unpublish`, `release add` and `release remove`
 `{ items: [{ target, locale, outcome, version?, message? }] }`; `release create` `{ id }`, the new release's id; `release list` the
 array of releases; `release publish` and `publish --release` `null`, except a stale release, which is exit `1` with
 `data: { stale: [...] }`; `track` `null`; `query` the resolved document `{ id, data, fellBack, missing }`, or an array of
@@ -245,8 +246,8 @@ works without a build step.
 - **An edit is recorded as in sync with the source at approval time** (spec 6.4). If the English source is changed and
   published while a reviewer is in `$EDITOR` or preparing an `--edit-file`, that is not detected: the AI draft is not
   replaced and `--version` still matches.
-- **No `release remove`.** `release add` of a pair that is already in the release at another version is refused, and
-  v0.1 has no way to take an item out; a release holding an item whose draft has moved on cannot be published.
+- **`release remove` works by (document, locale).** It needs an unpublished release and records nothing; to repair a
+  release whose draft has moved on, `release remove` the item, then `release add` it again.
 - **`publish <target>` without `--locale` publishes every `DRAFT_HUMAN` and `APPROVED` head** of the document, the shared
   snapshot included, and refuses `DRAFT_AI` heads. It is not atomic across heads: each is reported, and the exit code is
   `4` or `1` by the rule above.

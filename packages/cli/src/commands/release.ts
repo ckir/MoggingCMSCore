@@ -1,4 +1,6 @@
-import { addToRelease, createRelease, getDocument, listDraftHeads, listReleases, NotFoundError } from "@mogging/core";
+import {
+  addToRelease, createRelease, getDocument, listDraftHeads, listReleases, NotFoundError, removeFromRelease,
+} from "@mogging/core";
 import type { Ctx, DraftHead } from "@mogging/core";
 import { table } from "../output.js";
 import { resolveTarget } from "../target.js";
@@ -10,7 +12,7 @@ import {
 } from "./publish.js";
 import type { Item } from "./publish.js";
 
-const VERBS = ["create", "list", "add", "publish"] as const;
+const VERBS = ["create", "list", "add", "remove", "publish"] as const;
 type Verb = (typeof VERBS)[number];
 
 /** The options each verb takes; one given to another verb is a usage error, never silently ignored. */
@@ -18,6 +20,7 @@ const OPTIONS_OF: Record<Verb, string[]> = {
   create: [],
   list: [],
   add: ["locale", "all-approved", "collection"],
+  remove: ["locale"],
   publish: ["allow-stale"],
 };
 const VERB_OPTIONS = ["locale", "all-approved", "collection", "allow-stale"];
@@ -96,13 +99,51 @@ async function add(ctx: Ctx, name: string, targets: string[], flags: Flags): Pro
   return itemsResult(items, "ReleaseAddFailed", ["nothing to add"]);
 }
 
+async function remove(ctx: Ctx, name: string, targets: string[], flags: Flags): Promise<CommandResult> {
+  const releaseId = await releaseIdOf(ctx, name);
+  const only = typeof flags.locale === "string" ? scopeLocale(ctx, flags.locale) : undefined;
+
+  // Every target is looked up before anything is removed, so an unknown one fails the run with nothing half done.
+  // A soft-deleted document stays nameable: its item may still be in the release.
+  const resolved: Array<{ docId: string; target: string }> = [];
+  for (const text of targets) {
+    const found = await resolveTarget(ctx, text, { allowDeleted: true });
+    resolved.push({ docId: found.docId, target: labelOf(found) });
+  }
+
+  const { source, chains } = ctx.config.locales;
+  const scopes = only === undefined ? [...new Set(["shared", source, ...Object.keys(chains)])] : [only];
+  const items: Item[] = [];
+  for (const { docId, target } of resolved) {
+    const before = items.length;
+    for (const locale of scopes) {
+      try {
+        await removeFromRelease(ctx, { releaseId, docId, locale });
+        items.push({ target, locale, outcome: "removed" });
+      } catch (err) {
+        if (!isRefusal(err)) throw err;
+        if (err.name === "NotFoundError" && /is not in release/.test(err.message)) {
+          // not a failure; without --locale a scope with no item is silent
+          if (only !== undefined) items.push({ target, locale, outcome: "not in release" });
+          continue;
+        }
+        items.push(refusal(target, locale, err.message));
+        break; // the refusal (a published release) holds for every remaining scope of this target
+      }
+    }
+    if (items.length === before) items.push({ target, locale: "-", outcome: "not in release" });
+  }
+  return itemsResult(items, "ReleaseRemoveFailed", ["nothing to remove"]);
+}
+
 export const releaseSpec: CommandSpec = {
   name: "release",
-  summary: "create, list, fill and publish releases",
+  summary: "create, list, fill, trim and publish releases",
   usage: [
     "mogging release create <name> [--json]",
     "       mogging release list [--json]",
     "       mogging release add <name> [<collection>/<slug> ...] [--locale <l>] [--all-approved] [--collection <c>] [--json]",
+    "       mogging release remove <name> <collection>/<slug> ... [--locale <l>] [--json]",
     "       mogging release publish <name> [--allow-stale] [--json]",
     "       (every form also takes [--config <path>] [--database-url <url>])",
   ].join("\n"),
@@ -128,6 +169,9 @@ export const releaseSpec: CommandSpec = {
     if (v === "create" && rest.length !== 1) throw new UsageError("release create: expected exactly one <name>");
     if (v === "publish" && rest.length !== 1) throw new UsageError("release publish: expected exactly one <name>");
     if (v === "list" && rest.length !== 0) throw new UsageError("release list: takes no arguments");
+    if (v === "remove" && rest.length < 2) {
+      throw new UsageError("release remove: expected <name> and at least one <collection>/<slug> target");
+    }
     if (v === "add") {
       if (rest.length === 0) throw new UsageError("release add: expected <name> and targets or --all-approved");
       if (flags["all-approved"] === true && rest.length > 1) {
@@ -159,6 +203,8 @@ export const releaseSpec: CommandSpec = {
       }
       case "add":
         return add(ctx, name, targets, env.flags);
+      case "remove":
+        return remove(ctx, name, targets, env.flags);
       case "publish":
         return publishNamedRelease(ctx, name, env.flags["allow-stale"] === true);
     }
