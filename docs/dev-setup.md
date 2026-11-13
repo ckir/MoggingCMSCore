@@ -32,6 +32,27 @@ Put the file filter directly after `test`: `pnpm --filter @mogging/ai test claim
 Do not write `pnpm --filter @mogging/ai test -- claim`: the `--` is passed to vitest literally, the filter is lost,
 and the whole package suite runs (measured 2026-11-13: 17 files, 278 tests instead of 1 file, 32 tests).
 
+## Build and pack smoke
+
+`pnpm build` compiles each package with plain `tsc` into `packages/*/dist` (`.js` and `.d.ts`; `dist` is git-ignored).
+In the repository every package keeps `main`/`exports` at `./src/index.ts` (the CLI at `./src/run.ts`), so vitest and
+`tsx` run from source; the `publishConfig` of each manifest points them at `dist`, and `pnpm pack` applies that override.
+
+```bash
+pnpm build
+DATABASE_URL=postgres://mogging:mogging@localhost:5432/mogging_test pnpm smoke:pack
+```
+
+`pnpm smoke:pack` (`scripts/pack-smoke.mjs`, not part of `pnpm test`) builds, packs the four packages into a temporary
+directory, installs the tarballs with `npm install` into an empty project outside the repository, and runs the installed
+`mogging` binary (`--version`, `init`, `import --publish`, `status`, `query`) against a throwaway schema `smoke_<random>`
+of the test database. It also checks that every tarball contains `LICENSE.md`. The schema is dropped at the end, even
+after a failure. Expected: one `OK` line per step, then `smoke:pack passed`, and exit code 0. `mogging jobs` is skipped
+because it needs the optional `ai` configuration.
+
+Each package's `prepack` copies the root `LICENSE.md` into the package directory (`scripts/copy-licence.mjs`); these
+copies are git-ignored.
+
 ## Live provider test (optional)
 
 `packages/ai/test/live.test.ts` translates the seeded document through the real OpenRouter API with

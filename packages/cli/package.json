@@ -6,8 +6,13 @@
   "license": "SEE LICENSE IN LICENSE.md",
   "engines": { "node": ">=22" },
   "exports": { ".": "./src/run.ts" },
-  "files": ["src", "README.md"],
+  "files": ["dist", "README.md", "LICENSE.md"],
+  "publishConfig": {
+    "exports": { ".": { "types": "./dist/run.d.ts", "import": "./dist/run.js" } },
+    "bin": { "mogging": "./dist/bin.js" }
+  },
   "scripts": {
+    "prepack": "node ../../scripts/copy-licence.mjs",
     "test": "vitest run",
     "dev": "tsx src/bin.ts"
   },

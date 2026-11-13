@@ -116,3 +116,5 @@ dist
 .superpowers/
 .clavity/
 spikes/rich-text-sentinel/out/
+# Copied from the root by each package's prepack (scripts/copy-licence.mjs)
+packages/*/LICENSE.md

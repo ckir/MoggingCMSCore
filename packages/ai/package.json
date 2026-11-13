@@ -7,8 +7,14 @@
   "engines": { "node": ">=22" },
   "main": "./src/index.ts",
   "exports": { ".": "./src/index.ts" },
-  "files": ["src", "prompts", "README.md"],
+  "files": ["dist", "prompts", "README.md", "LICENSE.md"],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } }
+  },
   "scripts": {
+    "prepack": "node ../../scripts/copy-licence.mjs",
     "test": "vitest run"
   },
   "dependencies": {
