@@ -1,5 +1,5 @@
 import {
-  addToRelease, createRelease, getDocument, listDraftHeads, listReleases, NotFoundError, removeFromRelease,
+  addToRelease, createRelease, getDocument, listDraftHeads, listReleases, normalizeLocale, NotFoundError, removeFromRelease,
 } from "@mogging/core";
 import type { Ctx, DraftHead } from "@mogging/core";
 import { table } from "../output.js";
@@ -101,7 +101,9 @@ async function add(ctx: Ctx, name: string, targets: string[], flags: Flags): Pro
 
 async function remove(ctx: Ctx, name: string, targets: string[], flags: Flags): Promise<CommandResult> {
   const releaseId = await releaseIdOf(ctx, name);
-  const only = typeof flags.locale === "string" ? scopeLocale(ctx, flags.locale) : undefined;
+  // Not scopeLocale: an item whose locale has left the config must stay nameable, so core judges the locale (it
+  // still refuses one that is neither declared nor stored).
+  const only = typeof flags.locale !== "string" ? undefined : flags.locale === "shared" ? "shared" : normalizeLocale(flags.locale);
 
   // Every target is looked up before anything is removed, so an unknown one fails the run with nothing half done.
   // A soft-deleted document stays nameable: its item may still be in the release.

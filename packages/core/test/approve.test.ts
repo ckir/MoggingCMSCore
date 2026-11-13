@@ -777,3 +777,14 @@ test("a stale expectedVersion is a ConflictError, not a warnings ValidationError
   await aiDraft(ctx, docId, { title: "Katze 2" }, { title: [W2] });
   await expect(approve(ctx, { docId, locale: "de", expectedVersion: 1, acknowledgedWarnings: [W1] })).rejects.toThrow(ConflictError);
 }));
+
+test("approve with an acknowledged warning containing U+0000 is a ValidationError and writes nothing", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { title: "Hallo" }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("title")],
+  });
+  // Warnings come from the database and cannot hold U+0000, so an acknowledgement that does is "unknown" and refused.
+  await expect(approve(ctx, { docId, locale: "de", acknowledgedWarnings: ["tone\u0000"] })).rejects.toThrow(ValidationError);
+  const [{ n }] = await sql`select count(*)::int as n from document_localized where doc_id = ${docId} and locale = 'de' and state = 'APPROVED'`;
+  expect(n).toBe(0);
+}));

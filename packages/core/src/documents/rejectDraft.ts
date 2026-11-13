@@ -1,6 +1,7 @@
 import type { Ctx } from "../ctx.js";
 import { ConflictError, NotFoundError, NotPublishableError, ValidationError } from "../errors.js";
 import { normalizeLocale } from "../schema/locale.js";
+import { rejectNul } from "../values/nul.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -27,6 +28,7 @@ export async function rejectDraft(
 ): Promise<{ version: number }> {
   const { sql, actor } = ctx;
   const locale = resolveLocale(ctx, input.locale);
+  if (typeof input.reason === "string") rejectNul(input.reason, "reason");
   if (!UUID.test(input.docId)) throw new NotFoundError(`Document "${input.docId}" not found`);
 
   return sql.begin(async (tx) => {

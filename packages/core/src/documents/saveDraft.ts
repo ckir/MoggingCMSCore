@@ -71,9 +71,10 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
 
     // Base head for the carry-forward below, read BEFORE the draft head is cleared: this locale's draft head,
     // else its published head, else its latest row by version in any state (e.g. after unpublish), else none.
+    // A non-head DRAFT_AI row (rejected, or superseded) is never the base, as in recordAiDraft.
     const base = isShared || locale === config.locales.source ? undefined : (await tx`
       select data, source_hashes from document_localized
-      where doc_id = ${input.docId} and locale = ${locale}
+      where doc_id = ${input.docId} and locale = ${locale} and (is_head_draft or state <> 'DRAFT_AI')
       order by is_head_draft desc, is_head_published desc, version desc limit 1`)[0];
 
     await tx`update ${table} set is_head_draft = false

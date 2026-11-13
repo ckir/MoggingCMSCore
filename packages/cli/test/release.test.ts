@@ -460,6 +460,25 @@ describe("mogging release remove", () => {
     });
   });
 
+  test("release remove --locale names an item whose locale has left the config; a typo is still refused", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      await humanDraft(sql, docId, "de");
+      await cli(sql, "release", "create", "r1");
+      await cli(sql, "release", "add", "r1", "docs/intro", "--locale", "de");
+      // The locale left the config after the item was added: the config declares en and de, the item says fr.
+      await sql`update release_items set locale = 'fr' where doc_id = ${docId}`;
+      const typo = await cli(sql, "release", "remove", "r1", "docs/intro", "--locale", "xx");
+      expect(typo.code).toBe(1);
+      expect(typo.err).toContain('Locale "xx" is not declared in the config');
+      expect(await items(sql)).toHaveLength(1);
+      const r = await cli(sql, "release", "remove", "r1", "docs/intro", "--locale", "fr");
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("removed");
+      expect(await items(sql)).toHaveLength(0);
+    });
+  });
+
   test("release remove names a soft-deleted document's item", async () => {
     await withDb(async (sql) => {
       const docId = await publishedDoc(sql);

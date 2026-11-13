@@ -460,6 +460,31 @@ test("removeFromRelease records nothing: content_provenance is identical before 
   expect(await provenance()).toEqual(before);
 }));
 
+test("removeFromRelease removes an item whose locale has left the config, and still names a typo'd locale", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const { docId, deVersion } = await docWithSource(ctx, true);
+  const { id: releaseId } = await createRelease(ctx, { name: "orphan" });
+  await addToRelease(ctx, { releaseId, docId, locale: "de", version: deVersion });
+  // The operator drops de from the config afterwards: the stored item must still be removable.
+  const slim = { ...ctx, config: { ...ctx.config, locales: { ...ctx.config.locales, chains: {} } } };
+  await expect(addToRelease(slim, { releaseId, docId, locale: "de", version: deVersion })).rejects.toThrow(ValidationError);
+  expect(await removeFromRelease(slim, { releaseId, docId, locale: "de" })).toBeUndefined();
+  expect(await itemsOf(sql, releaseId)).toEqual([]);
+  // A locale that is neither declared nor stored is still reported as undeclared, not as "not in release".
+  await expect(removeFromRelease(slim, { releaseId, docId, locale: "de" })).rejects.toThrow('Locale "de" is not declared in the config');
+  await expect(removeFromRelease(ctx, { releaseId, docId, locale: "xx" })).rejects.toThrow(ValidationError);
+  await expect(removeFromRelease(ctx, { releaseId, docId, locale: "not a locale" })).rejects.toThrow(/Malformed locale/);
+}));
+
+test("createRelease refuses a name containing U+0000 with a ValidationError and writes nothing", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const e = await createRelease(ctx, { name: "r\u00001" }).catch((x: unknown) => x);
+  expect(e).toBeInstanceOf(ValidationError);
+  expect((e as Error).message).toBe("Release name: contains U+0000");
+  const [{ n }] = await sql`select count(*)::int as n from releases`;
+  expect(n).toBe(0);
+}));
+
 test("removeFromRelease of an item that is not in the release throws NotFoundError", async () => withTestDb(async (sql) => {
   const ctx = await setup(sql);
   const { docId, deVersion } = await docWithSource(ctx, true);

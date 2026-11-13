@@ -166,3 +166,26 @@ test("redraft after reject and unpublish still starts from the published row", a
   await draft({ body: "B2" });
   expect((await headData(sql, docId)).data).toEqual({ title: "Hallo", body: "B2" });
 }));
+
+// A rejected DRAFT_AI row is not a head, so it is not the base of a human save either (spec 6.4: draft head, else
+// published head). The human typed the same text the reviewer rejected, after the source moved on: the field is
+// new, so its hash is the CURRENT source value's hash, not the rejected row's stale one.
+test("saveDraft after a reject does not inherit the rejected draft's source hashes", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await setup(sql);
+  await rejectDraft(ctx, { docId, locale: "de" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello2", body: "World" } });
+  await publish(ctx, { docId, locale: "en" });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt" } });
+  const [h] = await sql`select source_hashes from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
+  expect(h!.source_hashes).toEqual({ title: hashValue("Hello2"), body: hashes.body });
+}));
+
+test("rejectDraft refuses a reason containing U+0000 with a ValidationError and changes nothing", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  const e = await rejectDraft(ctx, { docId, locale: "de", reason: "bad\u0000tone" }).catch((x: unknown) => x);
+  expect(e).toBeInstanceOf(ValidationError);
+  expect((e as Error).message).toBe("reason: contains U+0000");
+  expect(await rows(sql, docId)).toMatchObject([{ version: 1, state: "DRAFT_AI", is_head_draft: true }]);
+  const [{ n }] = await sql`select count(*)::int as n from content_provenance where model_id = 'human:reject'`;
+  expect(n).toBe(0);
+}));

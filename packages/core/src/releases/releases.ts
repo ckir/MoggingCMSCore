@@ -3,6 +3,7 @@ import { ConflictError, NotFoundError, NotPublishableError, StaleReleaseError, V
 import { assertLicensed } from "../licence/guard.js";
 import { publishWithinTx } from "../documents/publishCore.js";
 import { normalizeLocale } from "../schema/locale.js";
+import { rejectNul } from "../values/nul.js";
 
 export type CreateReleaseInput = { name: string };
 export type AddToReleaseInput = { releaseId: string; docId: string; locale: string | "shared"; version: number };
@@ -16,12 +17,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BIGINT_ID = /^[0-9]{1,18}$/;
 
 // Locale handling duplicates saveDraft.ts / publish.ts on purpose (not shared-code yet).
+const isDeclared = (ctx: Ctx, locale: string): boolean =>
+  locale === ctx.config.locales.source || Object.hasOwn(ctx.config.locales.chains, locale);
+const undeclared = (locale: string) => new ValidationError(`Locale "${locale}" is not declared in the config`);
+
 function resolveLocale(ctx: Ctx, input: string): { isShared: boolean; locale: string } {
   if (input === "shared") return { isShared: true, locale: "shared" };
   const locale = normalizeLocale(input);
-  const { config } = ctx;
-  const declared = new Set([config.locales.source, ...Object.keys(config.locales.chains)]);
-  if (!declared.has(locale)) throw new ValidationError(`Locale "${locale}" is not declared in the config`);
+  if (!isDeclared(ctx, locale)) throw undeclared(locale);
   return { isShared: false, locale };
 }
 
@@ -34,6 +37,7 @@ function releaseIdOf(id: string): string {
 export async function createRelease(ctx: Ctx, input: CreateReleaseInput): Promise<{ id: string }> {
   const { sql, actor } = ctx;
   if (typeof input.name !== "string" || input.name.trim() === "") throw new ValidationError("Release name is required");
+  rejectNul(input.name, "Release name");
   try {
     const [row] = await sql`insert into releases (name, created_by) values (${input.name}, ${actor}) returning id`;
     return { id: String(row!.id) };
@@ -120,11 +124,14 @@ export async function addToRelease(ctx: Ctx, input: AddToReleaseInput): Promise<
 /**
  * Takes the (document, locale) or shared item out of an unpublished release. Locks the release row only: the
  * documents row stays unlocked, so the item of a soft-deleted document can still be removed. An emptied release
- * stays. Not licence-guarded; records nothing.
+ * stays. Not licence-guarded; records nothing. The delete is keyed by the stored locale, so an item whose locale
+ * has since left the config can still be removed; a locale that is neither declared nor stored is reported as
+ * undeclared (a typo), not as "not in release".
  */
 export async function removeFromRelease(ctx: Ctx, input: RemoveFromReleaseInput): Promise<void> {
   const { sql } = ctx;
-  const { isShared, locale } = resolveLocale(ctx, input.locale);
+  const isShared = input.locale === "shared";
+  const locale = isShared ? "shared" : normalizeLocale(input.locale);
   const releaseId = releaseIdOf(input.releaseId);
   if (!UUID.test(input.docId)) throw new NotFoundError(`Document "${input.docId}" not found`);
 
@@ -135,7 +142,10 @@ export async function removeFromRelease(ctx: Ctx, input: RemoveFromReleaseInput)
     const removed = await tx`delete from release_items
       where release_id = ${releaseId} and doc_id = ${input.docId} and coalesce(locale, '') = ${isShared ? "" : locale}
       returning 1 as x`;
-    if (removed.length === 0) throw new NotFoundError(`${input.docId}/${locale} is not in release ${releaseId}`);
+    if (removed.length === 0) {
+      if (!isShared && !isDeclared(ctx, locale)) throw undeclared(locale);
+      throw new NotFoundError(`${input.docId}/${locale} is not in release ${releaseId}`);
+    }
   });
 }
 

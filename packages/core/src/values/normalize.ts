@@ -1,15 +1,11 @@
 import { ValidationError } from "../errors.js";
 import type { Field } from "../schema/fields.js";
+import { rejectNul } from "./nul.js";
 
 const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Date);
-}
-
-// Postgres jsonb (and text) cannot store U+0000, so refuse it here rather than at the database.
-function rejectNul(s: string, path: string): void {
-  if (s.includes("\u0000")) throw new ValidationError(`${path}: contains U+0000`);
 }
 
 function nfcDeep(v: unknown, path: string): unknown {
