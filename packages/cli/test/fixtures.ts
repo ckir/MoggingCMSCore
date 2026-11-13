@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { MockLanguageModelV3 } from "ai/test";
 import type { Sql } from "postgres";
+import type { LanguageModel } from "ai";
 import { defineAiConfig } from "@mogging/ai";
+import type { AiConfigInput, AiCtx } from "@mogging/ai";
 import { defineCollection, defineConfig, richText, slug, text } from "@mogging/core";
 import type { Deps, Io } from "../src/types.js";
 
@@ -25,6 +27,22 @@ export const ai = defineAiConfig({
   prices: { "mock/translate": { inputUsdPerMtok: 1, outputUsdPerMtok: 2, contextTokens: 8000 } },
   budgets: { monthlyCapUsd: 1 },
 });
+
+/** A function, because the model object differs per test (copy of packages/ai/test/fixtures.ts). */
+export function aiConfigFor(model: LanguageModel, overrides: Partial<AiConfigInput> = {}) {
+  return defineAiConfig({
+    provider: { kind: "custom", models: { "mock/translate": model } },
+    models: { translate: "mock/translate" },
+    prices: { "mock/translate": { inputUsdPerMtok: 1, outputUsdPerMtok: 2, contextTokens: 8000 } },
+    budgets: { monthlyCapUsd: 1 },
+    ...overrides,
+  });
+}
+
+/** An `AiCtx` over `sql` for the fixture config, for seeding jobs and calling the ai SDK from a test. */
+export function ctxFor(sql: Sql, model: LanguageModel, overrides: Partial<AiConfigInput> = {}): AiCtx {
+  return { sql, config: structuredClone(config), actor: "test", ai: aiConfigFor(model, overrides) };
+}
 
 /**
  * The test `sql` seen through `connect`: the same connection, but `end` is replaced (a no-op by default) because
