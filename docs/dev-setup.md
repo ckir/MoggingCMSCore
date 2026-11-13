@@ -50,6 +50,9 @@ of the test database. It also checks that every tarball contains `LICENSE.md`. T
 after a failure. Expected: one `OK` line per step, then `smoke:pack passed`, and exit code 0. `mogging jobs` is skipped
 because it needs the optional `ai` configuration.
 
+`pnpm smoke:pack` needs network access: `npm install` fetches the registry dependencies of the tarballs (`jiti`,
+`postgres`, `ai` and the rest). Without it the step fails with an npm error, not with a test failure.
+
 Each package's `prepack` copies the root `LICENSE.md` into the package directory (`scripts/copy-licence.mjs`); these
 copies are git-ignored.
 

@@ -563,6 +563,39 @@ live leases, and cap; `--retry`, `--cancel`), `mogging provenance <collection>/<
 (every provenance row for the document including discarded-cost rows, so an operator can see why
 spend rose without a draft appearing), `mogging query` (ad hoc reads).
 
+The syntax as shipped in `@mogging/cli` (plan 4). Every command also takes the global options `--json`,
+`--config <file>`, `--database-url <url>`, `--actor <name>` and `--help`, which are left out of the lines below;
+`--version` is accepted only before the command.
+
+```text
+mogging init
+mogging migrate
+mogging import <dir> [--publish]
+mogging export <dir> [--collection <c>]... [--locale <l>]...
+mogging status [<collection>] [--locale <l>]
+mogging track <collection>/<slug> --locale <l> [--fields a,b]
+mogging compile --locales de,fr --budget <usd> [--collection <c>] [<collection>/<slug> ...]
+mogging worker [--once] [--poll-ms <n>] [--budget <usd>] [--collection <c>] [--locales a,b]
+mogging jobs [--state <s>] [--collection <c>] [--limit <n>] [--retry <id,...>] [--cancel <id,...>]
+mogging provenance <collection>/<slug> [--locale <l>] [--discarded-only] [--limit <n>]
+mogging review [<collection>/<slug>] [--locale <l>] [--collection <c>]
+mogging review list [--collection <c>] [--locale <l>] [--state DRAFT_AI|APPROVED|DRAFT_HUMAN]
+mogging review show <collection>/<slug> --locale <l>
+mogging review approve <collection>/<slug> --locale <l> --version <n> [--reject-fields a,b] [--edit-file <path>] [--ack-warning <text>]...
+mogging review reject <collection>/<slug> --locale <l> --version <n> [--reason <text>]
+mogging review --approve-clean [--collection <c>] [--locale <l>]
+mogging publish <collection>/<slug> [--locale <l>]
+mogging publish --release <name> [--allow-stale]
+mogging unpublish <collection>/<slug> --locale <l>
+mogging release create <name>
+mogging release list
+mogging release add <name> [<collection>/<slug> ...] [--locale <l>] [--all-approved] [--collection <c>]
+mogging release publish <name> [--allow-stale]
+mogging query <collection>[/<slug>] [--locale <l>] [--raw] [--limit <n>]
+mogging help [command]
+mogging version
+```
+
 ### 9.3 SDK
 
 Every CLI command is a function in `@mogging/core` or `@mogging/ai` taking a typed context (database
@@ -595,6 +628,8 @@ preserves suppression.
 **Implementation notes (plan 2).** Slugs may contain `/` (nested folders) and must be lowercase. `.md` and `.mdx` are both accepted and the extension sets the parse mode. Undeclared front-matter keys are a per-file error. References in front matter are a slug or a UUID. Reference slugs are case-insensitive (normalized like slugs); a null entry where a reference is declared is a per-file error. A whitespace-only body means absent. An unchanged file is skipped, as approved in F5.
 
 **Implementation notes (plan 3).** F1: AI settings are built by `defineAiConfig` in `@mogging/ai`, exported next to the core `config` from `mogging.config.ts`; core's `MoggingConfig` is unchanged. F2: OpenRouter is built in, and a `custom` provider takes any AI SDK `LanguageModel` keyed by model id; every model named anywhere needs a price-table entry, because `content_provenance.model_id` is `not null`. F3: `@mogging/ai` owns the SQL on `ai_jobs`, `ai_budgets`, `glossary` and the discarded-cost provenance row, with one lock order everywhere (`ai_budgets` rows, global first, then the `ai_jobs` row, then `documents` through `recordAiDraft`); the reaper commits in its own transaction before each claim. F4: only localized fields with a `text` or `richText` leaf are sent to the model; other stale or missing localized fields are reported as `not translatable` and never copied. F5: `content_provenance.superseded_version`, `call_id` and the glossary unique index on (source locale, target locale, term) were added to migration 0001, which is still unreleased; `recordAiDraft` fills `superseded_version` when it supersedes a pending AI draft. F6: the monthly cap is enforced inside the claim transaction under the budget row lock (one transaction, not one statement), and a refused job stays `QUEUED` with a `budget_exhausted:` message and a later `run_after`; the per-run budget is an in-memory tally that stops the run and marks nothing. A call's tokens and cost are apportioned over the fields of its request by their share of the translated characters (floor rounding, remainder on the first field), so the per-field rows sum to the call; every call that happened gets a `call_id` and is recorded (a kept row per field, or one discarded row for the call). The AI SDK is called with `maxRetries: 0`, so the only retry is the strict re-prompt and every attempt is counted and paid once. If the completion transaction throws after a provider call, a separate cost-only transaction records the spend; it locks the budget rows first and only then checks whether the first transaction committed (by looking for a provenance row with one of the call ids), so an ambiguous commit is never debited twice. Enqueue drops fields that a pending `DRAFT_AI` or `APPROVED` draft head already covers at the source hash, so a second compile does not buy them again; a pending `DRAFT_HUMAN` skips the pair and cancels its `QUEUED` job. Every comparison and stored timestamp in the job queue (leases, back-off, the fence) and the budget month use the database clock, not the worker host's.
+
+**Implementation notes (plan 4).** D-reject: a distinct core `rejectDraft` rejects a whole draft; rejecting every field through `approve` would insert an `APPROVED` head, empty when nothing is published, and `publish` publishes `APPROVED` heads. D-stale: `approve` and `rejectDraft` take an optional `expectedVersion`, and the CLI's `review approve` and `review reject` require `--version <n>` (the version `review list` and `review show` print; interactive review passes the one it showed), so a draft replaced after it was seen is a conflict; the number proves which version was acted on, not that a person read it, and `approveClean` is unchanged. D-warn: the 8.4 acknowledgement gate is in core: `approve` throws a `ValidationError` unless the acknowledged warnings equal, as a set, the distinct warning texts the draft carries, a warning's only identity being its text (so a reworded validator message changes what must be acknowledged); the CLI passes a repeatable `--ack-warning <text>` and the interactive review asks per warning. D-fwarn: the warnings a draft still carries live on its `document_localized` row (`field_warnings`), merged by `recordAiDraft` and written empty by `approve`, so an acknowledged warning is not demanded again for text carried over; `content_provenance` stays the audit log of AI calls. D-build: the packages compile to `dist/` with plain `tsc`, `jiti` loads only the user's config, and the repository manifests keep pointing at `src` while each `publishConfig` points at `dist`; nothing is published to npm and the version is the owner's call. D-query: `mogging query <collection>[/<slug>] [--locale] [--raw] [--limit]` is read-only, applies the locale chain and reports which fields fell back. Exit codes: `0` ok, `1` error, `2` usage, `3` licence refusal, `4` partial failure; a command that attempts several items exits `4` when at least one succeeded or was already in the wanted state and at least one failed or was refused, and `1` when all failed (`approve-clean` skips are not failures). `--json`: stdout is exactly one document `{ ok, partial, data, [error], licence }`, where `ok` is true exactly for exit `0` and `4`, `partial` exactly for `4`, `data` is the return value of the SDK call the command wraps, and `licence` carries the licence state that is otherwise printed to stderr (12.3, 12.4); a thrown failure has no `data` and no `partial`. The CLI actor is `--actor`, else `MOGGING_ACTOR`, else the OS user, else `cli` (attribution, 8.7). Not built in v0.1, and listed in `TODO.md`: the local review web page of 8.6, `release remove`, and a guard that detects a source change published while a reviewer edits (an edit is recorded as in sync with the source at approval time, 6.4).
 
 ## 10. Left to the builder, and to the owner
 
