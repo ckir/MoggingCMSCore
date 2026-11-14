@@ -132,7 +132,8 @@ locales share one; a violation is a configuration error (exit `2`).
 ### 5.3 Day one: existing translations
 
 Translated pages already in the adopter's repository are imported as published human translations WITHOUT a source
-hash, so every field reads `untracked`, not `current`. They are PUBLISHED on import whether or not `--publish` is
+hash, so every field reads `untracked`, not `current`. Except for a locale file marked `draft: true` while its
+English page is not (5.9), they are PUBLISHED on import whether or not `--publish` is
 given (agy round 3 correction: left as drafts, export would see nothing published and drop every file). "No Mogging
 history" is per (document, locale): the locale has no row of any state for that document. A locale that already has
 any row, a `DRAFT_AI` included, takes the normal path below. `mogging status` lists untracked fields; compile never
@@ -234,7 +235,7 @@ covers text Mogging generates. Day-one files are recorded as human and visibly `
   safety stop when nothing else was imported; an import that found no source file; a `rename` that stopped on a
   differing target; the export self-check failing (an internal error). Exit `0`, with the event in the output:
   rewriting a `behind` file, a page not written because its translation is incomplete (Starlight's fallback is the
-  intended outcome), skipped new `draft: true` files, orphan locale files, unsupported extensions, an ignored manifest
+  intended outcome), a `pending` locale file that says `draft: true` (5.9), skipped new `draft: true` files, orphan locale files, unsupported extensions, an ignored manifest
   entry, a manifest entry for a document the database does not know, locale drift reported without skipping,
   `--restore` on a file that is already current.
   `--dry-run` prints one line per planned action (`write`, `keep`, `remove`, `skip`, `refuse`, `move`) with the path,
@@ -305,7 +306,8 @@ declare (the adopter's `docsSchema({ extend })` keys) verbatim in one shared opa
 top-level keys of every file. Keys that carry reader text (`hero`, `prev`, `next`, `sidebar.label`, `sidebar.badge`,
 `banner`) are per-locale localized fields as specified in 5.9; a union shape is split into a follows-English part
 and a per-locale part there (for example `prev: false` is a shared boolean, `prev: "Back"` a per-locale
-`{ label }`), so the opaque kind is never localized, as ruled. No key is declared both ways; a path declared twice
+`{ label }`), so the opaque kind is never localized, as ruled. No key is declared both ways; except for the "union"
+map entry of 5.9, a path declared twice
 in the preset is a configuration error. Measured scope: the kind is switched on in about 13 source files (10 `case "object"` sites), a mechanical
 change; agy's "about 25 lines" estimate is unverified. If the plan finds it larger than a TODO-class fix, the
 escalation rule of section 3 applies.
@@ -336,10 +338,16 @@ Seat consult `.clavity/seams/starlight-ownership-first.md`, [VERDICT: ALIGNED], 
   never silent.
 - **`draft`** (panel round 6, replacing the round-5 OR rule, which broke the export self-check and classification):
   `draft` follows English like the keys above. A translation that is not ready is expressed the Mogging way, as an
-  unpublished draft: a locale file whose own front matter says `draft: true` (day one or a hand edit) is imported as
-  an UNPUBLISHED human draft, even on day one and even with `--publish`, and import reports it. Its file stays on disk
-  as `pending` (5.4), export leaves it untouched, and Starlight keeps hiding it. When the translator removes the flag,
-  the next import sees `hand work` and `--publish` publishes it.
+  unpublished draft. Rule, applied on import after classification and only when the locale file says `draft: true`
+  while the English page does not (a file that merely carries English's own `draft: true`, copied by export, is not
+  a locale draft): the file's content is saved, if it differs from the heads, as an UNPUBLISHED human draft, even on
+  day one and even with `--publish`, and import reports it; `--publish` never publishes a pending draft whose file
+  says `draft: true`. Its file stays on disk as `pending` (5.4), export leaves it untouched (exit `0` for this case,
+  5.4), and Starlight keeps hiding it. When the translator removes the flag, the file is still `pending` (the flag is
+  not a localized field), and the next `import --publish` publishes the pending draft, as import already does for a
+  human draft equal to its file (`packages/markdown/src/import.ts:373-379`) (panel round 7 correction). The reverse,
+  adding `draft: true` to an already published locale file, withdraws nothing by itself: the translator runs
+  `mogging unpublish --locale` (documented).
 - **Per locale** (one LOCALIZED object or list field per key, holding the whole value): `hero` (title, tagline,
   image, actions), the label/link forms of `prev` and `next`, `sidebar.label`, `sidebar.badge`, `banner`. A
   locale's value comes from its file (day one, hand edits) or from an AI draft; a day-one German
@@ -353,12 +361,16 @@ Seat consult `.clavity/seams/starlight-ownership-first.md`, [VERDICT: ALIGNED], 
 - `hero.actions[].attrs` (an arbitrary record, `src/schemas/hero.ts:65`) cannot be a leaf of a per-locale value,
   because opaque values are never localized; in v0.1 it is kept on the English page only and dropped from locale
   files with a warning (documented limit).
-- Union keys (`prev`, `next`, `sidebar.badge`) map ONE YAML path to TWO core fields, which keeps core's rule that a
-  field is either shared or localized: for example `prevDisabled` (shared boolean, from `prev: false`) and `prev`
-  (localized object `{ label, link }`, from a string or an object). The layout's path map has a "union" entry kind
-  naming both fields; the "a path declared twice is a configuration error" rule (5.8) applies to plain entries, and a
-  path that appears in a union entry and in any other entry is still an error. On export: the per-locale value is
-  written when the locale has one; otherwise `false` when the shared boolean is set; otherwise the key is omitted.
+- Union keys `prev` and `next` map ONE YAML path to TWO core fields, which keeps core's rule that a field is either
+  shared or localized: `prevToggle` (shared, follows English, from a boolean: `false` removes the link, `true` means
+  "use the generated link", the same as absent, `src/utils/navigation.ts:558-560`) and `prev` (localized object
+  `{ label, link }`, from a string or an object). The layout's path map has a "union" entry kind naming both fields;
+  the "a path declared twice is a configuration error" rule (5.8) applies to plain entries, and a path that appears
+  in a union entry and in any other entry is still an error. On export, English wins when it disables the link:
+  `false` when the shared toggle is `false`; otherwise the per-locale value when the locale has one; otherwise the
+  key is omitted (panel round 7: an orphaned German `prev` no longer overrides an English `prev: false`).
+- `sidebar.badge` is not a union with a boolean: Starlight accepts a string or `{ text, variant, class }`, never a
+  boolean (`src/schemas/badge.ts:36-45`). It is one per-locale object field, a string normalized to `{ text }`.
 - **What the AI touches.** Core gains a field option that marks a text leaf as not translatable (name left to the
   plan, e.g. `translate: false`; `packages/core/src/schema/fields.ts:1-6`); the AI package leaves such leaves out of
   the request schema and copies them from the English value into the draft (`packages/ai/src/fields.ts`:
@@ -386,18 +398,23 @@ Seat consult `.clavity/seams/starlight-ownership-first.md`, [VERDICT: ALIGNED], 
 - **The rebasing rule, exactly** (panel rounds 5 and 6). Two reference grammars:
   - an MDX `import`/`export ... from` specifier is relative only when it starts with `./` or `../` (ESM semantics);
     a bare specifier such as `react` or `astro-embed` is a package name and is never touched;
-  - a front-matter `image()` value, or a Markdown image source or image reference definition outside code, is
-    relative when it is non-empty and does not start with `/`, `#`, `~`, `@`, or a URL scheme
-    (`[A-Za-z][A-Za-z0-9+.-]*:`).
+  - a front-matter `image()` value, or an inline Markdown image source (`![alt](src)`) outside code, is relative
+    when it is non-empty and does not start with `/`, `#`, `~`, `@`, or a URL scheme (`[A-Za-z][A-Za-z0-9+.-]*:`).
+    Image reference definitions (`[id]: src`) are stored as opaque blocks that cannot be told apart from link
+    definitions, so they are not rebased (documented limit: use inline images or root-relative paths).
   The path part (before any `?` or `#`, kept unchanged) is resolved against the directory of the file it was read from
-  and re-expressed relative to the directory of the file it is written to, with POSIX separators, in normal form (no
-  `.` or `..` segments after the leading run of `..`), keeping a leading `./` when the original had one. The stored
-  value is the normal form, so `reverse(forward(v)) == v` holds for every stored value; the plan pins this with
-  property tests AND with fixture assertions on the exact rewritten strings in both directions (a rebase that does
-  nothing must fail a test). MDX ESM blocks are rewritten through a parse of that block (`packages/markdown/src/parse.ts:157`
-  stores them as opaque source text), never a regular expression, and only the specifier's characters are replaced, so
-  the rest of the block is byte-identical. A block the parser cannot read is left unchanged with a warning and the
-  export exits `4` (5.4), because its references may now be wrong; the reverse direction on import does the same.
+  and re-expressed relative to the directory of the file it is written to, with POSIX separators, in CANONICAL form:
+  no `.` or `..` segments after the leading run of `..`, and always prefixed by `./` when it does not start with
+  `../` (panel round 7: keeping `./` only "when the original had one" lost it on the way back, and an ESM specifier
+  without `./` is a package name). The database stores the canonical form relative to the English file, so
+  `reverse(forward(v)) == v` holds for every stored value, and classification compares canonical values; a bare
+  image source such as `img.png` is stored as `./img.png` (the English file is never rewritten, 5.4). The plan pins
+  this with property tests AND fixture assertions on the exact rewritten strings in both directions (a rebase that
+  does nothing must fail a test). MDX ESM blocks are rewritten from the ESM syntax tree the MDX parser already builds
+  for them (`packages/markdown/src/parse.ts:157` keeps their source text), never a regular expression, and only the
+  specifier's characters are replaced, so the rest of the block is byte-identical. A document whose MDX cannot be
+  parsed already fails import as a per-file error; if a block's syntax tree is unavailable at write time, export
+  leaves it unchanged with a warning and exits `4` (5.4), and import records the file as a per-file error.
 - `mogging rename` to a different folder depth is refused when the page or any of its translations contains a
   relative file reference (the stored references would need rebasing; documented limit, move it by hand); renames
   within the same depth are unaffected.
@@ -611,6 +628,17 @@ content; how the template's dependencies sit relative to the pnpm workspace; the
     when English has it (F-32) (5.4); `init --starlight` writes the explicit locale map (F-30) (5.2); remaining exit
     codes (R6-5) (5.4).
 
+- Panel round 7, narrow, owner-ruled after the cap (2026-11-14; scope: the round-6 corrections only; agy seats Fold
+  Regression, Literal Implementer: 4 findings; Sonnet solo the same seats: 5 findings; both found the first two
+  independently):
+  - FOLDED, the locale-draft lifecycle: applied after classification, only when the locale differs from English,
+    publish through import's existing pending-draft publish, unpublish to withdraw (F-33, R7-1) (5.9, 5.3, 5.4).
+  - FOLDED, canonical reference form always `./` or `../`, so the round trip holds (F-34, R7-2) (5.9).
+  - FOLDED, `sidebar.badge` is one per-locale object, not a union (F-35, R7-4); `prev`/`next` toggle covers `true`
+    and English `false` wins over an orphaned locale value (R7-4, R7-5) (5.9); union exception stated in 5.8.
+  - FOLDED, image reference definitions out of rebasing scope, documented (R7-3); MDX blocks rewritten from the MDX
+    parser's own syntax tree, import side of an unreadable block is a per-file error (F-36) (5.9).
+
 ## Stand-downs
 
-None in rounds 1 to 6: no finding was discarded below the floor.
+None in rounds 1 to 7: no finding was discarded below the floor.
