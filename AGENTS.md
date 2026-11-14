@@ -12,6 +12,10 @@ consumers, and `docs/dev-setup.md` for the test database.
 
 Requires Node >= 22, pnpm, and Postgres. **Every test touches the database:** export `DATABASE_URL` first
 (`postgres://mogging:mogging@localhost:5432/mogging_test`, created per `docs/dev-setup.md`). Nothing loads `.env`.
+On the owner's dev machine the test database is the private Postgres on port 54329
+(`postgres://mogging:mogging@127.0.0.1:54329/mogging_test`). There, port 5432 rejects the `mogging` password, and
+almost every database test fails with `password authentication failed for user "mogging"`. Read that error as a
+wrong `DATABASE_URL`, not as a code regression.
 
 ```bash
 pnpm test                                    # all packages (vitest projects)
