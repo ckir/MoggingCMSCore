@@ -208,7 +208,11 @@ covers text Mogging generates. Day-one files are recorded as human and visibly `
   `behind` file is rewritten with the current published head and reported; a `pending` or `hand work` file is left
   untouched, named, and reported (run import, then review or publish). Export self-checks every file it writes: the
   file must re-parse to the published content, otherwise export stops with an internal error, so a serializer
-  defect can never turn published AI text into `hand work` that a later import would record as human. Locale-only
+  defect can never turn published AI text into `hand work` that a later import would record as human. "The
+  published content" here and in the classification above is the head as export PROJECTS it into a file: a
+  per-locale value that a follows-English rule suppresses (a `prev`/`next` label while English sets `false`, 5.9) is
+  left out of both sides of the comparison, so the suppression is neither a self-check failure nor `hand work`, and
+  the stored label returns when English re-enables the link (panel round 8). Locale-only
   front-matter keys that the preset does not map are warned about on import and dropped when a file is rewritten.
 - The manifest lists only files whose content is in the database: files export wrote and files classified
   `published`. `pending` and `hand work` files are never listed, so 5.5 can never remove them.
@@ -230,12 +234,13 @@ covers text Mogging generates. Day-one files are recorded as human and visibly `
   that directory, so a docs site in a subdirectory, or two sites in one repository, each have their own.
 - Exit codes (panel rounds 3 to 6), on the CLI's existing scheme. Exit `4` (partial) only for something the
   operator must act on: export left any `pending` or `hand work` file, refused to write through a symbolic link,
-  skipped a live document whose English file is missing, skipped a locale missing from Starlight's config, or left
-  an unreadable MDX block unrebased (5.9); an import safety stop when other files were imported. Exit `1`: an import
-  safety stop when nothing else was imported; an import that found no source file; a `rename` that stopped on a
-  differing target; the export self-check failing (an internal error). Exit `0`, with the event in the output:
+  skipped a live document whose English file is missing, or skipped a locale missing from Starlight's config; an
+  import safety stop when other files were imported. Exit `1`: an import safety stop when nothing else was imported;
+  an import that found no source file; a `rename` that stopped on a differing target; the export self-check failing
+  or a stored MDX block failing to re-parse (internal errors, 5.9). Exit `0`, with the event in the output:
   rewriting a `behind` file, a page not written because its translation is incomplete (Starlight's fallback is the
-  intended outcome), a `pending` locale file that says `draft: true` (5.9), skipped new `draft: true` files, orphan locale files, unsupported extensions, an ignored manifest
+  intended outcome), a `pending` locale file that says `draft: true` while its English page does not (5.9), skipped
+  new `draft: true` files, orphan locale files, unsupported extensions, an ignored manifest
   entry, a manifest entry for a document the database does not know, locale drift reported without skipping,
   `--restore` on a file that is already current.
   `--dry-run` prints one line per planned action (`write`, `keep`, `remove`, `skip`, `refuse`, `move`) with the path,
@@ -410,11 +415,13 @@ Seat consult `.clavity/seams/starlight-ownership-first.md`, [VERDICT: ALIGNED], 
   `reverse(forward(v)) == v` holds for every stored value, and classification compares canonical values; a bare
   image source such as `img.png` is stored as `./img.png` (the English file is never rewritten, 5.4). The plan pins
   this with property tests AND fixture assertions on the exact rewritten strings in both directions (a rebase that
-  does nothing must fail a test). MDX ESM blocks are rewritten from the ESM syntax tree the MDX parser already builds
-  for them (`packages/markdown/src/parse.ts:157` keeps their source text), never a regular expression, and only the
-  specifier's characters are replaced, so the rest of the block is byte-identical. A document whose MDX cannot be
-  parsed already fails import as a per-file error; if a block's syntax tree is unavailable at write time, export
-  leaves it unchanged with a warning and exits `4` (5.4), and import records the file as a per-file error.
+  does nothing must fail a test). MDX ESM blocks are rewritten from an ESM syntax tree, never a regular expression,
+  and only the specifier's characters are replaced, so the rest of the block is byte-identical. The stored tree keeps
+  only the block's source text (`packages/markdown/src/parse.ts:156-157`), so the layout re-parses that block with
+  the same ESM grammar the MDX parser uses (panel round 8). Every stored block was parsed successfully on import (a
+  document whose MDX cannot be parsed fails import as a per-file error today), so the re-parse cannot fail on stored
+  content; if it ever does, that is an internal error (exit `1`), like a failed self-check. The round-6/7 "leave
+  unchanged and exit 4" case is withdrawn.
 - `mogging rename` to a different folder depth is refused when the page or any of its translations contains a
   relative file reference (the stored references would need rebasing; documented limit, move it by hand); renames
   within the same depth are unaffected.
@@ -639,6 +646,14 @@ content; how the template's dependencies sit relative to the pnpm workspace; the
   - FOLDED, image reference definitions out of rebasing scope, documented (R7-3); MDX blocks rewritten from the MDX
     parser's own syntax tree, import side of an unreadable block is a per-file error (F-36) (5.9).
 
+- Panel round 8, narrow, owner-ruled (2026-11-14; scope: the round-7 corrections only): agy CLEAN; Sonnet solo
+  3 findings, all FOLDED:
+  - the self-check and classification compare the head as export projects it, so an English `prev: false` that
+    suppresses a locale label is neither a self-check failure nor `hand work` (R8-1) (5.4);
+  - MDX blocks are re-parsed from their stored source text, a re-parse failure is an internal error (exit 1), and
+    the unreachable "leave unchanged, exit 4" and import-side clauses are withdrawn (R8-2) (5.9, 5.4);
+  - the exit-0 `draft` case carries the "while its English page does not" qualifier (R8-3) (5.4).
+
 ## Stand-downs
 
-None in rounds 1 to 7: no finding was discarded below the floor.
+None in rounds 1 to 8: no finding was discarded below the floor.
