@@ -208,11 +208,14 @@ covers text Mogging generates. Day-one files are recorded as human and visibly `
   `behind` file is rewritten with the current published head and reported; a `pending` or `hand work` file is left
   untouched, named, and reported (run import, then review or publish). Export self-checks every file it writes: the
   file must re-parse to the published content, otherwise export stops with an internal error, so a serializer
-  defect can never turn published AI text into `hand work` that a later import would record as human. "The
-  published content" here and in the classification above is the head as export PROJECTS it into a file: a
-  per-locale value that a follows-English rule suppresses (a `prev`/`next` label while English sets `false`, 5.9) is
-  left out of both sides of the comparison, so the suppression is neither a self-check failure nor `hand work`, and
-  the stored label returns when English re-enables the link (panel round 8). Locale-only
+  defect can never turn published AI text into `hand work` that a later import would record as human. One
+  comparison rule serves the self-check and all four classes, for every version compared (the head, the draft head,
+  earlier published versions) and whatever English's current state (panel rounds 8 and 9): a per-locale value that a
+  follows-English rule can suppress (today only the `prev`/`next` label, suppressed while English sets `false`, 5.9)
+  is ignored when the FILE side lacks it. So a file written while English had `prev: false` is `published` (or
+  `behind`), never `hand work`, both while the link is off and after English turns it back on; the next export then
+  writes the stored label again, and import never records the label-less file as an edit. The cost, documented: a
+  translator deleting a German `prev` label by hand is not detected as an edit. Locale-only
   front-matter keys that the preset does not map are warned about on import and dropped when a file is rewritten.
 - The manifest lists only files whose content is in the database: files export wrote and files classified
   `published`. `pending` and `hand work` files are never listed, so 5.5 can never remove them.
@@ -234,10 +237,10 @@ covers text Mogging generates. Day-one files are recorded as human and visibly `
   that directory, so a docs site in a subdirectory, or two sites in one repository, each have their own.
 - Exit codes (panel rounds 3 to 6), on the CLI's existing scheme. Exit `4` (partial) only for something the
   operator must act on: export left any `pending` or `hand work` file, refused to write through a symbolic link,
-  skipped a live document whose English file is missing, or skipped a locale missing from Starlight's config; an
-  import safety stop when other files were imported. Exit `1`: an import safety stop when nothing else was imported;
-  an import that found no source file; a `rename` that stopped on a differing target; the export self-check failing
-  or a stored MDX block failing to re-parse (internal errors, 5.9). Exit `0`, with the event in the output:
+  skipped a live document whose English file is missing, skipped a locale missing from Starlight's config, or skipped
+  a page whose stored MDX block does not parse (5.9); an import safety stop when other files were imported. Exit `1`:
+  an import safety stop when nothing else was imported; an import that found no source file; a `rename` that stopped
+  on a differing target; the export self-check failing (an internal error). Exit `0`, with the event in the output:
   rewriting a `behind` file, a page not written because its translation is incomplete (Starlight's fallback is the
   intended outcome), a `pending` locale file that says `draft: true` while its English page does not (5.9), skipped
   new `draft: true` files, orphan locale files, unsupported extensions, an ignored manifest
@@ -338,9 +341,10 @@ Seat consult `.clavity/seams/starlight-ownership-first.md`, [VERDICT: ALIGNED], 
 - **Follows English** (shared fields or shared opaque values, copied into every locale file on every export):
   `template`, `sidebar.order`, `sidebar.hidden`, `sidebar.attrs`, `pagefind`, `tableOfContents`, `lastUpdated`,
   `editUrl`, `head` (its tag text is not translated, a documented limit), the boolean forms of `prev`/`next`, and the
-  adopter's extended keys unless declared otherwise. Day one: when a locale file's value for a follows-English key
-  differs from English, import reports it ("will be replaced by the English value on export"), so the overwrite is
-  never silent.
+  adopter's extended keys unless declared otherwise. On day one and on every later import, when a locale file's value
+  for a follows-English key differs from English, import reports it ("will be replaced by the English value on
+  export"; for `draft: true` on a published translation, "run `mogging unpublish --locale` to withdraw it"), so the
+  overwrite is never silent.
 - **`draft`** (panel round 6, replacing the round-5 OR rule, which broke the export self-check and classification):
   `draft` follows English like the keys above. A translation that is not ready is expressed the Mogging way, as an
   unpublished draft. Rule, applied on import after classification and only when the locale file says `draft: true`
@@ -418,10 +422,10 @@ Seat consult `.clavity/seams/starlight-ownership-first.md`, [VERDICT: ALIGNED], 
   does nothing must fail a test). MDX ESM blocks are rewritten from an ESM syntax tree, never a regular expression,
   and only the specifier's characters are replaced, so the rest of the block is byte-identical. The stored tree keeps
   only the block's source text (`packages/markdown/src/parse.ts:156-157`), so the layout re-parses that block with
-  the same ESM grammar the MDX parser uses (panel round 8). Every stored block was parsed successfully on import (a
-  document whose MDX cannot be parsed fails import as a per-file error today), so the re-parse cannot fail on stored
-  content; if it ever does, that is an internal error (exit `1`), like a failed self-check. The round-6/7 "leave
-  unchanged and exit 4" case is withdrawn.
+  the same ESM grammar the MDX parser uses (panel round 8). A block stored by import was parsed successfully, but core
+  does not check rich-text content (`packages/core/src/values/normalize.ts:44-49`), so a value saved through the SDK
+  may hold a block that does not parse (panel round 9). Such a page's locale file is skipped with a per-file error
+  naming the block, the rest of the export runs, and the run exits `4` (5.4); it never stops the whole export.
 - `mogging rename` to a different folder depth is refused when the page or any of its translations contains a
   relative file reference (the stored references would need rebasing; documented limit, move it by hand); renames
   within the same depth are unaffected.
@@ -654,6 +658,15 @@ content; how the template's dependencies sit relative to the pnpm workspace; the
     the unreachable "leave unchanged, exit 4" and import-side clauses are withdrawn (R8-2) (5.9, 5.4);
   - the exit-0 `draft` case carries the "while its English page does not" qualifier (R8-3) (5.4).
 
+- Panel round 9, narrow, owner-ruled (2026-11-14; scope: the round-8 corrections only): agy CLEAN; Sonnet solo
+  3 findings, all FOLDED:
+  - one comparison rule for the self-check and every class and version: a suppressible `prev`/`next` label missing
+    from the file is ignored, so re-enabling a link never turns a file into `hand work` (R9-1, R9-2) (5.4);
+  - a stored MDX block that does not parse (core does not check rich-text content, `normalize.ts:44-49`) skips that
+    page with exit 4 instead of failing the run (R9-3) (5.9, 5.4);
+  - import reports a follows-English difference on every import, not only day one, including `draft: true` on a
+    published translation (solo answer 2) (5.9).
+
 ## Stand-downs
 
-None in rounds 1 to 8: no finding was discarded below the floor.
+None in rounds 1 to 9: no finding was discarded below the floor.
