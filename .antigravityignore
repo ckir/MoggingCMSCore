@@ -1,0 +1,81 @@
+# ==============================================================================
+# .antigravityignore
+# Excludes files and directories from Antigravity AI indexing, search,
+# and context collection to prevent context bloat and token exhaustion.
+# ==============================================================================
+
+# Version control & auxiliary trees
+.git/
+.worktrees/
+**/.worktrees/
+
+# Dependencies
+node_modules/
+**/node_modules/
+jspm_packages/
+bower_components/
+
+# Lockfiles (large token footprint; exclude from general agent context)
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+package-json.lock
+.yarn-integrity
+
+# Build outputs & compiled bundles
+dist/
+**/dist/
+build/
+*.tsbuildinfo
+*.tgz
+
+# Test coverage & reports
+coverage/
+*.lcov
+.nyc_output/
+lib-cov/
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Environment variables & secrets (preserve example template)
+.env
+.env.*
+!.env.example
+
+# Local databases & runtimes
+*.sqlite
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Logs & debugging output
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Tool caches & runtime state
+.cache/
+.npm/
+.eslintcache/
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+.node_repl_history
+.fusebox/
+.serverless/
+.dynamodb/
+.tern-port/
+.tern-port
+
+# Agent scratch & local working dirs
+.clavity/
+.superpowers/
+.claude/
+
+# Project-specific generated outputs
+spikes/rich-text-sentinel/out/
+packages/*/LICENSE.md
