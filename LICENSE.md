@@ -1,8 +1,3 @@
-> **Reviewed and approved by counsel** (confirmed by the project owner, 2026-11-13). This file holds the
-> PolyForm Noncommercial 1.0.0 text followed by the additional terms: an evaluation grant and an
-> anti-circumvention clause (spec section 12.1).
-> MoggingCMSCore is source-available software. It is not open source.
-
 # PolyForm Noncommercial License 1.0.0
 
 <https://polyformproject.org/licenses/noncommercial/1.0.0>
