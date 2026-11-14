@@ -210,12 +210,16 @@ covers text Mogging generates. Day-one files are recorded as human and visibly `
   file must re-parse to the published content, otherwise export stops with an internal error, so a serializer
   defect can never turn published AI text into `hand work` that a later import would record as human. One
   comparison rule serves the self-check and all four classes, for every version compared (the head, the draft head,
-  earlier published versions) and whatever English's current state (panel rounds 8 and 9): a per-locale value that a
-  follows-English rule can suppress (today only the `prev`/`next` label, suppressed while English sets `false`, 5.9)
-  is ignored when the FILE side lacks it. So a file written while English had `prev: false` is `published` (or
-  `behind`), never `hand work`, both while the link is off and after English turns it back on; the next export then
-  writes the stored label again, and import never records the label-less file as an edit. The cost, documented: a
-  translator deleting a German `prev` label by hand is not detected as an edit. Locale-only
+  earlier published versions) and whatever English's current state (panel rounds 8 to 10): a per-locale value that a
+  follows-English rule can suppress (today only the whole per-locale `prev`/`next` value, `{ label, link }`,
+  suppressed while English sets `false`, 5.9; an empty `{}` counts as absent) is ignored when the FILE side lacks
+  it. So a file written while English had `prev: false` is `published` (or `behind`), never `hand work`, both while
+  the link is off and after English turns it back on. The same rule decides export's "same parsed content" keep test,
+  so after English turns the link back on the file differs and export writes the stored value again. When import
+  saves a `hand work` file that lacks a suppressible value, it carries that value forward from the current head
+  instead of saving its absence, so a translator editing the title never deletes the approved `prev` (R10-1). The
+  cost, documented: a translator cannot delete a German `prev` value by deleting it from the file; they remove it
+  with English's `prev: false` or through `mogging review`. Locale-only
   front-matter keys that the preset does not map are warned about on import and dropped when a file is rewritten.
 - The manifest lists only files whose content is in the database: files export wrote and files classified
   `published`. `pending` and `hand work` files are never listed, so 5.5 can never remove them.
@@ -342,9 +346,12 @@ Seat consult `.clavity/seams/starlight-ownership-first.md`, [VERDICT: ALIGNED], 
   `template`, `sidebar.order`, `sidebar.hidden`, `sidebar.attrs`, `pagefind`, `tableOfContents`, `lastUpdated`,
   `editUrl`, `head` (its tag text is not translated, a documented limit), the boolean forms of `prev`/`next`, and the
   adopter's extended keys unless declared otherwise. On day one and on every later import, when a locale file's value
-  for a follows-English key differs from English, import reports it ("will be replaced by the English value on
-  export"; for `draft: true` on a published translation, "run `mogging unpublish --locale` to withdraw it"), so the
-  overwrite is never silent.
+  for a follows-English key differs from English, import reports it once per file and key, so the overwrite is never
+  silent: "export will write the English value the next time it writes this file". For `draft: true` the 5.9 `draft`
+  rule applies instead when the file is `hand work`, `pending` or new; when the file classifies as `published` (its
+  content is the current published head), the report adds "run `mogging unpublish --locale` to withdraw it". Equal
+  values are silent. This replaces today's warning on every shared key in a non-source file
+  (`packages/markdown/src/contentFile.ts:105-106`, `:121`), so it is new code in the Starlight layout (panel round 10).
 - **`draft`** (panel round 6, replacing the round-5 OR rule, which broke the export self-check and classification):
   `draft` follows English like the keys above. A translation that is not ready is expressed the Mogging way, as an
   unpublished draft. Rule, applied on import after classification and only when the locale file says `draft: true`
@@ -424,8 +431,11 @@ Seat consult `.clavity/seams/starlight-ownership-first.md`, [VERDICT: ALIGNED], 
   only the block's source text (`packages/markdown/src/parse.ts:156-157`), so the layout re-parses that block with
   the same ESM grammar the MDX parser uses (panel round 8). A block stored by import was parsed successfully, but core
   does not check rich-text content (`packages/core/src/values/normalize.ts:44-49`), so a value saved through the SDK
-  may hold a block that does not parse (panel round 9). Such a page's locale file is skipped with a per-file error
-  naming the block, the rest of the export runs, and the run exits `4` (5.4); it never stops the whole export.
+  may hold a block that does not parse (panel round 9). The re-parse runs only for stored blocks whose node type is
+  MDX ESM (`mdxjsEsm`), only when the depth difference is not zero, and only after classification has decided to
+  write the file (5.4); a file export keeps or refuses is never re-parsed. When a block does not parse, that page's
+  locale file is not written: the existing file and its manifest entry stay as they are, a per-file error names the
+  block, the rest of the export runs, and the run exits `4` (5.4); it never stops the whole export (panel round 10).
 - `mogging rename` to a different folder depth is refused when the page or any of its translations contains a
   relative file reference (the stored references would need rebasing; documented limit, move it by hand); renames
   within the same depth are unaffected.
@@ -667,6 +677,15 @@ content; how the template's dependencies sit relative to the pnpm workspace; the
   - import reports a follows-English difference on every import, not only day one, including `draft: true` on a
     published translation (solo answer 2) (5.9).
 
+- Panel round 10, narrow, owner-ruled (2026-11-14; scope: the round-9 corrections only): agy CLEAN (third time);
+  Sonnet solo 4 medium findings, all FOLDED:
+  - the ignore rule covers the whole per-locale `prev`/`next` value, `{}` equals absent, the keep test uses it, and
+    import carries a suppressed value forward when saving a `hand work` file (R10-1, R10-2) (5.4);
+  - the MDX re-parse runs only for `mdxjsEsm` blocks, only at a non-zero depth difference, only for files export
+    writes, and a skip leaves the file and its manifest entry unchanged (R10-3) (5.9);
+  - the follows-English report: once per file and key, wording true for every class, `unpublish` advice only for a
+    `published` file, replacing today's every-shared-key warning (R10-4) (5.9).
+
 ## Stand-downs
 
-None in rounds 1 to 9: no finding was discarded below the floor.
+None in rounds 1 to 10: no finding was discarded below the floor.
