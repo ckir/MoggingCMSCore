@@ -1,7 +1,5 @@
 # Contributor Licence Agreement
 
-> **Reviewed and approved by counsel** (confirmed by the project owner, 2026-11-13). Required from the first external pull request (spec section 12.5).
-
 By submitting a contribution to MoggingCMSCore you grant the project owner a perpetual,
 worldwide, irrevocable, non-exclusive, royalty-free, sublicensable right to use, reproduce,
 modify, distribute and commercially license your contribution, in source or other form, under
