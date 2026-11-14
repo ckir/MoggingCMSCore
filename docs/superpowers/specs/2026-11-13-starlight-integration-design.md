@@ -686,6 +686,10 @@ content; how the template's dependencies sit relative to the pnpm workspace; the
   - the follows-English report: once per file and key, wording true for every class, `unpublish` advice only for a
     `published` file, replacing today's every-shared-key warning (R10-4) (5.9).
 
+- Review closed by the owner after round 10 (2026-11-14, "Accept the doc now"): agy clean in rounds 8, 9 and 10;
+  the last solo findings were wording gaps in the `prev`/`next` suppression and MDX rebasing rules, all folded. The
+  implementation plan pins those rules as exact tests. Findings per round: 36, 19, 22, 14, 19, 10, 9, 3, 3, 4.
+
 ## Stand-downs
 
 None in rounds 1 to 10: no finding was discarded below the floor.
