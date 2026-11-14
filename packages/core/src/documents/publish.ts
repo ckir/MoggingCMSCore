@@ -9,7 +9,27 @@ export type UnpublishInput = { docId: string; locale: string | "shared" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Publishes the draft head (or republishes a previously published row by version); spec 6.3 flip rule. */
+/**
+ * Publishes one scope head. Without `version`, it takes the current draft head and accepts only
+ * `DRAFT_HUMAN` or `APPROVED`; a `DRAFT_AI` head is refused. With `version`, it targets that exact
+ * row: the current draft head (a normal flip) or a historical `PUBLISHED` row that is not the
+ * current published head (a republish).
+ *
+ * Publishing a draft flips the row to `PUBLISHED` and clears the previous published head, stamping
+ * its `unpublished_at`. Republishing inserts a copy as the next version and leaves the original
+ * row's publication window intact for `asOf` reads; any draft head is untouched. One
+ * millisecond-granular timestamp is read from the database after the document lock.
+ *
+ * @param ctx engine context; licence-guarded write with a NUL-free actor.
+ * @param input document, scope (`"shared"` or a declared locale), and optional explicit version.
+ * @returns nothing; success is the committed state change.
+ * @throws {LicenceError} when the evaluation has ended without a key.
+ * @throws {ValidationError} for a malformed or undeclared locale, or a NUL actor.
+ * @throws {NotFoundError} for a malformed, unknown or deleted document, or a missing version.
+ * @throws {NotPublishableError} when the target cannot be published (for example a `DRAFT_AI` head).
+ * @remarks One transaction; it publishes exactly one scope. Publishing several locales or the shared
+ * scope is several calls and is not atomic across them. No cache, webhook or search indexing runs.
+ */
 export async function publish(ctx: Ctx, input: PublishInput): Promise<void> {
   await assertLicensed(ctx);
   assertActor(ctx);
@@ -27,7 +47,22 @@ export async function publish(ctx: Ctx, input: PublishInput): Promise<void> {
   });
 }
 
-/** Clears the published head and stamps unpublished_at and unpublished_by; no-op when nothing is published. Draft head untouched. */
+/**
+ * Takes one scope offline: clears its published head and stamps `unpublished_at` /
+ * `unpublished_by`, leaving the draft head untouched. A scope with no published head is a no-op.
+ * The row keeps `state = PUBLISHED`, so the version can be republished later.
+ *
+ * Not licence-guarded: publishing is gated, taking content offline is not. The actor is still
+ * validated for U+0000.
+ *
+ * @param ctx engine context; the actor must be NUL-free.
+ * @param input document and scope (`"shared"` or a declared locale).
+ * @returns nothing; success is the committed state change.
+ * @throws {ValidationError} for an undeclared or malformed locale, or a NUL actor.
+ * @throws {NotFoundError} for a malformed, unknown or deleted document.
+ * @remarks One transaction under the document lock. No external effect. Reads immediately see the
+ * fallback behaviour; a later `publish` with that explicit `version` can restore the same row.
+ */
 export async function unpublish(ctx: Ctx, input: UnpublishInput): Promise<void> {
   assertActor(ctx);
   const { sql } = ctx;

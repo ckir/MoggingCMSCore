@@ -183,7 +183,34 @@ async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): P
   });
 }
 
-/** Approves the DRAFT_AI head of (doc, locale) into a new APPROVED draft head (spec 6.3). */
+/**
+ * Approves the `DRAFT_AI` head of `(doc, locale)` into a new `APPROVED` draft head (spec 6.3). The
+ * reviewer may edit fields and reject individual fields; rejected fields revert to the currently
+ * published value (or are removed), and edits assert in-sync with the source at approval time.
+ * Every distinct warning text on the AI draft must be acknowledged exactly, as a set, or the call
+ * fails; there is no implicit acknowledgement, and unknown texts are refused. Fields that are
+ * rejected or edited still count toward the warning set.
+ *
+ * The AI row stays in history and is never publishable itself. Provenance rows for the AI version
+ * are copied to the approved version with token and cost columns zeroed. The copy keeps `warnings`,
+ * `superseded_version`, `call_id`, `job_id`, `model_id` and `prompt_version`, but recomputes
+ * `edited` / `discarded` / `discard_reason` for this call and stores this call's
+ * `acknowledgedWarnings` and `bulkId`. Rejected fields restore published data, not the AI base.
+ *
+ * @param ctx engine context; licence-guarded write with a NUL-free actor.
+ * @param input document, non-source locale, optional edits/rejections/acknowledgements/bulk id, and
+ * the draft version the reviewer saw.
+ * @returns the new `APPROVED` version number.
+ * @throws {LicenceError} when the evaluation has ended without a key.
+ * @throws {ValidationError} for an undeclared or source/shared locale, an undeclared or shared
+ * field, a malformed edit, a field both edited and rejected, a warning acknowledgement mismatch, a
+ * malformed `bulkId`, or a NUL actor.
+ * @throws {NotFoundError} for a malformed, unknown or deleted document.
+ * @throws {NotPublishableError} when there is no draft head or it is not `DRAFT_AI`.
+ * @throws {ConflictError} when `expectedVersion` is not the AI head version.
+ * @remarks One transaction under the document lock. It clears the AI draft head and inserts a new
+ * row; no publication occurs. `approveClean` calls the same implementation with `cleanOnly`.
+ */
 export async function approve(ctx: Ctx, input: ApproveInput): Promise<{ version: number }> {
   await assertLicensed(ctx);
   assertActor(ctx);
@@ -192,7 +219,23 @@ export async function approve(ctx: Ctx, input: ApproveInput): Promise<{ version:
   return out;
 }
 
-/** Bulk path (spec 8.6): approves every warning-free DRAFT_AI head in scope under one shared bulkId. */
+/**
+ * Bulk path (spec 8.6): approves every warning-free `DRAFT_AI` head in scope under one generated
+ * `bulkId`. Warning-carrying drafts are skipped with reason `has warnings`; a head that changed
+ * between the scan and its lock is skipped as `no longer a DRAFT_AI head`. Other errors abort the
+ * call. Each document is approved in its own transaction, so a later failure does not roll back
+ * earlier approvals.
+ *
+ * @param ctx engine context; licence and actor checks run once before the scan, not per document.
+ * @param input optional collection and locale filters; an undeclared collection or locale is a
+ * validation error.
+ * @returns the number approved and the skipped pairs with reasons.
+ * @throws {LicenceError} when the evaluation has ended without a key.
+ * @throws {ValidationError} for an unknown collection, for a source, shared or undeclared locale, or
+ * for a NUL actor.
+ * @remarks One read to scan, then one transaction per candidate. A `human:bulk-approve` marker row
+ * carries the generated `bulkId`; no publication occurs. Skips are not failures.
+ */
 export async function approveClean(ctx: Ctx, input: ApproveCleanInput = {}): Promise<ApproveCleanResult> {
   await assertLicensed(ctx); // once per bulk call, before the scan; approveImpl itself is unguarded
   assertActor(ctx); // also before the scan: a bad ctx is refused on an empty scan too

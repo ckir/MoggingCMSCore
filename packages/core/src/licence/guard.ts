@@ -32,10 +32,23 @@ async function firstMigration(ctx: Ctx): Promise<Date | null> {
 }
 
 /**
- * Licence state (spec 12.3). A key from `MOGGING_LICENSE_KEY` (else `config.license`) that verifies gives
- * `licensed`. Otherwise the 30-day evaluation window runs from the earliest migration: `daysLeft` is the
- * whole days remaining rounded up (ceil((start + 30 days - now) / 1 day), at most 30); the window is over,
- * `expired` with `daysLeft` 0, once that remainder is <= 0. `warn` is `daysLeft <= 7`.
+ * Licence state (spec 12.3). A key from `MOGGING_LICENSE_KEY` (trimmed; else `config.license`) that
+ * verifies against `opts.publicKeys` (default: the embedded production keys) at `opts.now` gives
+ * `licensed`. Otherwise the 30-day evaluation window runs from the earliest `applied_at` in
+ * `migrations`; an empty or missing table counts as day one. `daysLeft` is the whole days remaining
+ * rounded up (ceil((start + 30 days - now) / 1 day), at most 30); the window is over, `expired` with
+ * `daysLeft` 0, once that remainder is <= 0. `warn` is `daysLeft <= 7`.
+ *
+ * A supplied key that does not verify never licenses: the state falls back to evaluation or expiry
+ * and `keyError` records `LICENCE_INVALID` or `LICENCE_EXPIRED`.
+ *
+ * @param ctx engine context; only the config and the `migrations` table are read.
+ * @param opts test seams for the accepted public keys and the current instant; omit in production.
+ * @returns the state, optional days left, warning flag, a valid key's payload, and any key error.
+ * @remarks One read-only query, no locks. A missing `migrations` table (Postgres `42P01`) is treated
+ * as an empty table, not an error, so a fresh database starts its window; other database errors
+ * propagate. This function does not throw for an invalid key. Keys are verified offline and never
+ * logged or sent anywhere.
  */
 export async function getLicenceState(
   ctx: Ctx,
@@ -66,8 +79,16 @@ export async function getLicenceState(
 }
 
 /**
- * Guard for the write path (spec 12.3): throws `LicenceError` `LICENCE_REQUIRED` once the evaluation window is
- * over without a valid key. One read of `migrations`, no locks. Reads never call it.
+ * Guard for the write path (spec 12.3): throws `LicenceError` `LICENCE_REQUIRED` once the evaluation
+ * window is over without a valid key. Reads never call it. Guarded operations call it before any
+ * actor or input check, so a licence refusal wins over a malformed actor.
+ *
+ * @param ctx engine context used to read the licence state and the configured purchase URL.
+ * @returns resolves when the state is `licensed` or `evaluation`; otherwise throws.
+ * @throws {LicenceError} with code `LICENCE_REQUIRED`. The message names a rejected or expired key
+ * when one was supplied and includes `config.purchaseUrl` (default `https://mogging.dev/buy`).
+ * @remarks One read-only query, no locks. This is a write gate, not authentication: a caller with
+ * direct database access can bypass it, which the licence terms forbid.
  */
 export async function assertLicensed(ctx: Ctx): Promise<void> {
   const s = await getLicenceState(ctx);

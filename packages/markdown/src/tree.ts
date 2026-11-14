@@ -215,7 +215,19 @@ function block(n: unknown, path: string): void {
   }
 }
 
-/** Validates the portable rich-text tree contract v1. Returns the same object; throws ValidationError naming the JSON path. */
+/**
+ * Validates the portable rich-text tree contract v1 and returns the same object narrowed to
+ * `RichTextRoot`. It enforces exact node keys, allowed block/inline types, canonical mark order and
+ * uniqueness, merged adjacent text nodes, non-empty text, heading depth 1 to 6, list/table shapes,
+ * valid alignment, non-nested links, and `mode: "md" | "mdx"`.
+ *
+ * @param value untrusted value, typically a richText field read from storage or a model response.
+ * @param path JSON path used in error messages (default `$`).
+ * @returns the input object unchanged when it is valid.
+ * @throws {ValidationError} naming the failing JSON path at the first violation.
+ * @remarks Pure and synchronous. The check is structural: opaque nodes are accepted without parsing
+ * their `source`, and URL schemes are not inspected.
+ */
 export function validateTree(value: unknown, path = "$"): RichTextRoot {
   if (!isObj(value)) fail(path, "expected an object");
   if (value["type"] !== "root") fail(path, `expected type "root"`);

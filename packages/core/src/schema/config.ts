@@ -64,6 +64,25 @@ export function defineConfig(c: {
   };
 }
 
+/**
+ * Builds the ordered fallback chain for one localized field: the requested locale first, then the
+ * field's override or the locale's configured chain. Returned locale tags are normalized.
+ *
+ * A per-field `fallback` array replaces the locale chain entirely; `fallback: "none"` yields only
+ * the requested locale. Shared (non-localized) fields have no chain, but this function does not
+ * reject them: it returns the normal chain, and callers use it only for localized fields. Per-field
+ * fallback targets are normalized but not checked against the declared locale list (unlike chain
+ * values, which `defineConfig` validates), so a typo in a field override is not caught here.
+ *
+ * @param config validated config produced by `defineConfig`; its chains are already normalized.
+ * @param locale requested BCP 47 tag; normalized here, so `de-ch` matches `de-CH`.
+ * @param collection collection name; an unknown name throws `NotFoundError`.
+ * @param field field name within that collection; only own properties count.
+ * @returns the chain, always starting with the normalized requested locale. Duplicates are possible
+ * only when the configuration itself repeats a locale.
+ * @throws {NotFoundError} when the collection or field is not declared.
+ * @remarks Pure and synchronous: no I/O, no mutation, safe to call per request.
+ */
 export function chainFor(
   config: MoggingConfig,
   locale: string,

@@ -46,8 +46,23 @@ function leafText(value: unknown): string {
 }
 
 /**
- * Spec 8.4 checks 2 to 4 (plus the U+0000 and shape gates) over one field's draft. Rejections are collected in rule
- * order; when the draft is not well formed (rule 1) rules 2 to 4 are skipped because they need a readable draft.
+ * Spec 8.4 checks 2 to 4 (plus the U+0000 and shape gates) over one field's draft. Rejections are
+ * collected in rule order; when the draft is not well formed (rule 1) rules 2 to 4 are skipped
+ * because they need a readable draft.
+ *
+ * Rich text is validated by restoring the sentinelized draft and returning the restored tree;
+ * non-rich values are shape-checked against the source and returned as the model wrote them.
+ * Placeholder parity is a multiset comparison, do-not-translate terms must survive at least as
+ * often as in the source, and a glossary translation or accepted form must appear when the source
+ * uses its term. In `warn` mode a missing glossary form is a warning even when the field is
+ * accepted; in `strict` mode it is a rejection.
+ *
+ * @param args prepared source field, its declaration, the model's draft, and the locale pair's
+ * glossary plus the configured mode.
+ * @returns either an accepted value with warnings/used glossary terms, or rejection messages.
+ * @remarks No I/O, database access or mutation. Model-output problems are returned in the verdict
+ * rather than thrown; a thrown error indicates a programmer error in the prepared input. The
+ * `rejections` strings are prefixed with the field name. Empty glossary entries are allowed.
  */
 export function validateField(args: {
   prepared: PreparedField; field: Field; draft: unknown; glossary: GlossaryEntry[]; glossaryMode: GlossaryMode;

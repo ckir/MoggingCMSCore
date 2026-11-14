@@ -17,6 +17,31 @@ export type SaveDraftInput = {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Creates a new `DRAFT_HUMAN` head for one scope of a document: `locale: "shared"` for the shared
+ * snapshot, or a declared locale for that locale's snapshot. `data` is the complete snapshot for the
+ * scope, not a patch; fields not supplied are absent from the new version. Top-level null values are
+ * stripped (absence), while nested nulls are kept.
+ *
+ * The current draft head is cleared and replaced. This is also the human-takeover path over a
+ * `DRAFT_AI` or `APPROVED` head. A target-locale save records the current published source hash for
+ * each changed or new field and carries the base head's hash forward for unchanged fields, so a
+ * re-save does not assert translation freshness.
+ *
+ * @param ctx engine context; the write must be licensed and the actor NUL-free.
+ * @param input document id, scope, complete field data, and optional expected head version.
+ * @returns the new version number allocated for the scope.
+ * @throws {LicenceError} `LICENCE_REQUIRED` when the evaluation has ended without a key.
+ * @throws {ValidationError} for a malformed or undeclared locale, an undeclared or wrongly-scoped
+ * field, an invalid value, or U+0000.
+ * @throws {NotFoundError} for a malformed, unknown or deleted document, or a collection absent from
+ * the config.
+ * @throws {ConflictError} when `expectedVersion` does not match the current head (draft head, else
+ * published head, else 0).
+ * @remarks One transaction that locks the `documents` row and writes one snapshot. No cache, webhook
+ * or external effect. History rows are retained; the previous draft head is only unmarked, not
+ * deleted.
+ */
 export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ version: number }> {
   await assertLicensed(ctx);
   assertActor(ctx);

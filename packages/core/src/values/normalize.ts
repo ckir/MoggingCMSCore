@@ -86,7 +86,23 @@ function normalizeAt(field: Field, value: unknown, path: string): unknown {
   }
 }
 
-/** Typed normalization (spec 6.4). Throws ValidationError naming the field path. */
+/**
+ * Normalizes one field value to its storage form and validates its shape. Strings are NFC-normalized,
+ * slugs lower-cased, date-times converted to UTC ISO-8601 with milliseconds, and object keys checked
+ * against the field declaration. U+0000 is refused anywhere in the value.
+ *
+ * Top-level null is not accepted here: callers treat it as absence before calling. Nested nulls are
+ * preserved, including null list elements. `undefined` object properties are dropped; `undefined`
+ * anywhere else is invalid. Numbers must be finite and booleans must be booleans.
+ *
+ * @param field declared field that determines the accepted shape.
+ * @param value caller value; it is not mutated.
+ * @param path diagnostic path used in `ValidationError` messages (default `$`).
+ * @returns a normalized value: objects and lists are rebuilt, scalars may be returned as-is, and a
+ * date-time becomes its ISO string.
+ * @throws {ValidationError} naming `path` when the value is not valid for the field.
+ * @remarks Pure and synchronous: no database, clock or mutation of `value`.
+ */
 export function normalizeValue(field: Field, value: unknown, path = "$"): unknown {
   return normalizeAt(field, value, path);
 }
@@ -96,7 +112,21 @@ export function stripTopLevelNulls(data: Record<string, unknown>): Record<string
   return Object.fromEntries(Object.entries(data).filter(([, v]) => v !== null));
 }
 
-/** Empty string, empty list, empty object, empty rich-text tree; always false for scalar kinds. */
+/**
+ * Reports whether a value is the empty form of its field kind: the form that means "present but show
+ * nothing" rather than "absent" (spec 6.2). Empty means `""` for text/slug, `[]` for lists, `{}` for
+ * objects, and `""`, `[]`, `{}` or a tree with no children for rich text.
+ *
+ * Number, boolean, dateTime and reference always return false: they have no empty value, so a
+ * localized scalar that must not fall back needs `fallback: "none"`. A list containing `null`
+ * (`[null]`) is not empty. The read path selects values by JSON null, not by this predicate; this is
+ * an authoring/validation helper.
+ *
+ * @param field field whose empty form is being tested.
+ * @param value candidate normalized value; its shape is not re-validated here.
+ * @returns true only for the empty form of an empty-able kind.
+ * @remarks Pure and synchronous; no I/O.
+ */
 export function isEmptyValue(field: Field, value: unknown): boolean {
   switch (field.kind) {
     case "text":

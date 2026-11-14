@@ -152,10 +152,32 @@ export async function removeFromRelease(ctx: Ctx, input: RemoveFromReleaseInput)
 }
 
 /**
- * Publishes every item of a release in one transaction (spec 7.2, 8.1). Lock order: release row, then the
- * involved `documents` rows in ascending id. Stale re-check judges each localized item's own draft row
- * against the source as it will be after the flip (the in-release source item's draft, else the current
- * published source head); the flip is `publishWithinTx` (spec 6.3) with one stamp.
+ * Publishes every item of a release atomically (spec 7.2, 8.1). It locks the release row, then all
+ * involved `documents` rows in ascending id order, and uses one millisecond-granular timestamp for
+ * every flip and for the release's own `published_at`. The release is marked published in the same
+ * transaction, so either the whole release is live or nothing changed.
+ *
+ * Before flipping, every item must still be the current draft head in `DRAFT_HUMAN` or `APPROVED`;
+ * a missing, deleted or changed document refuses the whole release. A localized target item is
+ * stale when its stored source hash for a field differs from the source as it will be after the
+ * release: the in-release source draft when the release carries that document's source locale,
+ * otherwise the current published source head. Source-locale and shared items are not stale-checked.
+ * Staleness raises `StaleReleaseError` with an `items` payload unless `allowStale === true`, in which
+ * case the release records `allow_stale = true`.
+ *
+ * @param ctx engine context; licence-guarded write with a NUL-free actor.
+ * @param input release id and the explicit stale override.
+ * @returns nothing; success means every item is published and the release is marked published.
+ * @throws {LicenceError} `LICENCE_REQUIRED` when the evaluation has ended without a key.
+ * @throws {NotFoundError} for a malformed or unknown release, or a missing or soft-deleted item
+ * document.
+ * @throws {ValidationError} for an already-published or empty release, or a NUL actor.
+ * @throws {NotPublishableError} when any item is no longer a publishable draft head.
+ * @throws {StaleReleaseError} when stale items exist and `allowStale` is not exactly `true`; the
+ * machine-readable list is on `err.items`.
+ * @remarks One transaction, no external effects or scheduling. An item is published by version, so
+ * the head must not move between `addToRelease` and this call. A published release cannot be edited
+ * or unpublished as a unit; unpublish individual heads instead.
  */
 export async function publishRelease(ctx: Ctx, input: PublishReleaseInput): Promise<void> {
   await assertLicensed(ctx);

@@ -196,7 +196,23 @@ function copySpread(src: Block[], dst: Block[]): void {
   }
 }
 
-/** Structurally validates an AI draft against its sentinelized source and re-inserts the originals. */
+/**
+ * Structurally validates an AI-returned Markdown draft against its sentinelized source and
+ * re-inserts the original code/opaque nodes. Checks, in order: parse, sentinel text (no invented or
+ * altered residue, each token exactly once and at a legal position), block structure signature,
+ * link/image targets, placeholders, and a serialize/parse round trip. Once the structure matches,
+ * `spread` is copied from the source because sentinel Markdown can flip tight/loose list layout.
+ *
+ * @param prepared result of `sentinelize` for the source field: source tree, sentinel Markdown and
+ * the original nodes.
+ * @param draftMarkdown model output, parsed in the source tree's `md` or `mdx` mode.
+ * @returns `{ ok: true, root }` with a validated tree, or `{ ok: false, codes, detail }` with codes
+ * in `REJECTION_ORDER`. A failed draft must not be stored.
+ * @remarks No I/O and no mutation of `prepared`; originals are cloned before insertion. Structure
+ * checks run only when the sentinels are sound, while placeholder and round-trip checks still run,
+ * so one draft can report several codes. This is a structural check, not a semantic translation
+ * review.
+ */
 export function restoreDraft(prepared: SentinelPrepared, draftMarkdown: string): RestoreResult {
   const { source, originals } = prepared;
   const n = originals.length;
