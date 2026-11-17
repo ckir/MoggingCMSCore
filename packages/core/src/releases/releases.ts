@@ -172,7 +172,8 @@ export async function removeFromRelease(ctx: Ctx, input: RemoveFromReleaseInput)
  * @throws {LicenceError} `LICENCE_REQUIRED` when the evaluation has ended without a key.
  * @throws {NotFoundError} for a malformed or unknown release, or a missing or soft-deleted item
  * document.
- * @throws {ValidationError} for an already-published or empty release, a NUL actor, or a shared item whose
+ * @throws {ValidationError} for an already-published or empty release, a NUL actor, an item that lacks a required
+ * field of its scope, or a shared item whose
  * slug another live document of the collection holds (spec 8).
  * @throws {NotPublishableError} when any item is no longer a publishable draft head.
  * @throws {StaleReleaseError} when stale items exist and `allowStale` is not exactly `true`; the

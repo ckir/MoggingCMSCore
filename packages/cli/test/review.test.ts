@@ -8,7 +8,7 @@ import type { Sql } from "postgres";
 import { run } from "../src/run.js";
 import { reviewSpec } from "../src/commands/review.js";
 import { withTestDb } from "./db.js";
-import { aiDraft, coreCtx, publishedDoc, testDeps } from "./fixtures.js";
+import { aiDraft, coreCtx, md, publishedDoc, testDeps } from "./fixtures.js";
 
 /** A per-test schema with the migrations applied. */
 const withDb = (fn: (sql: Sql) => Promise<void>) =>
@@ -43,7 +43,7 @@ const prov = (fieldPath: string, warnings: string[] = []) => ({
 async function draftWith(
   sql: Sql, docId: string, locale: string, fields: Record<string, unknown>, warned: Record<string, string[]> = {},
 ): Promise<number> {
-  const hashes: Record<string, string> = { title: hashValue("Intro"), body: hashValue("Hello") };
+  const hashes: Record<string, string> = { title: hashValue("Intro"), body: hashValue(md("Hello")) };
   const result = await recordAiDraft(coreCtx(sql), {
     docId, locale, fields, sourceVersion: 1,
     sourceHashes: Object.fromEntries(Object.keys(fields).map((k) => [k, hashes[k]!])),
@@ -55,7 +55,7 @@ async function draftWith(
 
 /** Publishes a new source (en) title and body, so the drafts made before are behind it. */
 async function moveSource(sql: Sql, docId: string): Promise<void> {
-  await saveDraft(coreCtx(sql), { docId, locale: "en", data: { title: "Intro 2", body: "Hello 2" } });
+  await saveDraft(coreCtx(sql), { docId, locale: "en", data: { title: "Intro 2", body: md("Hello 2") } });
   await publish(coreCtx(sql), { docId, locale: "en" });
 }
 
@@ -305,7 +305,7 @@ describe("review approve", () => {
     async (_name, kind) => {
       await withDb(async (sql) => {
         const docId = await publishedDoc(sql);
-        const v = await draftWith(sql, docId, "de", { title: "Einleitung", body: "Hallo" });
+        const v = await draftWith(sql, docId, "de", { title: "Einleitung", body: md("Hallo") });
         await moveSource(sql, docId); // both source fields moved: a re-pin of the body would show in its hash
         const file =
           kind === "txt"
@@ -316,8 +316,8 @@ describe("review approve", () => {
         expect(r.code).toBe(0);
 
         const head = (await rows(sql, docId)).find((x) => x.is_head_draft)!;
-        expect(head.data).toEqual({ title: "Neuer Titel", body: "Hallo" });
-        expect(head.source_hashes).toEqual({ title: hashValue("Intro 2"), body: hashValue("Hello") });
+        expect(head.data).toEqual({ title: "Neuer Titel", body: md("Hallo") });
+        expect(head.source_hashes).toEqual({ title: hashValue("Intro 2"), body: hashValue(md("Hello")) });
         expect((await provenanceOf(sql, docId, head.version as number)).map((p) => [p.field_path, p.edited])).toEqual([
           ["body", false],
           ["title", true],
@@ -360,7 +360,7 @@ describe("review approve", () => {
   describe("D-warn (Review Focus 10)", () => {
     const setup = async (sql: Sql) => {
       const docId = await publishedDoc(sql);
-      const v = await draftWith(sql, docId, "de", { title: "Einleitung", body: "Hallo" }, { title: [W1], body: [W2] });
+      const v = await draftWith(sql, docId, "de", { title: "Einleitung", body: md("Hallo") }, { title: [W1], body: [W2] });
       return { docId, v };
     };
     const unchanged = async (sql: Sql, docId: string, v: number) =>

@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import type { Sql } from "postgres";
 import {
   ValidationError, addToRelease, createDocument, createRelease, defineCollection, defineConfig, deleteDocument,
-  migrate, publish, publishRelease, richText, saveDraft, slug, text,
+  getDocument, migrate, publish, publishRelease, richText, saveDraft, slug, text,
 } from "../src/index.js";
 import type { Ctx } from "../src/index.js";
 import { extraConnection } from "./fixtures.js";
@@ -279,4 +279,64 @@ test("publishRelease takes every shared collection's slug lock up front, in sort
     await holder.end();
     await releaser.end();
   }
+}));
+
+/** Publishes the shared heads of 20 `posts` documents with slugs `s1` ... `s20`; returns the id saved with `s7`. */
+async function seedTwentyPublished(ctx: Ctx): Promise<string> {
+  let s7 = "";
+  for (let i = 1; i <= 20; i++) {
+    const docId = await newDoc(ctx);
+    await saveSlug(ctx, docId, `s${i}`);
+    await publish(ctx, { docId, locale: "shared" });
+    if (i === 7) s7 = docId;
+  }
+  return s7;
+}
+
+/**
+ * The slug index's use counters in this transaction: scans started and entries returned. Both are asserted: with
+ * `enable_seqscan = off` a bound-key lookup either skips the index (no scan) or scans it only to satisfy its partial
+ * predicate (every head is returned), so a lookup that matches the index condition shows at least one scan and
+ * (for a missing or unique slug) almost no entries. `force_generic_plan` stops a custom plan from substituting a
+ * bound key as a constant and matching anyway.
+ */
+async function slugIndexUse(tx: Sql): Promise<{ scans: number; entries: number }> {
+  const [row] = await tx`select pg_stat_get_xact_numscans('idx_doc_shared_slug'::regclass) as scans,
+    pg_stat_get_xact_tuples_returned('idx_doc_shared_slug'::regclass) as entries`;
+  return { scans: Number(row!.scans), entries: Number(row!.entries) };
+}
+
+function expectSlugIndexUsed(before: { scans: number; entries: number }, after: { scans: number; entries: number }): void {
+  expect(after.scans - before.scans).toBeGreaterThanOrEqual(1);
+  expect(after.entries - before.entries).toBeLessThan(5);
+}
+
+test("the slug guard's lookup uses the slug index condition", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  await seedTwentyPublished(ctx);
+  await sql.begin(async (tx) => {
+    await tx.unsafe("set local enable_seqscan = off");
+    await tx.unsafe("set local plan_cache_mode = force_generic_plan");
+    const txCtx: Ctx = { ...ctx, sql: tx as unknown as Sql };
+    const id = await newDoc(txCtx);
+    const before = await slugIndexUse(tx as unknown as Sql);
+    await saveSlug(txCtx, id, "fresh");
+    const after = await slugIndexUse(tx as unknown as Sql);
+    expectSlugIndexUsed(before, after);
+  });
+}));
+
+test("getDocument by slug uses the slug index condition", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const s7 = await seedTwentyPublished(ctx);
+  await sql.begin(async (tx) => {
+    await tx.unsafe("set local enable_seqscan = off");
+    await tx.unsafe("set local plan_cache_mode = force_generic_plan");
+    const txCtx: Ctx = { ...ctx, sql: tx as unknown as Sql };
+    const before = await slugIndexUse(tx as unknown as Sql);
+    const found = await getDocument(txCtx, { collection: "posts", slug: "s7" });
+    const after = await slugIndexUse(tx as unknown as Sql);
+    expect(found?.id).toBe(s7);
+    expectSlugIndexUsed(before, after);
+  });
 }));

@@ -6,7 +6,7 @@ import { createDocument, getSyncState, migrate, publish, saveDraft } from "@mogg
 import type { Sql } from "postgres";
 import { run } from "../src/run.js";
 import { withTestDb } from "./db.js";
-import { config, coreCtx, publishedDoc, testDeps } from "./fixtures.js";
+import { config, coreCtx, md, publishedDoc, testDeps } from "./fixtures.js";
 import { starlightConfig, starlightDeps, starlightProject } from "./starlightFixtures.js";
 
 /** A per-test schema with the migrations applied. */
@@ -131,7 +131,7 @@ describe("mogging track", () => {
 /** A published `docs/<slug>` whose `de` head (title and body) is published with `untracked: true`. */
 async function untrackedDoc(sql: Sql, slug: string): Promise<string> {
   const docId = await publishedDoc(sql, slug);
-  await saveDraft(coreCtx(sql), { docId, locale: "de", data: { title: `T ${slug}`, body: `B ${slug}` }, untracked: true });
+  await saveDraft(coreCtx(sql), { docId, locale: "de", data: { title: `T ${slug}`, body: md(`B ${slug}`) }, untracked: true });
   await publish(coreCtx(sql), { docId, locale: "de" });
   return docId;
 }
@@ -139,7 +139,7 @@ async function untrackedDoc(sql: Sql, slug: string): Promise<string> {
 /** A published `docs/<slug>` whose `de` head records the source hashes, so every field is `current`. */
 async function currentDoc(sql: Sql, slug: string): Promise<string> {
   const docId = await publishedDoc(sql, slug);
-  await saveDraft(coreCtx(sql), { docId, locale: "de", data: { title: `T ${slug}`, body: `B ${slug}` } });
+  await saveDraft(coreCtx(sql), { docId, locale: "de", data: { title: `T ${slug}`, body: md(`B ${slug}`) } });
   await publish(coreCtx(sql), { docId, locale: "de" });
   return docId;
 }

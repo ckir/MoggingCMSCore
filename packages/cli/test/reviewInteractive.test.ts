@@ -9,7 +9,7 @@ import type { Sql } from "postgres";
 import { run } from "../src/run.js";
 import type { Deps } from "../src/types.js";
 import { withTestDb } from "./db.js";
-import { aiDraft, connectionOver, coreCtx, DAY, publishedDoc, setFirstMigration, testDeps } from "./fixtures.js";
+import { aiDraft, connectionOver, coreCtx, DAY, md, publishedDoc, setFirstMigration, testDeps } from "./fixtures.js";
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -37,7 +37,7 @@ const prov = (fieldPath: string, warnings: string[] = []) => ({
 async function draftWith(
   sql: Sql, docId: string, locale: string, fields: Record<string, unknown>, warned: Record<string, string[]> = {},
 ): Promise<number> {
-  const hashes: Record<string, string> = { title: hashValue("Intro"), body: hashValue("Hello") };
+  const hashes: Record<string, string> = { title: hashValue("Intro"), body: hashValue(md("Hello")) };
   const result = await recordAiDraft(coreCtx(sql), {
     docId, locale, fields, sourceVersion: 1,
     sourceHashes: Object.fromEntries(Object.keys(fields).map((k) => [k, hashes[k]!])),
@@ -334,7 +334,7 @@ describe("interactive review: the terminal and the input", () => {
 
 describe("interactive review: warnings (D-warn)", () => {
   const warned = (sql: Sql, docId: string) =>
-    draftWith(sql, docId, "de", { title: "Einleitung", body: "Hallo" }, { title: [W1, W2], body: [W1] });
+    draftWith(sql, docId, "de", { title: "Einleitung", body: md("Hallo") }, { title: [W1, W2], body: [W1] });
 
   test("a asks once per distinct warning; n leaves the draft pending, y for each approves and records them", async () => {
     await withDb(async (sql) => {
@@ -511,7 +511,8 @@ describe("interactive review: the edit step", () => {
   test("a value holding a header line is refused by e with no file written; the menu returns", async () => {
     await withDb(async (sql) => {
       const docId = await publishedDoc(sql);
-      await draftWith(sql, docId, "de", { title: "Einleitung", body: "eins\n=== title ===\nzwei" });
+      // A code fence, not md(...) text: treeToMarkdown would escape `=== title ===` (`\=== title ===`), so the guard would never see the header line; a fence keeps it verbatim.
+      await draftWith(sql, docId, "de", { title: "Einleitung", body: markdownToTree("eins\n\n```\n=== title ===\n```\n\nzwei") });
       const s = start(sql, ["docs/intro"], { editor: editor(() => void problems.push("the editor must not run")) });
       await s.answer(MENU, "e");
       await s.expect("looks like a section header");

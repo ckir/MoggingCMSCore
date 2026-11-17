@@ -19,6 +19,12 @@ export const config = defineConfig({
   locales: { source: "en", chains: { "de-CH": ["de", "en"], de: ["en"] } },
 });
 
+/** A one-paragraph rich-text tree holding `text` (an empty string gives a tree with no children). */
+export const md = (text: string) => ({
+  type: "root" as const, version: 1 as const, mode: "md" as const,
+  children: text === "" ? [] : [{ type: "paragraph", children: [{ type: "text", value: text, marks: [] }] }],
+});
+
 export const ctxFor = (sql: Sql, actor = "tester"): Ctx => ({ sql, config, actor });
 
 /**

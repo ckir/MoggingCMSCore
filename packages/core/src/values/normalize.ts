@@ -44,10 +44,15 @@ function normalizeAt(field: Field, value: unknown, path: string): unknown {
       rejectNul(value, path);
       return value.normalize("NFC").toLowerCase();
     case "richText":
-      if (typeof value !== "string" && typeof value !== "object") {
-        throw new ValidationError(`${path}: expected richText (string, object or array)`);
+      if (
+        !isPlainObject(value) || Object.keys(value).length !== 4 || value["type"] !== "root" || value["version"] !== 1
+        || (value["mode"] !== "md" && value["mode"] !== "mdx") || !Array.isArray(value["children"])
+      ) {
+        throw new ValidationError(
+          `${path}: expected richText as a rich-text tree { type: "root", version: 1, mode: "md" | "mdx", children: [...] }`
+          + (typeof value === "string" ? "; convert Markdown with markdownToTree from @mogging/markdown" : ""),
+        );
       }
-      if (value === null) throw new ValidationError(`${path}: expected richText, got null`);
       return nfcDeep(value, path);
     case "json":
       return nfcDeep(value, path);

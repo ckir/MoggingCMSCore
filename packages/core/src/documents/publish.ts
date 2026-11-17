@@ -24,7 +24,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * @param input document, scope (`"shared"` or a declared locale), and optional explicit version.
  * @returns nothing; success is the committed state change.
  * @throws {LicenceError} when the evaluation has ended without a key.
- * @throws {ValidationError} for a malformed or undeclared locale, or a NUL actor.
+ * @throws {ValidationError} for a malformed or undeclared locale, a NUL actor, or a target that lacks a required
+ * field of its scope.
  * @throws {NotFoundError} for a malformed, unknown or deleted document, or a missing version.
  * @throws {NotPublishableError} when the target cannot be published (for example a `DRAFT_AI` head).
  * @remarks One transaction; it publishes exactly one scope. Publishing several locales or the shared

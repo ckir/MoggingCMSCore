@@ -4,7 +4,7 @@ import {
   ConflictError, LicenceError, NotFoundError, NotPublishableError, ValidationError, approve, assertLicensed,
   createDocument, getDocument, getSyncState, hashValue, migrate, publish, recordAiDraft, rejectDraft, saveDraft, unpublish,
 } from "../src/index.js";
-import { ctxFor } from "./fixtures.js";
+import { md, ctxFor } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -23,10 +23,10 @@ async function setup(sql: Sql) {
   await migrate(sql);
   const ctx = ctxFor(sql, "reviewer");
   const { id: docId } = await createDocument(ctx, { collection: "posts" });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("World") } });
   await publish(ctx, { docId, locale: "en" });
-  const hashes = { title: hashValue("Hello"), body: hashValue("World") };
-  const draft = (fields: Record<string, unknown> = { title: "Hallo", body: "Welt" }) => recordAiDraft(ctx, {
+  const hashes = { title: hashValue("Hello"), body: hashValue(md("World")) };
+  const draft = (fields: Record<string, unknown> = { title: "Hallo", body: md("Welt") }) => recordAiDraft(ctx, {
     docId, locale: "de", fields, sourceVersion: 1, sourceHashes: hashes, provenance: Object.keys(fields).map(prov),
   });
   await draft();
@@ -108,7 +108,7 @@ test("rejectDraft is not licence-guarded", async () => withTestDb(async (sql) =>
 test("a recordAiDraft after a reject stores the next version as the new draft head and keeps the rejected row in history", async () => withTestDb(async (sql) => {
   const { ctx, docId, draft } = await setup(sql);
   await rejectDraft(ctx, { docId, locale: "de" });
-  const next = await draft({ title: "Hallo neu", body: "Welt neu" });
+  const next = await draft({ title: "Hallo neu", body: md("Welt neu") });
   expect(next).toMatchObject({ version: 2 });
   expect(await rows(sql, docId)).toMatchObject([
     { version: 1, state: "DRAFT_AI", is_head_draft: false },
@@ -116,7 +116,7 @@ test("a recordAiDraft after a reject stores the next version as the new draft he
   ]);
   const doc = await getDocument(ctx, { collection: "posts", docId });
   expect(doc!.locales.de?.draft?.version).toBe(2);
-  expect(doc!.locales.de?.draft?.data).toEqual({ title: "Hallo neu", body: "Welt neu" });
+  expect(doc!.locales.de?.draft?.data).toEqual({ title: "Hallo neu", body: md("Welt neu") });
 }));
 
 const headData = async (sql: Sql, docId: string) => {
@@ -138,8 +138,8 @@ test("redraft after reject restarts from the approved predecessor", async () => 
   await approve(ctx, { docId, locale: "de" }); // v2 APPROVED
   await draft({ title: "AI" }); // v3 supersedes v2
   await rejectDraft(ctx, { docId, locale: "de" }); // rejects v3
-  expect(await draft({ body: "B2" })).toEqual({ version: 4 });
-  expect((await headData(sql, docId)).data).toEqual({ title: "Hallo", body: "B2" });
+  expect(await draft({ body: md("B2") })).toEqual({ version: 4 });
+  expect((await headData(sql, docId)).data).toEqual({ title: "Hallo", body: md("B2") });
   const p = await sql`select superseded_version from content_provenance
     where doc_id = ${docId} and locale = 'de' and version = 4`;
   expect(p).toHaveLength(1);
@@ -152,7 +152,7 @@ test("redraft after unpublish still starts from the published row", async () => 
   await publish(ctx, { docId, locale: "de" });
   await unpublish(ctx, { docId, locale: "de" });
   await draft({ title: "X" });
-  expect((await headData(sql, docId)).data).toEqual({ title: "X", body: "Welt" });
+  expect((await headData(sql, docId)).data).toEqual({ title: "X", body: md("Welt") });
 }));
 
 // Pins Task 4: a rejected non-head DRAFT_AI row of a higher version must not beat the PUBLISHED row as the base.
@@ -163,8 +163,8 @@ test("redraft after reject and unpublish still starts from the published row", a
   await draft({ title: "AI" });
   await rejectDraft(ctx, { docId, locale: "de" });
   await unpublish(ctx, { docId, locale: "de" });
-  await draft({ body: "B2" });
-  expect((await headData(sql, docId)).data).toEqual({ title: "Hallo", body: "B2" });
+  await draft({ body: md("B2") });
+  expect((await headData(sql, docId)).data).toEqual({ title: "Hallo", body: md("B2") });
 }));
 
 // A rejected DRAFT_AI row is not a head, so it is not the base of a human save either (spec 6.4: draft head, else
@@ -173,9 +173,9 @@ test("redraft after reject and unpublish still starts from the published row", a
 test("saveDraft after a reject does not inherit the rejected draft's source hashes", async () => withTestDb(async (sql) => {
   const { ctx, docId, hashes } = await setup(sql);
   await rejectDraft(ctx, { docId, locale: "de" });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello2", body: "World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello2", body: md("World") } });
   await publish(ctx, { docId, locale: "en" });
-  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt" } });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: md("Welt") } });
   const [h] = await sql`select source_hashes from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
   expect(h!.source_hashes).toEqual({ title: hashValue("Hello2"), body: hashes.body });
 }));
@@ -188,12 +188,12 @@ test("saveDraft after approve, a superseding AI draft and its reject still carri
   await approve(ctx, { docId, locale: "de" }); // v2 APPROVED, source hashes of the Hello/World source
   await draft({ title: "AI" }); // v3 supersedes v2
   await rejectDraft(ctx, { docId, locale: "de" }); // rejects v3: no draft head, base is the APPROVED v2
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello2", body: "World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello2", body: md("World") } });
   await publish(ctx, { docId, locale: "en" });
-  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt 2" } });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: md("Welt 2") } });
   const [h] = await sql`select source_hashes from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
   // title is unchanged against the approved base (its old hash is carried, not hashValue("Hello2")); body changed.
-  expect(h!.source_hashes).toEqual({ title: hashes.title, body: hashValue("World") });
+  expect(h!.source_hashes).toEqual({ title: hashes.title, body: hashValue(md("World")) });
 }));
 
 test("rejectDraft refuses a reason containing U+0000 with a ValidationError and changes nothing", async () => withTestDb(async (sql) => {

@@ -1,6 +1,9 @@
 import { expect, test } from "vitest";
-import { NotFoundError, NotPublishableError, createDocument, deleteDocument, migrate, publish, resolve, saveDraft, unpublish } from "../src/index.js";
-import { ctxFor, extraConnection, insertAiDraftLocalized } from "./fixtures.js";
+import {
+  NotFoundError, NotPublishableError, ValidationError, createDocument, defineCollection, defineConfig, deleteDocument,
+  migrate, publish, resolve, richText, saveDraft, slug, text, unpublish,
+} from "../src/index.js";
+import { ctxFor, extraConnection, insertAiDraftLocalized, md } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 import type { Sql } from "postgres";
 
@@ -220,4 +223,125 @@ test("two concurrent republishes of the same earlier version: both succeed, vers
     expect(rows[2]!.data).toEqual({ title: "A" });
     expect(rows[3]!.data).toEqual({ title: "A" });
   } finally { await other.end(); }
+}));
+
+// Required fields (plan 7, F3): enforced at publish, per scope, on top-level fields only.
+const notesFields = (titleRequired: boolean) => ({
+  slug: slug(),
+  title: text({ localized: true, required: titleRequired }),
+  code: text({ required: true }),
+  subtitle: text({ localized: true }),
+  body: richText({ localized: true, body: true }),
+});
+const notesConfig = (titleRequired: boolean) => defineConfig({
+  collections: [defineCollection("notes", notesFields(titleRequired))],
+  locales: { source: "en", chains: { de: ["en"] } },
+});
+
+async function setupNotes(sql: Sql, titleRequired = true) {
+  await migrate(sql);
+  const ctx = { ...ctxFor(sql, "publisher"), config: notesConfig(titleRequired) };
+  const { id: docId } = await createDocument(ctx, { collection: "notes" });
+  return { ctx, docId };
+}
+
+test("publish refuses a locale head without a required localized field, naming it", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setupNotes(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { body: md("x") } });
+  await expect(publish(ctx, { docId, locale: "en" })).rejects.toThrow(
+    `Cannot publish version 1 of ${docId}/en: missing required field title`,
+  );
+  await expect(publish(ctx, { docId, locale: "en" })).rejects.toBeInstanceOf(ValidationError);
+  const rows = await sql`select is_head_published, is_head_draft, state from document_localized where doc_id = ${docId} and locale = 'en'`;
+  expect(rows.map((r) => r.is_head_published)).toEqual([false]);
+  expect(rows[0]).toMatchObject({ is_head_draft: true, state: "DRAFT_HUMAN" });
+}));
+
+test("publish refuses a shared head without a required shared field", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setupNotes(sql);
+  await saveDraft(ctx, { docId, locale: "shared", data: { slug: "a" } });
+  await expect(publish(ctx, { docId, locale: "shared" })).rejects.toThrow(
+    `Cannot publish version 1 of ${docId}/shared: missing required field code`,
+  );
+  const rows = await sql`select is_head_published from document_shared where doc_id = ${docId}`;
+  expect(rows.map((r) => r.is_head_published)).toEqual([false]);
+}));
+
+test("an empty value counts as present", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setupNotes(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "", body: md("") } });
+  await publish(ctx, { docId, locale: "en" });
+  const [row] = await sql`select is_head_published, data from document_localized where doc_id = ${docId} and locale = 'en'`;
+  expect(row!.is_head_published).toBe(true);
+  expect((row!.data as Record<string, unknown>).title).toBe("");
+}));
+
+test("a republish of a row that lacks a newly required field is refused", async () => withTestDb(async (sql) => {
+  const { ctx: relaxed, docId } = await setupNotes(sql, false);
+  await saveDraft(relaxed, { docId, locale: "en", data: { body: md("x") } });
+  await publish(relaxed, { docId, locale: "en" });
+  await saveDraft(relaxed, { docId, locale: "en", data: { title: "T", body: md("y") } });
+  await publish(relaxed, { docId, locale: "en" });
+  const strict = { ...relaxed, config: notesConfig(true) };
+  await expect(publish(strict, { docId, locale: "en", version: 1 })).rejects.toThrow(
+    `Cannot publish version 1 of ${docId}/en: missing required field title`,
+  );
+  const rows = await sql`select version, is_head_published from document_localized where doc_id = ${docId} order by version`;
+  expect(rows.map((r) => [r.version, r.is_head_published])).toEqual([[1, false], [2, true]]);
+}));
+
+test("drafts may be incomplete", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setupNotes(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { body: md("x") } });
+  await saveDraft(ctx, { docId, locale: "shared", data: { slug: "a" } });
+  const rows = await sql`select is_head_draft from document_localized where doc_id = ${docId}`;
+  expect(rows.map((r) => r.is_head_draft)).toEqual([true]);
+}));
+
+test("a required field named like an Object.prototype member is enforced", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const config = defineConfig({
+    collections: [defineCollection("notes", {
+      slug: slug(),
+      valueOf: text({ localized: true, required: true }),
+      body: richText({ localized: true, body: true }),
+    })],
+    locales: { source: "en", chains: { de: ["en"] } },
+  });
+  const ctx = { ...ctxFor(sql, "publisher"), config };
+  const { id: docId } = await createDocument(ctx, { collection: "notes" });
+  await saveDraft(ctx, { docId, locale: "en", data: { body: md("x") } });
+  await expect(publish(ctx, { docId, locale: "en" })).rejects.toThrow(
+    `Cannot publish version 1 of ${docId}/en: missing required field valueOf`,
+  );
+}));
+
+test("publish names every missing required field of the scope, in declaration order", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const config = defineConfig({
+    collections: [defineCollection("notes", {
+      slug: slug(),
+      title: text({ localized: true, required: true }),
+      summary: text({ localized: true, required: true }),
+      body: richText({ localized: true, body: true }),
+    })],
+    locales: { source: "en", chains: { de: ["en"] } },
+  });
+  const ctx = { ...ctxFor(sql, "publisher"), config };
+  const { id: docId } = await createDocument(ctx, { collection: "notes" });
+  await saveDraft(ctx, { docId, locale: "en", data: { body: md("x") } });
+  await expect(publish(ctx, { docId, locale: "en" })).rejects.toThrow(
+    `Cannot publish version 1 of ${docId}/en: missing required fields title, summary`,
+  );
+}));
+
+test("a document whose collection is no longer in the config publishes without the required check", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setupNotes(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { body: md("x") } });
+  // The default fixture config declares only `posts`: `notes` has been dropped from it.
+  const retired = ctxFor(sql, "publisher");
+  expect(retired.config.collections.some((c) => c.name === "notes")).toBe(false);
+  await publish(retired, { docId, locale: "en" });
+  const rows = await sql`select is_head_published from document_localized where doc_id = ${docId} and locale = 'en'`;
+  expect(rows.map((r) => r.is_head_published)).toEqual([true]);
 }));

@@ -220,11 +220,9 @@ A `richText` field is stored as a portable tree. The shape is defined and valida
 type RichTextRoot = { type: "root"; version: 1; mode: "md" | "mdx"; children: Block[] };
 ```
 
-Value handling: a rich-text field can, in principle, be a string, object or array at the storage
-layer (that is what normalization accepts). The normal shape is a `RichTextRoot`. A renderer should
-first check `typeof value === "string"` and either render it as trusted Markdown/HTML through the
-application's existing pipeline or convert it with `markdownToTree`; otherwise treat it as a tree
-and validate it with `validateTree` before rendering.
+Value handling: a stored rich-text value is always a `RichTextRoot`; core refuses anything else at
+write time (it checks the root, not the nodes). Validate it with `validateTree` before rendering if
+the data may have been written by an older version.
 
 ### 3.1 Block nodes
 
@@ -264,10 +262,6 @@ enforces this.
 import { validateTree, type Block, type Inline, type RichTextRoot } from "@mogging/markdown";
 
 function RichText({ value }: { value: unknown }) {
-  if (typeof value === "string") {
-    // Legacy/plain value: render through your existing Markdown pipeline.
-    return <Markdown>{value}</Markdown>;
-  }
   const root: RichTextRoot = validateTree(value);
   return <>{root.children.map((b, i) => <BlockView key={i} block={b} />)}</>;
 }
@@ -306,7 +300,7 @@ function InlineView(node: Inline) {
 }
 ```
 
-`applyMarks`, `Callout`, `MdxBlock`, `MdxInline`, `TableView`, and `Markdown` are application
+`applyMarks`, `Callout`, `MdxBlock`, `MdxInline`, and `TableView` are application
 components, not CMS exports. The CMS supplies structure; styling, syntax highlighting, MDX
 evaluation and link handling are yours.
 
@@ -475,7 +469,7 @@ All engine errors extend `MoggingError` and carry a stable `code`:
 
 | Class | `code` | Typical cause |
 | --- | --- | --- |
-| `ValidationError` | `validation_error` | Malformed locale, undeclared field, wrong value type, bad limit, U+0000, unknown warning acknowledgement. |
+| `ValidationError` | `validation_error` | Malformed locale, undeclared field, wrong value type, bad limit, U+0000, unknown warning acknowledgement, a slug another live document of the collection holds, publishing a target that lacks a required field. |
 | `NotFoundError` | `not_found` | Unknown collection, document, version, release, or draft head. |
 | `ConflictError` | `conflict` | `expectedVersion` mismatch, release item held at another version, duplicate release name. |
 | `NotPublishableError` | `not_publishable` | Publishing a `DRAFT_AI`, approving a non-AI head, releasing a non-draft head. |

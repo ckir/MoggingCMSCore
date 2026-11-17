@@ -151,12 +151,13 @@ describe("defineStarlightLayout: refusals", () => {
   });
 
   test("a slug-kind field not named slug (D10)", () => {
-    const cfg = defineConfig({
+    // Built as a plain object: defineConfig now refuses this shape itself, and this test pins the layout's own check.
+    const cfg: MoggingConfig = {
       collections: [defineCollection("docs", {
         path: slug(), extra: json(), body: richText({ localized: true, body: true }),
       })],
       locales: { source: "en", chains: { de: ["en"] } },
-    });
+    };
     refuses({ collection: "docs", passthrough: "extra" }, cfg, /slug field must be named "slug"/);
   });
 

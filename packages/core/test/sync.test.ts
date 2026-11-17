@@ -5,13 +5,13 @@ import {
   NotFoundError, ValidationError, createDocument, deleteDocument, getSyncState, hashValue, migrate, publish,
   saveDraft, trackFields,
 } from "../src/index.js";
-import { ctxFor, insertPublishedLocalized } from "./fixtures.js";
+import { md, ctxFor, insertPublishedLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 const stateOf = (rows: Awaited<ReturnType<typeof getSyncState>>) =>
   Object.fromEntries(rows.map((r) => [`${r.locale}.${r.field}`, r.state]));
 
-async function enDoc(sql: Sql, data: Record<string, unknown> = { title: "T", body: "B" }) {
+async function enDoc(sql: Sql, data: Record<string, unknown> = { title: "T", body: md("B") }) {
   await migrate(sql);
   const ctx = ctxFor(sql, "ed");
   const { id } = await createDocument(ctx, { collection: "posts" });
@@ -33,10 +33,10 @@ test("new locale with no snapshot reports every localized field missing", async 
 
 test("source change on title makes de title stale and leaves body current", async () => withTestDb(async (sql) => {
   const { ctx, id } = await enDoc(sql);
-  await saveDraft(ctx, { docId: id, locale: "de", data: { title: "T de", body: "B de" } });
+  await saveDraft(ctx, { docId: id, locale: "de", data: { title: "T de", body: md("B de") } });
   await publish(ctx, { docId: id, locale: "de" });
   expect(stateOf(await getSyncState(ctx, { docId: id, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "current" });
-  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "T2", body: "B" } });
+  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "T2", body: md("B") } });
   await publish(ctx, { docId: id, locale: "en" });
   const rows = await getSyncState(ctx, { docId: id, locale: "de" });
   expect(stateOf(rows)).toEqual({ "de.title": "stale", "de.body": "current" });
@@ -45,13 +45,13 @@ test("source change on title makes de title stale and leaves body current", asyn
 
 test("human save of de after the change makes it current", async () => withTestDb(async (sql) => {
   const { ctx, id } = await enDoc(sql);
-  await saveDraft(ctx, { docId: id, locale: "de", data: { title: "T de", body: "B de" } });
+  await saveDraft(ctx, { docId: id, locale: "de", data: { title: "T de", body: md("B de") } });
   await publish(ctx, { docId: id, locale: "de" });
-  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "T2", body: "B" } });
+  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "T2", body: md("B") } });
   await publish(ctx, { docId: id, locale: "en" });
   expect(stateOf(await getSyncState(ctx, { docId: id, locale: "de" }))["de.title"]).toBe("stale");
   // The target head is now the published one; a new draft head becomes the current head only once published.
-  await saveDraft(ctx, { docId: id, locale: "de", data: { title: "T2 de", body: "B de" } });
+  await saveDraft(ctx, { docId: id, locale: "de", data: { title: "T2 de", body: md("B de") } });
   await publish(ctx, { docId: id, locale: "de" });
   expect(stateOf(await getSyncState(ctx, { docId: id, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "current" });
 }));
@@ -65,7 +65,7 @@ test("field present in de but absent from schema-declared source is orphaned", a
 
 test("untracked field becomes current after trackFields", async () => withTestDb(async (sql) => {
   const { ctx, id } = await enDoc(sql);
-  await insertPublishedLocalized(sql, id, "de", 1, { title: "T de", body: "B de" }); // no hashes
+  await insertPublishedLocalized(sql, id, "de", 1, { title: "T de", body: md("B de") }); // no hashes
   expect(stateOf(await getSyncState(ctx, { docId: id, locale: "de" }))).toEqual({ "de.title": "untracked", "de.body": "untracked" });
   await trackFields(ctx, { docId: id, locale: "de", fields: ["title"] });
   expect(stateOf(await getSyncState(ctx, { docId: id, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "untracked" });
@@ -76,7 +76,7 @@ test("untracked field becomes current after trackFields", async () => withTestDb
 test("trackFields writes no new version and exactly one human:track provenance row per field", async () => withTestDb(async (sql) => {
   const { id } = await enDoc(sql);
   const ctx = ctxFor(sql, "tracker");
-  await insertPublishedLocalized(sql, id, "de", 1, { title: "T de", body: "B de" });
+  await insertPublishedLocalized(sql, id, "de", 1, { title: "T de", body: md("B de") });
   await trackFields(ctx, { docId: id, locale: "de", fields: ["title", "body", "title"] });
   const [{ n }] = (await sql`select count(*)::int as n from document_localized where doc_id = ${id} and locale = 'de'`) as unknown as [{ n: number }];
   expect(n).toBe(1);
@@ -98,7 +98,7 @@ test("trackFields tracks the draft head when the target has no published head", 
 
 test("trackFields rejects undeclared and prototype-named fields and writes nothing", async () => withTestDb(async (sql) => {
   const { ctx, id } = await enDoc(sql);
-  await insertPublishedLocalized(sql, id, "de", 1, { title: "T de", body: "B de" });
+  await insertPublishedLocalized(sql, id, "de", 1, { title: "T de", body: md("B de") });
   for (const bad of ["constructor", "__proto__", "nope", "slug"]) {
     await expect(trackFields(ctx, { docId: id, locale: "de", fields: ["title", bad] })).rejects.toBeInstanceOf(ValidationError);
   }
@@ -146,9 +146,9 @@ test("docId and locale filters, and soft-deleted documents are excluded", async 
 test("sourceVersion follows the republished source for every state", async () => withTestDb(async (sql) => {
   const { ctx, id } = await enDoc(sql);
   await insertPublishedLocalized(sql, id, "de", 1, { title: "T de", legal: "L de" }, { title: hashValue("T") });
-  await insertPublishedLocalized(sql, id, "de-CH", 1, { body: "B ch" });
+  await insertPublishedLocalized(sql, id, "de-CH", 1, { body: md("B ch") });
   for (const v of [2, 3]) {
-    await saveDraft(ctx, { docId: id, locale: "en", data: { title: "T", body: `B${v}` } });
+    await saveDraft(ctx, { docId: id, locale: "en", data: { title: "T", body: md(`B${v}`) } });
     await publish(ctx, { docId: id, locale: "en" });
   }
   const rows = await getSyncState(ctx, { docId: id });
@@ -171,7 +171,7 @@ test("sweep over 200 docs x 3 locales returns the expected count", { timeout: 60
       const { id } = await createDocument(ctx, { collection: "posts" });
       // source: title always, body on even docs; targets: de has title only (+orphan legal on every 4th).
       const src: Record<string, unknown> = { title: `t${i}` };
-      if (i % 2 === 0) src.body = `b${i}`;
+      if (i % 2 === 0) src.body = md(`b${i}`);
       await insertPublishedLocalized(counting, id, "en", 1, src, {});
       const de: Record<string, unknown> = { title: `d${i}` };
       if (i % 4 === 0) de.legal = "x";

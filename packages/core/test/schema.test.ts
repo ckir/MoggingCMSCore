@@ -70,6 +70,50 @@ test("defineConfig rejects a localized slug", () => {
   expect(() => defineConfig({ collections: [bad], locales })).toThrow(ValidationError);
 });
 
+const slugCfg = (fields: Record<string, Field>) => () =>
+  defineConfig({
+    collections: [defineCollection("posts", { ...fields, body: richText({ localized: true, body: true }) })],
+    locales,
+  });
+
+test("defineConfig refuses a slug field not named slug", () => {
+  expect(slugCfg({ path: slug() })).toThrow(ValidationError);
+  expect(slugCfg({ path: slug() })).toThrow('posts.path: a slug field must be named "slug"');
+});
+
+test("defineConfig refuses a non-slug field named slug", () => {
+  expect(slugCfg({ slug: text() })).toThrow(ValidationError);
+  expect(slugCfg({ slug: text() })).toThrow('posts.slug: the name "slug" is reserved for a slug() field');
+});
+
+test("defineConfig refuses a slug nested in an object or a list", () => {
+  expect(slugCfg({ slug: slug(), meta: object({ s: slug() }) })).toThrow(
+    "posts.meta: slug() is only valid as a top-level field",
+  );
+  expect(slugCfg({ slug: slug(), tags: list(slug()) })).toThrow(
+    "posts.tags: slug() is only valid as a top-level field",
+  );
+});
+
+test("defineConfig refuses required below the top level", () => {
+  expect(slugCfg({ meta: object({ a: text({ required: true }) }) })).toThrow(
+    "posts.meta.a: required is only valid on a top-level field",
+  );
+  expect(slugCfg({ items: list(object({ n: number({ required: true }) })) })).toThrow(
+    "posts.items[].n: required is only valid on a top-level field",
+  );
+});
+
+test("defineConfig refuses required directly on a list item", () => {
+  expect(slugCfg({ tags: list(text({ required: true })) })).toThrow(
+    "posts.tags[]: required is only valid on a top-level field",
+  );
+});
+
+test("defineConfig accepts required on a top-level field", () => {
+  expect(slugCfg({ title: text({ localized: true, required: true }) })).not.toThrow();
+});
+
 test("defineConfig rejects zero collections", () => {
   expect(() => defineConfig({ collections: [], locales })).toThrow(ValidationError);
 });

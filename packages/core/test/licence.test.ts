@@ -9,7 +9,7 @@ import {
 } from "../src/index.js";
 import type { Ctx, LicencePayload, MoggingConfig } from "../src/index.js";
 import { encodeKey } from "../src/licence/key.js";
-import { config, ctxFor, posts } from "./fixtures.js";
+import { md, config, ctxFor, posts } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 // The shipped PUBLIC_KEYS list is empty until the owner pastes the production key (fail closed). The guard
@@ -90,12 +90,12 @@ const prov = (fieldPath: string) => ({
 async function world(sql: Sql, ctx: Ctx) {
   await migrate(sql);
   const { id: docId } = await createDocument(ctx, { collection: "posts" });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("World") } });
   await saveDraft(ctx, { docId, locale: "shared", data: { slug: "hello" } });
   await publish(ctx, { docId, locale: "en" });
   await publish(ctx, { docId, locale: "shared" });
-  const { version: deVersion } = await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt" } });
-  const hashes = { title: hashValue("Hello"), body: hashValue("World") };
+  const { version: deVersion } = await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: md("Welt") } });
+  const hashes = { title: hashValue("Hello"), body: hashValue(md("World")) };
   const ai = await recordAiDraft(ctx, {
     docId, locale: "de-CH", fields: { title: "Grüezi" }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("title")],
   });
