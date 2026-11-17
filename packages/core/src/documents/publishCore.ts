@@ -39,8 +39,9 @@ export type Tx = Parameters<Parameters<Ctx["sql"]["begin"]>[1]>[0];
  * @throws {NotFoundError} when the scope has no snapshots or the requested version does not exist.
  * @throws {NotPublishableError} when the target is neither a publishable draft head nor a
  * historical published row.
- * @throws {ValidationError} for an undeclared or malformed locale, or (shared scope) when the target's slug is
- * held by another live document of the collection (checked under the collection's slug lock).
+ * @throws {ValidationError} for an undeclared or malformed locale, a target that lacks a required field of its
+ * scope, or (shared scope) when the target's slug is held by another live document of the collection (checked
+ * under the collection's slug lock).
  * @remarks Does not check the licence, actor validity, document existence, `deleted_at`, or the
  * release state: callers own those checks. No external side effects.
  */
@@ -54,13 +55,15 @@ export async function publishWithinTx(tx: Tx, ctx: Ctx, input: PublishInput, sta
   const [any] = await tx`select 1 as x from ${table} where doc_id = ${input.docId} ${scope} limit 1`;
   if (!any) throw new NotFoundError(`No snapshots for ${label}`);
 
-  let target: { version: number; state: string; is_head_draft: boolean; is_head_published: boolean } | undefined;
+  let target:
+    | { version: number; state: string; is_head_draft: boolean; is_head_published: boolean; data: Record<string, unknown> }
+    | undefined;
   if (input.version === undefined) {
-    [target] = await tx`select version, state, is_head_draft, is_head_published from ${table}
+    [target] = await tx`select version, state, is_head_draft, is_head_published, data from ${table}
       where doc_id = ${input.docId} ${scope} and is_head_draft`;
     if (!target) throw new NotPublishableError(`${label} has no draft head to publish`);
   } else {
-    [target] = await tx`select version, state, is_head_draft, is_head_published from ${table}
+    [target] = await tx`select version, state, is_head_draft, is_head_published, data from ${table}
       where doc_id = ${input.docId} ${scope} and version = ${input.version}`;
     if (!target) throw new NotFoundError(`Version ${input.version} of ${label} not found`);
   }
@@ -73,16 +76,28 @@ export async function publishWithinTx(tx: Tx, ctx: Ctx, input: PublishInput, sta
     );
   }
 
-  // Shared scope: the slug the target would publish must still be free (spec 8). The collection comes from the
-  // documents row (the input carries none); the slug lock is re-entrant and comes after the documents row lock.
-  if (isShared) {
-    const [docRow] = await tx`select collection from documents where id = ${input.docId}`;
-    if (docRow) {
-      const collection = docRow.collection as string;
-      const [snap] = await tx`select data from document_shared where doc_id = ${input.docId} and version = ${target.version}`;
-      await lockSlugs(tx, [collection]);
-      await assertSlugFree(tx, ctx, { collection, docId: input.docId, data: (snap?.data ?? {}) as Record<string, unknown> });
+  // The collection comes from the documents row (the input carries none). A document whose collection is no longer in
+  // the config is not checked for required fields (as assertSlugFree does).
+  const [docRow] = await tx`select collection from documents where id = ${input.docId}`;
+  const collection = docRow ? ctx.config.collections.find((c) => c.name === docRow.collection) : undefined;
+
+  // A head is published only with every top-level required field of its scope present (empty values count).
+  if (collection) {
+    const missing = Object.entries(collection.fields)
+      .filter(([name, f]) => f.required && f.localized !== isShared && (target!.data[name] ?? null) === null)
+      .map(([name]) => name);
+    if (missing.length > 0) {
+      throw new ValidationError(
+        `Cannot publish version ${target.version} of ${label}: missing required field${missing.length === 1 ? "" : "s"} ${missing.join(", ")}`,
+      );
     }
+  }
+
+  // Shared scope: the slug the target would publish must still be free (spec 8). The slug lock is re-entrant and
+  // comes after the documents row lock.
+  if (isShared && docRow) {
+    await lockSlugs(tx, [docRow.collection as string]);
+    await assertSlugFree(tx, ctx, { collection: docRow.collection as string, docId: input.docId, data: target.data });
   }
 
   // Clear the old published head first: the partial unique index allows only one.

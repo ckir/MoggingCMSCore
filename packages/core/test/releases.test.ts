@@ -2,8 +2,8 @@ import { expect, test } from "vitest";
 import type { Sql } from "postgres";
 import {
   ConflictError, LicenceError, NotFoundError, NotPublishableError, StaleReleaseError, ValidationError, addToRelease,
-  approve, assertLicensed, createDocument, createRelease, deleteDocument, getSyncState, hashValue, listReleases, migrate,
-  publish, publishRelease, recordAiDraft, removeFromRelease, saveDraft,
+  approve, assertLicensed, createDocument, createRelease, defineCollection, defineConfig, deleteDocument, getSyncState, hashValue, listReleases, migrate,
+  publish, publishRelease, recordAiDraft, removeFromRelease, richText, saveDraft, slug, text,
 } from "../src/index.js";
 import { md, ctxFor, extraConnection, insertAiDraftLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
@@ -641,4 +641,37 @@ test("addToRelease of a pair the release already holds at an older version throw
   const dup = addToRelease(ctx, { releaseId: second, docId, locale: "de", version: v2 });
   await expect(dup).rejects.toThrow(ValidationError);
   await expect(dup).rejects.toThrow(/is already in release/);
+}));
+
+test("publishRelease refuses the whole release when one item lacks a required field", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const config = defineConfig({
+    collections: [defineCollection("notes", {
+      slug: slug(),
+      title: text({ localized: true, required: true }),
+      body: richText({ localized: true, body: true }),
+    })],
+    locales: { source: "en", chains: { de: ["en"] } },
+  });
+  const ctx = { ...ctxFor(sql, "releaser"), config };
+  const { id } = await createRelease(ctx, { name: "required" });
+  const versions: Array<{ docId: string; version: number }> = [];
+  for (const data of [{ title: "T de", body: md("B de") }, { body: md("B de") }]) {
+    const { id: docId } = await createDocument(ctx, { collection: "notes" });
+    await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: md("B") } });
+    await publish(ctx, { docId, locale: "en" });
+    const { version } = await saveDraft(ctx, { docId, locale: "de", data });
+    await addToRelease(ctx, { releaseId: id, docId, locale: "de", version });
+    versions.push({ docId, version });
+  }
+  const snapshot = async () => sql`select doc_id, version, state, is_head_draft, is_head_published, published_at
+    from document_localized where locale = 'de' order by doc_id, version`;
+  const before = await snapshot();
+  await expect(publishRelease(ctx, { releaseId: id })).rejects.toThrow(
+    `Cannot publish version ${versions[1]!.version} of ${versions[1]!.docId}/de: missing required field title`,
+  );
+  expect(await snapshot()).toEqual(before);
+  expect(before.every((r) => r.state === "DRAFT_HUMAN" && r.is_head_published === false)).toBe(true);
+  const [rel] = await sql`select published_at from releases where id = ${id}`;
+  expect(rel!.published_at).toBeNull();
 }));

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Sql } from "postgres";
-import { getDocument, migrate, publish, saveDraft } from "@mogging/core";
+import { defineCollection, defineConfig, getDocument, migrate, publish, saveDraft } from "@mogging/core";
 import type { Ctx } from "@mogging/core";
 import { exportFolder } from "../../src/export.js";
 import type { ExportReport } from "../../src/export.js";
@@ -12,7 +12,7 @@ import { importFolder } from "../../src/import.js";
 import { markdownToTree } from "../../src/parse.js";
 import type { StarlightLayout } from "../../src/starlight/layout.js";
 import { withTestDb } from "../db.js";
-import { ctxFor, layout, layoutOwn, project, readTree } from "./fixtures.js";
+import { config, ctxFor, docs, layout, layoutOwn, project, readTree } from "./fixtures.js";
 
 // The self-check test breaks the real renderer on demand; every other test runs the real one.
 const hooks = vi.hoisted(() => ({ fault: false, renders: 0 }));
@@ -77,6 +77,17 @@ async function translate(ctx: Ctx, slug: string, locale: string, data: Record<st
   await saveDraft(ctx, { docId: doc.id, locale, data });
   await publish(ctx, { docId: doc.id, locale });
 }
+/**
+ * A ctx whose config does not require `title`. A head without a title can only be published under such a config: the
+ * field became required after the head was published. The export under test still runs with the original config.
+ */
+const withoutRequiredTitle = (ctx: Ctx): Ctx => ({
+  ...ctx,
+  config: defineConfig({
+    collections: [defineCollection("docs", { ...docs.fields, title: { ...docs.fields.title, required: false } })],
+    locales: config.locales,
+  }),
+});
 const md = (s: string, mode: "md" | "mdx" = "md") => markdownToTree(s, { mode });
 
 const manifestOf = (root: string): Array<{ path: string; slug: string; locale: string; version: number; sha256: string }> =>
@@ -96,7 +107,7 @@ describe("exportFolder, Starlight mode", () => {
         "h.md": page("H", "hero:\n  title: Welcome\n", "Body"),
       });
       await imp(ctx, root);
-      await translate(ctx, "a", "de", { description: "nur Beschreibung" });
+      await translate(withoutRequiredTitle(ctx), "a", "de", { description: "nur Beschreibung" });
       await translate(ctx, "s", "de", { title: "Start" });
       await translate(ctx, "h", "de", { title: "H-de", body: md("Inhalt") });
       const r = await run(ctx, root);
@@ -134,8 +145,8 @@ describe("exportFolder, Starlight mode", () => {
     await setup(async (_sql, ctx) => {
       const root = docsProject({ "a.md": page("A"), "b.md": page("B") });
       await imp(ctx, root);
-      await translate(ctx, "a", "de", { description: "nur Beschreibung" });
-      await translate(ctx, "b", "de", { description: "auch nur" });
+      await translate(withoutRequiredTitle(ctx), "a", "de", { description: "nur Beschreibung" });
+      await translate(withoutRequiredTitle(ctx), "b", "de", { description: "auch nur" });
       put(root, `${D}/de/a.md`, "---\ndescription: nur Beschreibung\n---\n");
       const r = await run(ctx, root);
       expect(actionFor(r, "skip", `${D}/de/a.md`)).toMatchObject({ reason: "incomplete" });
