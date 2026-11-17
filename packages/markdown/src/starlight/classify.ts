@@ -87,3 +87,40 @@ export function classifyEarlier(
 ): "behind" | "hand work" {
   return earlier.some((v) => sameLocalized(layout, col, file, v)) ? "behind" : "hand work";
 }
+
+/**
+ * Whether a stored value holds something: not absent, not an empty mapping, not a body tree without blocks.
+ *
+ * @param v a stored (canonical) value, or `undefined`.
+ * @returns `false` for `undefined`, `null`, `{}` and a `root` node with no children.
+ */
+export function hasContent(v: unknown): boolean {
+  if (v === undefined || v === null) return false;
+  if (typeof v === "object" && !Array.isArray(v) && !(v instanceof Date)) {
+    const o = v as Rec;
+    if (Object.keys(o).length === 0) return false;
+    if (o["type"] === "root" && Array.isArray(o["children"]) && o["children"].length === 0) return false;
+  }
+  return true;
+}
+
+/**
+ * The completeness rule of spec 5.4, shared by export and import: the localized fields a translation must hold
+ * because the English page has them. A localized field is required when the collection marks it `required`, when it
+ * is the body, or when the layout lists it in `requiredWhenSource`; it is missing when English holds it and the
+ * translation does not.
+ *
+ * @param layout the validated Starlight layout.
+ * @param col the collection the records belong to.
+ * @param english the localized values of the English page's published head.
+ * @param head the localized values of the translation (a published head, or a file's canonical values).
+ * @returns the names of the missing fields, in the collection's field order.
+ */
+export function missingLocalized(layout: StarlightLayout, col: Collection, english: Rec, head: Rec): string[] {
+  const out: string[] = [];
+  for (const [name, f] of Object.entries(col.fields)) {
+    if (!f.localized || !hasContent(english[name])) continue;
+    if ((f.required || f.body || layout.requiredWhenSource.includes(name)) && !hasContent(head[name])) out.push(name);
+  }
+  return out;
+}

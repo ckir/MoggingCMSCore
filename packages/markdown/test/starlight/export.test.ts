@@ -115,6 +115,22 @@ describe("exportFolder, Starlight mode", () => {
     });
   });
 
+  test("an incomplete head whose file exists at the target path is listed in attention; with no file it stays silent", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = docsProject({ "a.md": page("A"), "b.md": page("B") });
+      await imp(ctx, root);
+      await translate(ctx, "a", "de", { description: "nur Beschreibung" });
+      await translate(ctx, "b", "de", { description: "auch nur" });
+      put(root, `${D}/de/a.md`, "---\ndescription: nur Beschreibung\n---\n");
+      const r = await run(ctx, root);
+      expect(actionFor(r, "skip", `${D}/de/a.md`)).toMatchObject({ reason: "incomplete" });
+      expect(actionFor(r, "skip", `${D}/de/b.md`)).toMatchObject({ reason: "incomplete" });
+      expect(attentionFiles(r)).toEqual([`${D}/de/a.md`]);
+      expect(r.starlight!.attention[0]!.message).toContain("incomplete");
+      expect(exists(root, `${D}/de/b.md`)).toBe(false);
+    });
+  });
+
   test("writes a new locale file under the English name; files and manifest list it; a second run keeps everything", async () => {
     await setup(async (_sql, ctx) => {
       const root = docsProject({ "a.md": page("A"), "guides/B Page.mdx": page("B", "", "Text") });

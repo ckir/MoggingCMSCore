@@ -5,7 +5,7 @@ import { ValidationError, getDocuments, listDocuments, listPublishedVersions } f
 import type { Collection, Ctx, DocumentRecord, Snapshot } from "@mogging/core";
 import type { ExportAction, ExportInput, ExportReport, StarlightExportOptions } from "../export.js";
 import type { FileMessage } from "../import.js";
-import { classifyEarlier, classifyHeads, sameLocalized } from "./classify.js";
+import { classifyEarlier, classifyHeads, hasContent as has, missingLocalized, sameLocalized } from "./classify.js";
 import type { FileClass } from "./classify.js";
 import { readAstroFrontMatter, readStarlightFile, splitPage } from "./frontMatter.js";
 import type { StarlightFile } from "./frontMatter.js";
@@ -33,16 +33,6 @@ const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const sha256 = (b: Buffer | string): string => crypto.createHash("sha256").update(b).digest("hex");
 const isPlain = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Date);
 const extOf = (p: string): string => (p.endsWith(".mdx") ? ".mdx" : ".md");
-
-/** Whether a stored value holds something: not absent, not an empty mapping, not a body tree without blocks. */
-function has(v: unknown): boolean {
-  if (v === undefined || v === null) return false;
-  if (isPlain(v)) {
-    if (Object.keys(v).length === 0) return false;
-    if (v["type"] === "root" && Array.isArray(v["children"]) && v["children"].length === 0) return false;
-  }
-  return true;
-}
 
 /** The English page of a document: its scanned file, the parsed text, and what Astro reads from its front matter. */
 type EnglishPage = { file: ScannedFile; parsed: StarlightFile; astro: Rec; draft: boolean };
@@ -205,13 +195,7 @@ function sameFollows(layout: StarlightLayout, english: Rec, file: Rec, fileLocal
 /** The localized fields the published locale head must have because the English head has them (spec 5.4). */
 function missingFields(run: Run, slot: Slot, sourceLocale: string): string[] {
   const english = slot.doc.locales[sourceLocale]?.published?.data ?? {};
-  const head = slot.pub!.data;
-  const out: string[] = [];
-  for (const [name, f] of Object.entries(run.col.fields)) {
-    if (!f.localized || !has(english[name])) continue;
-    if ((f.required || f.body || run.layout.requiredWhenSource.includes(name)) && !has(head[name])) out.push(name);
-  }
-  return out;
+  return missingLocalized(run.layout, run.col, english, slot.pub!.data);
 }
 
 /** The body field's name, or `undefined`. */
@@ -457,8 +441,13 @@ function decide(run: Run, slot: Slot, sourceLocale: string): void {
   }
   const pub = slot.pub;
   if (pub === null) return;
-  if (missingFields(run, slot, sourceLocale).length > 0) {
+  const missing = missingFields(run, slot, sourceLocale);
+  if (missing.length > 0) {
     act(run, "skip", targetRel, "incomplete");
+    // A file already there is a half translation the operator must look at; with no file, nothing is wrong yet.
+    if (ex !== null) {
+      flag(run, ex.path, `incomplete: the published translation lacks ${missing.join(", ")}, so export does not write this file; complete the translation`);
+    }
     return;
   }
 

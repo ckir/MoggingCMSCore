@@ -9,7 +9,7 @@ import type { Collection, Ctx, DocumentRecord, HeadPair } from "@mogging/core";
 import type {
   FileMessage, FileOutcome, ImportInput, ImportReport, SafetyStop, StarlightImportOptions,
 } from "../import.js";
-import { classifyEarlier, classifyHeads } from "./classify.js";
+import { classifyEarlier, classifyHeads, missingLocalized } from "./classify.js";
 import type { FileClass } from "./classify.js";
 import { rebaseTree, rebaseValueAt } from "./rebase.js";
 import type { StarlightLayout } from "./layout.js";
@@ -444,6 +444,7 @@ async function planLocales(
 ): Promise<LocalePlan> {
   const { ctx, col, scan, options } = plan;
   const { layout } = options;
+  const sourceLocale = ctx.config.locales.source;
   const files = [...scan.locales].sort((a, b) => byText(a.path, b.path));
   const restore = new Set(options.restore ?? []);
   const pageBySlug = new Map<string, SourcePage>(plan.pages.map((p) => [p.file.slug, p]));
@@ -559,7 +560,10 @@ async function planLocales(
       warn(`draft: ${FOLLOWS}`);
     }
 
-    // (7) and (8) what to write.
+    // (7) and (8) what to write. A translation that lacks a field English has (spec 5.4's completeness rule, the one
+    // export applies) is never published: a zero-byte file must not replace a good published translation.
+    const missingFor = (cand: Cand): string[] =>
+      missingLocalized(layout, col, cand.page?.localized ?? cand.record?.locales[sourceLocale]?.published?.data ?? {}, cand.localized);
     let act: LocaleAct = { kind: "none" };
     const dayOne = !hasRows(c);
     if (cls === "hand work" && !(dayOne && Object.keys(c.localized).length === 0)) {
@@ -571,6 +575,8 @@ async function planLocales(
         const kept = head?.data[name];
         if (present(kept)) c.localized[name] = kept;
       }
+      const missing = missingFor(c);
+      if (missing.length > 0) warn(`incomplete translation (missing ${missing.join(", ")}); saved as an unpublished draft`);
       const draft = pair?.draft ?? null;
       const published = pair?.published ?? null;
       if (draft !== null) {
@@ -579,9 +585,11 @@ async function planLocales(
           warn(`replaced ${draft.state === "DRAFT_HUMAN" ? "unpublished" : "pending"} ${draft.state} draft v${draft.version} for ${f.locale}`);
         }
       }
-      act = { kind: "save", untracked: dayOne, publish: !localeDraft && (dayOne || input.publish === true) };
+      act = { kind: "save", untracked: dayOne, publish: !localeDraft && missing.length === 0 && (dayOne || input.publish === true) };
     } else if (cls === "pending" && input.publish === true && !localeDraft && pair?.draft?.state === "DRAFT_HUMAN") {
-      act = { kind: "publish" };
+      const missing = missingFor(c);
+      if (missing.length === 0) act = { kind: "publish" };
+      else warn(`incomplete translation (missing ${missing.join(", ")}); the pending draft is not published`);
     }
 
     items.push({ file: f, record: c.record, pageFile: c.record === null ? c.page!.file.path : null, data: c.localized, act });

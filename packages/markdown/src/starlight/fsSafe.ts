@@ -64,7 +64,8 @@ function makeParents(abs: string): void {
 
 /**
  * Writes `text` to `rel` through a temporary file `<rel>.<random hex>.mogging-tmp` opened with
- * `O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW`, then renames it over the target, so a crash leaves a whole file. A
+ * `O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW`, flushes it to disk (`fsync`), then renames it over the target and
+ * flushes the parent folder (best effort), so a crash or power failure leaves a whole file and never an empty one. A
  * failed write or rename removes the temporary file. Parent folders are created.
  *
  * @param root absolute project root.
@@ -82,6 +83,7 @@ export function writeFileAtomic(root: string, rel: string, text: string): void {
   try {
     try {
       fs.writeFileSync(fd, text);
+      fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);
     }
@@ -89,6 +91,23 @@ export function writeFileAtomic(root: string, rel: string, text: string): void {
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch { /* the temporary file is already gone */ }
     throw e;
+  }
+  syncFolder(path.dirname(abs));
+}
+
+/** Codes of platforms or file systems that refuse to `fsync` a folder: durability there is the best they offer. */
+const FOLDER_SYNC_REFUSED = new Set(["EISDIR", "EINVAL", "EPERM", "EACCES", "ENOTSUP", "ENOSYS", "EBADF"]);
+
+/** Best-effort `fsync` of a folder, so a rename in it survives a power failure; a refusal is ignored. */
+function syncFolder(dir: string): void {
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(dir, fs.constants.O_RDONLY);
+    fs.fsyncSync(fd);
+  } catch (e) {
+    if (!FOLDER_SYNC_REFUSED.has((e as NodeJS.ErrnoException).code ?? "")) throw e;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
   }
 }
 

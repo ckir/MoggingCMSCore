@@ -626,6 +626,72 @@ describe("importFolder, Starlight mode, locale files", () => {
     });
   });
 
+  test("a zero-byte translation after a published day one is a draft, never published, with or without publish", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = docsProject({ "a.md": page("A"), "de/a.md": page("Hallo", "", "Welt") });
+      await run(ctx, root);
+      fs.writeFileSync(path.join(root, D, "de", "a.md"), "");
+      for (const publishFlag of [true, false]) {
+        const r = await run(ctx, root, {}, publishFlag);
+        expect(r.errors).toEqual([]);
+        expect(fileOf(r, "de/a.md").published).toBe(false);
+        // The first run saves the empty file as a draft and says so; the second finds it equal to that draft.
+        if (publishFlag) {
+          expect(warningsOf(r, "de/a.md")).toContain(
+            "incomplete translation (missing title, body); saved as an unpublished draft",
+          );
+        } else {
+          expect(warningsOf(r, "de/a.md")).toEqual([]);
+        }
+        const de = (await bySlug(ctx, "a"))!.locales["de"]!;
+        expect(de.published!.data["title"]).toBe("Hallo");
+        expect(de.published!.version).toBe(1);
+      }
+      const third = await run(ctx, root, {}, true);
+      expect(fileOf(third, "de/a.md").published).toBe(false);
+      expect(warningsOf(third, "de/a.md")).toEqual([
+        "incomplete translation (missing title, body); the pending draft is not published",
+      ]);
+      expect((await bySlug(ctx, "a"))!.locales["de"]!.published!.version).toBe(1);
+    });
+  });
+
+  test("an incomplete hand edit (no title, no body) is saved as an unpublished draft and warned about", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = docsProject({ "a.md": page("A"), "de/a.md": page("Hallo", "", "Welt") });
+      await run(ctx, root);
+      fs.writeFileSync(path.join(root, D, "de", "a.md"), "---\ndescription: nur Beschreibung\n---\n");
+      const r = await run(ctx, root, {}, true);
+      expect(warningsOf(r, "de/a.md")).toContain(
+        "incomplete translation (missing title, body); saved as an unpublished draft",
+      );
+      expect(fileOf(r, "de/a.md")).toMatchObject({ outcome: "updated", published: false });
+      const de = (await bySlug(ctx, "a"))!.locales["de"]!;
+      expect(de.published!.data["title"]).toBe("Hallo");
+      expect(de.draft!.state).toBe("DRAFT_HUMAN");
+      expect(de.draft!.data).toEqual({ description: "nur Beschreibung" });
+
+      // The next run finds the file equal to the pending draft: `--publish` must not publish it either.
+      const again = await run(ctx, root, {}, true);
+      expect(fileOf(again, "de/a.md")).toMatchObject({ published: false });
+      const after = (await bySlug(ctx, "a"))!.locales["de"]!;
+      expect(after.published!.data["title"]).toBe("Hallo");
+      expect(after.published!.version).toBe(de.published!.version);
+    });
+  });
+
+  test("day one: an incomplete translation (title only, English has a body) is saved untracked but not published", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = docsProject({ "a.md": page("A"), "de/a.md": "---\ntitle: Hallo\n---\n" });
+      const r = await run(ctx, root, {}, true);
+      expect(warningsOf(r, "de/a.md")).toContain("incomplete translation (missing body); saved as an unpublished draft");
+      expect(fileOf(r, "de/a.md")).toMatchObject({ published: false });
+      const de = (await bySlug(ctx, "a"))!.locales["de"]!;
+      expect(de.published).toBeNull();
+      expect(de.draft!.data["title"]).toBe("Hallo");
+    });
+  });
+
   test("the own-folder layout: day one, then a hand edit", async () => {
     await setup(async (_sql, ctx) => {
       const root = project({
