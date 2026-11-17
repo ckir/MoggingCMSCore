@@ -190,7 +190,7 @@ describe("exportFolder, Starlight mode", () => {
   test("behind is rewritten and reported; pending and hand work are untouched and in attention; a pending locale draft is not", async () => {
     await setup(async (_sql, ctx) => {
       const root = docsProject({
-        "a.md": page("A"), "b.md": page("B"), "c.md": page("C"), "d.md": page("D"),
+        "a.md": page("A"), "b.md": page("B"), "c.md": page("C"), "d.md": page("D"), "e.md": page("E"),
         "de/a.md": page("A1", "", "Eins"), "de/b.md": page("B1", "", "Eins"),
         "de/c.md": page("C1", "", "Eins"), "de/d.md": page("D1", "", "Eins"),
       });
@@ -526,9 +526,9 @@ describe("exportFolder, Starlight mode", () => {
   test("mode change: a body valid in both modes is written; one that cannot change mode is skipped into attention", async () => {
     await setup(async (_sql, ctx) => {
       const root = docsProject({
-        "a.md": page("A"), "c.md": page("C"), "b.mdx": page("B"), "d.md": page("D"),
+        "a.md": page("A"), "c.md": page("C"), "b.mdx": page("B"), "d.md": page("D"), "e.md": page("E"),
         "de/a.md": page("Hallo", "", "Welt"),
-        "de/c.md": page("C-de", "", "a <b>x</b> c"), "de/d.md": page("D-de", "", "braces {x} here"),
+        "de/c.md": page("C-de", "", "a <b>x</b> c"), "de/d.md": page("D-de", "", "braces {x} here"), "de/e.md": page("E-de", "", "{x}"),
         "de/b.mdx": page("B-de", "", 'import X from "./x.astro"\n\nWelt'),
       });
       await imp(ctx, root);
@@ -536,6 +536,7 @@ describe("exportFolder, Starlight mode", () => {
       fs.renameSync(abs(root, `${D}/a.md`), abs(root, `${D}/a.mdx`));
       fs.renameSync(abs(root, `${D}/c.md`), abs(root, `${D}/c.mdx`));
       fs.renameSync(abs(root, `${D}/d.md`), abs(root, `${D}/d.mdx`));
+      fs.renameSync(abs(root, `${D}/e.md`), abs(root, `${D}/e.mdx`));
       fs.renameSync(abs(root, `${D}/b.mdx`), abs(root, `${D}/b.md`));
       const deC = read(root, `${D}/de/c.md`);
       const deB = read(root, `${D}/de/b.mdx`);
@@ -551,7 +552,10 @@ describe("exportFolder, Starlight mode", () => {
       // (the plan's example of a skip, `{x}`, is not one: measured, the MDX serializer writes `\\{x}`).
       expect(read(root, `${D}/de/d.mdx`)).toBe("---\ntitle: D-de\n---\nbraces \\{x} here\n");
       expect(exists(root, `${D}/de/d.md`)).toBe(false);
-      expect(manifestPaths(root)).toEqual([`${D}/de/a.mdx`, `${D}/de/b.mdx`, `${D}/de/c.md`, `${D}/de/d.mdx`]);
+      // A body that is only `{x}` behaves the same way.
+      expect(read(root, `${D}/de/e.mdx`)).toBe("---\ntitle: E-de\n---\n\\{x}\n");
+      expect(exists(root, `${D}/de/e.md`)).toBe(false);
+      expect(manifestPaths(root)).toEqual([`${D}/de/a.mdx`, `${D}/de/b.mdx`, `${D}/de/c.md`, `${D}/de/d.mdx`, `${D}/de/e.mdx`]);
     });
   });
 
@@ -658,6 +662,29 @@ describe("exportFolder, Starlight mode", () => {
       const r = await run(ctx, root);
       expect(read(root, `${D}/de/a.md`)).toBe("---\ntitle: Hallo\n---\nWelt\n");
       expect(r.warnings.some((w) => w.file === `${D}/de/a.md` && /recreated/.test(w.message))).toBe(true);
+    });
+  });
+  test("keep rule: a mapped parent that only held localized keys is pruned on both sides", async () => {
+    await setup(async (_sql, ctx) => {
+      const german = page("Hallo", "sidebar:\n  label: Hilfe\n", "Welt");
+      const root = docsProject({ "a.md": page("A", "sidebar:\n  label: Help\n"), "de/a.md": german });
+      await imp(ctx, root);
+      const r = await run(ctx, root);
+      expect(actionFor(r, "keep", `${D}/de/a.md`)).toBeDefined();
+      expect(read(root, `${D}/de/a.md`)).toBe(german);
+    });
+  });
+
+  test("a manifest entry the layout does not accept is warned about and carried over unchanged", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = docsProject({ "a.md": page("A"), "de/a.md": page("Hallo", "", "Welt") });
+      await imp(ctx, root);
+      const stray = { path: "elsewhere/x.md", slug: "x", locale: "de", version: 3, sha256: "b".repeat(64) };
+      put(root, MANIFEST, `{"version":1,"files":[\n${JSON.stringify(stray)}\n]}\n`);
+      const r = await run(ctx, root);
+      expect(r.warnings.some((w) => w.file === "elsewhere/x.md" && /ignored/.test(w.message))).toBe(true);
+      expect(manifestOf(root).map((e) => e.path)).toEqual(["elsewhere/x.md", `${D}/de/a.md`]);
+      expect(manifestOf(root)[0]).toEqual(stray);
     });
   });
 });

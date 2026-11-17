@@ -89,6 +89,8 @@ type Run = {
   steps: Step[];
   /** The manifest as the run changes it, by path. */
   manifest: Map<string, ManifestEntry>;
+  /** Entries that fail the layout check: ignored for every decision, carried over unchanged (spec 5.4, BS-2). */
+  ignored: ManifestEntry[];
 };
 
 const act = (run: Run, action: ExportAction["action"], p: string, reason: string, to?: string): void => {
@@ -473,7 +475,7 @@ export async function exportStarlight(
 
   const run: Run = {
     root, docsAbs: path.resolve(root, ...layout.docsDir.split("/")), layout, col,
-    actions: [], attention: [], warnings: [], steps: [], manifest: new Map(),
+    actions: [], attention: [], warnings: [], steps: [], manifest: new Map(), ignored: [],
   };
   const finish = (files: string[]): ExportReport => {
     files.sort(byText);
@@ -499,7 +501,10 @@ export async function exportStarlight(
   for (const e of mf.entries) {
     const bad = entryProblem(layout, e);
     if (bad === null) run.manifest.set(e.path, e);
-    else warn(run, e.path, `manifest entry ignored: ${bad}`);
+    else {
+      run.ignored.push(e);
+      warn(run, e.path, `manifest entry ignored: ${bad}`);
+    }
   }
 
   // Leftovers of an interrupted run (found with lstat, never followed).
@@ -621,8 +626,8 @@ export async function exportStarlight(
     else if (s.t === "remove") removeFile(root, s.path);
     else writeFileAtomic(root, s.path, s.text);
   }
-  if (!manifestRefused && (run.manifest.size > 0 || fs.existsSync(path.join(root, ".mogging", "manifest.json")))) {
-    writeManifest(root, [...run.manifest.values()]);
+  if (!manifestRefused && (run.manifest.size > 0 || run.ignored.length > 0 || fs.existsSync(path.join(root, ".mogging", "manifest.json")))) {
+    writeManifest(root, [...run.ignored, ...run.manifest.values()]);
   }
   return finish(files);
 }

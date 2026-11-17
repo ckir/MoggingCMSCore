@@ -69,10 +69,10 @@ function makeParents(abs: string): void {
  *
  * @param root absolute project root.
  * @param rel POSIX project-relative target path.
- * @param text the bytes to write (a string is written as UTF-8).
+ * @param text the text to write, as UTF-8.
  * @throws {SymlinkError} when a component of `rel` is a symbolic link; nothing is written.
  */
-export function writeFileAtomic(root: string, rel: string, text: string | Buffer): void {
+export function writeFileAtomic(root: string, rel: string, text: string): void {
   assertNoSymlink(root, rel);
   const abs = path.join(root, ...rel.split("/"));
   makeParents(abs);

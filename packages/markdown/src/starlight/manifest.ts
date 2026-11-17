@@ -78,7 +78,7 @@ export function readManifest(root: string): { entries: ManifestEntry[]; warning:
  * @param entries the entries; a repeated path keeps its last entry.
  * @throws {SymlinkError} when `.mogging` or the manifest is a symbolic link; nothing is written.
  */
-export function writeManifest(root: string, entries: readonly ManifestEntry[]): void {
+export function writeManifest(root: string, entries: ManifestEntry[]): void {
   assertNoSymlink(root, MANIFEST_PATH);
   const byPath = new Map<string, ManifestEntry>();
   for (const e of entries) byPath.set(e.path, e);
