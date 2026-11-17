@@ -10,6 +10,7 @@ import { provenanceSpec } from "./provenance.js";
 import { publishSpec } from "./publish.js";
 import { querySpec } from "./query.js";
 import { releaseSpec } from "./release.js";
+import { renameSpec } from "./rename.js";
 import { reviewSpec } from "./review.js";
 import { statusSpec } from "./status.js";
 import { trackSpec } from "./track.js";
@@ -19,7 +20,7 @@ import { workerSpec } from "./worker.js";
 
 /** Every command, in the order `help` lists them. Later tasks add theirs here. */
 export const commands: CommandSpec[] = [
-  helpCommand, versionCommand, initSpec, migrateSpec, importSpec, exportSpec, statusSpec, trackSpec,
+  helpCommand, versionCommand, initSpec, migrateSpec, importSpec, exportSpec, renameSpec, statusSpec, trackSpec,
   compileSpec, workerSpec, jobsSpec, provenanceSpec,
   reviewSpec, publishSpec, unpublishSpec, releaseSpec, querySpec,
 ];

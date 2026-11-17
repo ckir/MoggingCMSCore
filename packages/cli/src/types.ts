@@ -1,7 +1,8 @@
 import type { ParseArgsConfig } from "node:util";
 import type { Sql } from "postgres";
 import type { AiConfig } from "@mogging/ai";
-import type { Ctx } from "@mogging/core";
+import type { Ctx, MoggingConfig } from "@mogging/core";
+import type { StarlightLayout } from "@mogging/markdown";
 
 export type Io = {
   out(s: string): void;
@@ -38,8 +39,23 @@ export type Project = {
   sql: Sql;
   ctx: Ctx;
   ai: AiConfig | undefined;
+  /** The validated Starlight layout of the config's `starlight` export, or `undefined` for a generic project. */
+  starlight: StarlightLayout | undefined;
+  /** The project root: the folder holding the config file (never the working directory). */
+  root: string;
   configPath: string;
   close(): Promise<void>;
+};
+
+/** What `loadProject` knows once the config module is loaded and validated, before it connects. */
+export type LoadedConfig = {
+  config: MoggingConfig;
+  starlight: StarlightLayout | undefined;
+  configPath: string;
+  /** The folder holding the config file. */
+  root: string;
+  /** `deps.cwd`, for a check that resolves a path the user typed (such as `--restore`). */
+  cwd: string;
 };
 
 /** `util.parseArgs` values. */
@@ -65,6 +81,12 @@ export type CommandSpec = {
   usesSignal?: boolean | ((flags: Flags, positionals: string[]) => boolean);
   arity: [min: number, max: number];
   validate?(flags: Flags, positionals: string[], io: Io): void;
+  /**
+   * Usage checks that depend on the loaded config (a Starlight-only flag in a generic project, an undeclared locale).
+   * Runs after the config and its `starlight` layout are validated and before the database connection is opened, so
+   * a `UsageError` thrown here is exit 2 without touching the database.
+   */
+  checkLoaded?(flags: Flags, positionals: string[], loaded: LoadedConfig): void;
   run(env: CommandEnv): Promise<CommandResult>;
 };
 

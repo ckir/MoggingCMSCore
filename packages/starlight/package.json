@@ -1,0 +1,38 @@
+{
+  "name": "@mogging/starlight",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "keywords": ["astro-integration", "starlight", "mogging", "i18n"],
+  "engines": { "node": ">=22" },
+  "exports": { ".": "./src/index.ts", "./preset": "./src/preset.ts" },
+  "files": ["dist", "README.md", "LICENSE.md"],
+  "publishConfig": {
+    "exports": {
+      ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+      "./preset": { "types": "./dist/preset.d.ts", "import": "./dist/preset.js" }
+    }
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/copy-licence.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mogging/core": "workspace:*",
+    "@mogging/markdown": "workspace:*"
+  },
+  "peerDependencies": {
+    "@astrojs/starlight": ">=0.43.0 <0.44.0",
+    "astro": "^7.2.10"
+  },
+  "peerDependenciesMeta": {
+    "@astrojs/starlight": { "optional": true },
+    "astro": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5",
+    "vitest": "^5"
+  }
+}

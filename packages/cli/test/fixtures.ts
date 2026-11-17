@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { MockLanguageModelV3 } from "ai/test";
+import { afterAll } from "vitest";
 import type { Sql } from "postgres";
 import type { LanguageModel } from "ai";
 import { defineAiConfig } from "@mogging/ai";
@@ -94,8 +95,9 @@ export type TestDeps = Deps & {
 };
 
 const tempDirs: string[] = [];
-process.once("exit", () => {
-  for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
+// Not `process.once("exit")`: that never fires in a vitest worker. `afterAll` runs once per test file that imports this.
+afterAll(() => {
+  for (const d of tempDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
 /** A fresh `mkdtemp` directory holding an empty `mogging.config.ts` (the stubbed `loadModule` never reads it). */

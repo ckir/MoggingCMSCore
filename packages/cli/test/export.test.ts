@@ -76,6 +76,26 @@ describe("mogging export", () => {
     });
   });
 
+  test("--locale is normalized", async () => {
+    await withDb(async (sql) => {
+      await seed(sql);
+      const out = tempDir();
+      const t = testDeps(sql);
+      expect(await run(["export", out, "--locale", "DE"], t)).toBe(0);
+      expect(t.stdout()).toBe("wrote de/docs/intro.md\n");
+      expect(readdirSync(out)).toEqual(["de"]);
+    });
+  });
+
+  test("a malformed --locale is the unknown-locale usage error", async () => {
+    await withDb(async (sql) => {
+      await seed(sql);
+      const t = testDeps(sql);
+      expect(await run(["export", tempDir(), "--locale", "en_US"], t)).toBe(2);
+      expect(t.stderr()).toContain('unknown locale "en_US"');
+    });
+  });
+
   test("an undeclared collection is a usage error and nothing is written", async () => {
     await withDb(async (sql) => {
       await seed(sql);

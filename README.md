@@ -20,10 +20,12 @@ CLI), and render the returned data themselves. The monorepo is the product.
 | [`@mogging/core`](packages/core/README.md) | The engine: collection/config definitions, versioned document snapshots, draft/publish/release lifecycle, per-locale field resolution, translation sync state, licences, and the Postgres schema. |
 | [`@mogging/ai`](packages/ai/README.md) | Translation jobs on top of core: stale-field discovery, OpenRouter (or custom AI SDK) calls, budgets, leases, validation, glossary checks and provenance. |
 | [`@mogging/markdown`](packages/markdown/README.md) | Markdown/MDX ↔ portable rich-text tree conversion, plus whole-folder import and export against core. |
-| [`@mogging/cli`](packages/cli/README.md) | The `mogging` executable: init/migrate, import/export, status/track, compile/worker/jobs, review/approve, publish/release, query. |
+| [`@mogging/cli`](packages/cli/README.md) | The `mogging` executable: init/migrate, import/export, rename, status/track, compile/worker/jobs, review/approve, publish/release, query. |
+| [`@mogging/starlight`](packages/starlight/README.md) | The Starlight preset for `mogging.config.ts` and a no-op Astro integration; its README is the first session for a Starlight docs site. |
 
 There are no other deployable services. The repository also contains design documents
-(`docs/superpowers/`) and the offline licence signing tool (`tools/licence/sign.ts`).
+(`docs/superpowers/`), the offline licence signing tool (`tools/licence/sign.ts`) and the Starlight starter site
+(`templates/starlight/`).
 
 ## Requirements
 
@@ -42,7 +44,7 @@ cd MoggingCMSCore
 pnpm install
 ```
 
-`pnpm install` links the four workspace packages. The root has no runtime dependencies of its own.
+`pnpm install` links the five workspace packages. The root has no runtime dependencies of its own.
 
 ### 2. Create the database
 
@@ -67,7 +69,7 @@ export DATABASE_URL=postgres://mogging:mogging@localhost:5432/mogging_test
 
 ```bash
 pnpm test        # vitest across packages; needs DATABASE_URL (tests create/drop schemas)
-pnpm typecheck   # tsc --noEmit for core, markdown, ai, cli
+pnpm typecheck   # tsc --noEmit for core, markdown, ai, cli, starlight
 pnpm build       # compile each package to packages/*/dist
 pnpm smoke:pack  # pack the four tarballs, install them in a temp project, run `mogging`
 ```
@@ -179,6 +181,8 @@ so a copied file has no effect until the variables are exported.
 | `pnpm typecheck` | root | `tsc --noEmit` for each package's `tsconfig.json`. |
 | `pnpm build` | root | Compiles `src` of each package to `packages/*/dist` with declarations. |
 | `pnpm smoke:pack` | root | Builds, packs all four packages, installs the tarballs outside the repository, and exercises the installed `mogging` binary against a throwaway schema. Needs `DATABASE_URL`. |
+| `pnpm accept:starlight` | root | Packs the packages, installs them into a copy of `templates/starlight` from the npm registry, runs the first session with a mocked compile and builds the site. Needs `DATABASE_URL` and network; not part of `pnpm test`. |
+| `pnpm accept:adopter` | root | The same for an existing Starlight site with hand-made translations: `init --starlight`, day-one import, rename, export, `astro build`. Needs `DATABASE_URL` and network; not part of `pnpm test`. |
 | `pnpm --filter @mogging/cli dev <command>` | repo | Runs the CLI from source with `tsx` (cwd is `packages/cli`). |
 | `pnpm --filter <pkg> test` | repo | Runs one package's tests. |
 | `prepack` | each package | Copies the repository licence into the package before packing. |
@@ -214,17 +218,22 @@ edited in place and the runner tracks migrations by name only. See
 │   │   └── test/                 # integration tests; each test owns a throwaway schema
 │   ├── ai/                       # @mogging/ai: jobs, worker, prompts, budgets, validation, provenance
 │   ├── markdown/                 # @mogging/markdown: parse/serialize, sentinels, folder import/export
-│   ├── cli/                      # @mogging/cli: bin.ts, commands/, output, config loading
-│   └── ...
+│   ├── cli/                      # @mogging/cli: bin.ts, commands/, output, config loading, starlight/ (init, astro.config reader)
+│   └── starlight/                # @mogging/starlight: preset (./preset) and the no-op Astro integration
+├── templates/
+│   └── starlight/                # the Starlight starter site (outside the workspace; run by `pnpm accept:starlight`)
 ├── docs/
 │   ├── dev-setup.md              # database, tests, build, smoke test
 │   ├── CONTENT_ARCHITECTURE.md   # data model, lifecycle, localization, security
 │   ├── API_INTEGRATION.md        # SDK/CLI integration for frontend applications
 │   └── superpowers/              # design specs and implementation plans (design-only unless stated)
 ├── scripts/
-│   └── pack-smoke.mjs            # the pack/install/run check behind `pnpm smoke:pack`
+│   ├── pack-smoke.mjs            # the pack/install/run check behind `pnpm smoke:pack`
+│   ├── starlight-accept.mjs      # the template acceptance run behind `pnpm accept:starlight`
+│   └── starlight-adopter.mjs     # the existing-adopter run behind `pnpm accept:adopter`
 ├── tools/
 │   └── licence/sign.ts           # offline licence-token signer (not shipped in the SDK)
+├── .github/workflows/ci.yml      # typecheck, test, smoke:pack; then both Starlight acceptance runs
 ├── spikes/                       # isolated experiments (workspace members)
 ├── TODO.md                       # tracked debt and accepted limits
 └── package.json                  # root test/build/typecheck/smoke scripts
@@ -256,10 +265,12 @@ Where the usual CMS concepts live:
 - [packages/core/README.md](packages/core/README.md),
   [packages/ai/README.md](packages/ai/README.md),
   [packages/markdown/README.md](packages/markdown/README.md),
-  [packages/cli/README.md](packages/cli/README.md) — package-level reference and known limits.
+  [packages/cli/README.md](packages/cli/README.md),
+  [packages/starlight/README.md](packages/starlight/README.md) — package-level reference and known limits.
 - [docs/superpowers/specs/2026-11-11-moggingcms-core-design.md](docs/superpowers/specs/2026-11-11-moggingcms-core-design.md)
-  — the authoritative engine design. The Starlight integration spec is a design document only; no
-  Starlight package is implemented.
+  — the authoritative engine design.
+- [docs/superpowers/specs/2026-11-13-starlight-integration-design.md](docs/superpowers/specs/2026-11-13-starlight-integration-design.md)
+  — the Starlight integration design; [packages/starlight/README.md](packages/starlight/README.md) is its user guide.
 
 ## Licence
 

@@ -3,3 +3,4 @@ packages:
   - "spikes/*"
 allowBuilds:
   esbuild: true
+autoInstallPeers: false

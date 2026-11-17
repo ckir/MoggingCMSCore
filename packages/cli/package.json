@@ -17,6 +17,7 @@
     "dev": "tsx src/bin.ts"
   },
   "dependencies": {
+    "acorn": "8.19.0",
     "@mogging/ai": "workspace:*",
     "@mogging/core": "workspace:*",
     "@mogging/markdown": "workspace:*",
@@ -24,6 +25,7 @@
     "postgres": "^4"
   },
   "devDependencies": {
+    "@mogging/starlight": "workspace:*",
     "@types/node": "^22",
     "ai": "7.0.154",
     "tsx": "^4",
