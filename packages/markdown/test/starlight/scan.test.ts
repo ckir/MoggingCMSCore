@@ -162,7 +162,7 @@ describe("scanDocs, symbolic links", () => {
     fs.mkdirSync(path.join(real, "src/content"), { recursive: true });
     fs.symlinkSync(path.join(real, "real"), path.join(real, "src/content/docs"));
     const s = scanDocs(real, layout, config);
-    expect(slugs(s.sources)).toEqual(["en:real/a"]); // nothing under the link was scanned
+    expect(s.sources).toEqual([]);
     expect(s.warnings).toEqual([expect.objectContaining({ file: D })]);
 
     const parent = project({ "elsewhere/content/docs/a.md": "" });
