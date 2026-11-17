@@ -127,8 +127,10 @@ export type StarlightPresetOptions = {
 export type StarlightPreset = { collection: Collection; layout: StarlightLayoutInput };
 export function starlightPreset(options?: StarlightPresetOptions): StarlightPreset;
 
-// packages/cli/src/types.ts (Project gains two members)
+// packages/cli/src/types.ts (Project gains two members; CommandSpec gains checkLoaded, Task 2)
 export type Project = { sql; ctx; ai; starlight: StarlightLayout | undefined; root: string; configPath; close() };
+export type LoadedConfig = { config: MoggingConfig; starlight: StarlightLayout | undefined; configPath: string; root: string };
+// CommandSpec.checkLoaded?(flags: Flags, positionals: string[], loaded: LoadedConfig): void
 
 // packages/cli/src/starlight/astroConfig.ts
 export type AstroLocale = { key: string; lang: string };          // key "root" = no folder; lang defaults to key
@@ -184,9 +186,10 @@ export function starlightVersionWarning(root: string): string | null;
   `test/integration.test.ts`:
   - "the default export is a no-op integration named @mogging/starlight": `moggingStarlight()` `toEqual({ name:
     "@mogging/starlight", hooks: {} })`, and two calls return distinct objects.
-  - "the root entry imports nothing at run time": read `src/index.ts`; every line matching `/^\s*import\b/` also
-    matches `/^\s*import type\b/`; no line matches `/^\s*export\b.*\bfrom\b/` (a re-export also loads a module);
-    the text has no `require(` and no `import(`.
+  - "the root entry imports nothing at run time": parse `src/index.ts` with `ts.createSourceFile` (`typescript` is a
+    devDependency); every `ImportDeclaration` is type-only (`importClause.isTypeOnly`), no `ExportDeclaration` has a
+    `moduleSpecifier` (a re-export, single- or multi-line, also loads a module), and no `CallExpression` calls
+    `require` or `import`.
   - "loading and calling the root entry prints nothing": spy `console.log/info/warn/error/debug` and
     `process.stdout.write`/`process.stderr.write`; `await import("../src/index.js")` with `vi.resetModules()` first,
     call the default; every spy has 0 calls.
@@ -233,11 +236,14 @@ export function starlightVersionWarning(root: string): string | null;
 - Test: `packages/cli/test/project.test.ts`
 
 **Interfaces:** Produces `Project.starlight` and `Project.root` (block above), the test helpers below, and the hook
-`CommandSpec.checkLoaded?(flags: Flags, positionals: string[], loaded: { starlight: StarlightLayout | undefined;
-configPath: string; root: string }): void`, which `loadProject(deps, flags, checkLoaded?)` calls after validating the
-layout and BEFORE `deps.connect`, so every usage error that depends on the loaded config (a Starlight-only flag in a
-generic project, a directory argument in a Starlight project) is exit 2 without touching the database (`project.ts:75-78`;
-`run.ts:135` passes `spec.checkLoaded`). Tasks 4, 5, 6 and 7 put their config-dependent usage checks there. Consumes
+`CommandSpec.checkLoaded?(flags: Flags, positionals: string[], loaded: LoadedConfig): void` with `type LoadedConfig =
+{ config: MoggingConfig; starlight: StarlightLayout | undefined; configPath: string; root: string }` (exported from
+`types.ts`). `loadProject(deps, flags, check?: (loaded: LoadedConfig) => void)` calls `check` after validating the
+layout and BEFORE `deps.connect`; `run.ts:135` passes the closure `(loaded) => spec.checkLoaded?.(flags, positionals,
+loaded)` (`loadProject` itself never sees the positionals). So every usage error that depends on the loaded config (a
+Starlight-only flag in a generic project, a directory argument in a Starlight project, an undeclared `--collection` or
+`--locale`) is exit 2 without touching the database (`project.ts:75-78`). Tasks 4, 5, 6 and 7 put their
+config-dependent usage checks there (Task 5's collection and locale checks of `export.ts:23-33` move there too). Consumes
 `defineStarlightLayout` (`packages/markdown/src/starlight/layout.ts:120`), `starlightPreset` (Task 1).
 
 `starlightFixtures.ts` exports: `starlightDocs = starlightPreset()`; `starlightConfig = defineConfig({ collections:
@@ -376,7 +382,9 @@ Behaviour (spec 5.2, 5.4 exit codes, 5.5, 5.6):
   (${layout.docsDir}); drop the directory argument\`)`. `dir` = `project.root`. Each `--restore` value `p`:
   `rel = path.relative(root, path.resolve(cwd, p))`; `rel` empty, starting with `..` or absolute is
   `UsageError(\`--restore ${p} is outside the project ${root}\`)`; else passed as `rel.split(path.sep).join("/")`.
-- Output lines, in order: `dry run: nothing was written` (dry run only); the `astroConfigWarnings` warnings as
+- The `astroConfigWarnings` warnings are put at the FRONT of the report's `warnings` array before output, so `--json`
+  carries them in `data.warnings` (only `lines` reach a non-JSON run, `run.ts:146-149`).
+- Output lines, in order: `dry run: nothing was written` (dry run only); the astro warnings as
   `warning: <file>: <message>`; `<outcome> <file>` per file; `pruned <slug>` per pruned slug; for a stop: `stopped:
   <g> page(s) gone and <a> new file(s); nothing was created or pruned`, then `  gone <slug> "<title or (no title)>"`
   and `  new <file> "<title or (no title)>"` lines, then `run: <command>` when `command` is set, else `pair them with
@@ -408,6 +416,10 @@ Behaviour (spec 5.2, 5.4 exit codes, 5.5, 5.6):
     only; `c.md` is `unchanged`; exit 1.
   - "a behind locale file is reported": publish a second German version through the SDK, put the first version's
     text back in `D/de/a.md`; stdout has `behind src/content/docs/de/a.md`.
+  - "an unsupported extension is reported once": `D/b.markdown` gives exactly one stdout line containing `does not
+    import` (the SDK's warning, `importStarlight.ts:169`).
+  - "astro warnings reach --json": with the drift case below and `--json`, `data.warnings[0].file` is
+    `astro.config.mjs`.
   - "--accept-new-and-gone creates the new page, and --prune also deletes the gone one".
   - "--restore takes a path relative to the working directory": `cwd` = `<root>/src/content/docs` with `--config
     <root>/mogging.config.ts` (config discovery looks only in `cwd`), `--restore
@@ -444,7 +456,8 @@ Behaviour:
   its docs folder ...; drop the directory argument` and `export: a Starlight project has one docs collection; drop
   --collection`), raised in `exportSpec.checkLoaded` as are the generic-mode ones. `dir` = `project.root` (never the
   docs folder: the SDK joins `layout.docsDir` itself, `exportStarlight.ts:567-573`). `{ localeDirs, warnings } =
-  astroConfigWarnings(root, layout)`; pass `starlightLocaleDirs: localeDirs`.
+  astroConfigWarnings(root, layout)`; pass `starlightLocaleDirs: localeDirs`; put `warnings` at the front of the
+  report's `warnings` (as Task 4), so `--json` carries them.
 - Output lines: dry-run header as in Task 4; the astro warnings; one line per action `<action> <path>[ -> <to>]
   (<reason>)`, except that a real run prints no `keep` line and instead ends the action lines with `kept <n> unchanged
   locale file(s)` when `n > 0` (a dry run lists every `keep`, spec 5.4 `--dry-run`); `attention: <file>: <message>` per
@@ -523,7 +536,8 @@ per call).
   `validate` (no project needed): exactly one of the positional and `--collection` (`track: give <collection>/<slug> or --collection <c>`
   when neither, `track: give <collection>/<slug> or --collection <c>, not both` when both); `--fields` and `--dry-run`
   only in their own form (`track: --fields needs <collection>/<slug>`, `track: --dry-run needs --collection`). Run of
-  the collection form: an undeclared collection is a `UsageError` naming the declared ones (as `export.ts:23-29`);
+  the collection form: an undeclared collection is a `UsageError` naming the declared ones (as `export.ts:23-29`),
+  raised in `trackSpec.checkLoaded` from `loaded.config`;
   one `getSyncState` call; the `untracked` rows grouped by document; slugs from `getDocuments` in chunks of 1000;
   documents in slug order; `trackFields` once per document unless `--dry-run`. Lines `tracked <collection>/<slug>
   <locale> <field>` (`would track ...` in a dry run, after the header `dry run: nothing was written`); none at all:
@@ -553,20 +567,28 @@ per call).
 `StarlightAnswers` (block above). Consumes `readAstroConfig` (Task 3), `normalizeLocale`.
 
 `starlightAnswers(read, flags)` (spec 5.2 "Locale identity", 6 `init --starlight`), every refusal a `UsageError`:
-- read ok, `locales` not null: `--locales` or `--source-locale` given is `init --starlight: astro.config declares
+- read ok, `locales` holding at least one language besides the default (multilingual): `--locales` or
+  `--source-locale` given is `init --starlight: astro.config declares
   Starlight's locales; drop --locales and --source-locale (or edit astro.config)`. Root mode when `defaultLocale` is
   `null` or `"root"`: needs a `root` key (else `init --starlight: astro.config has locales but neither a root locale
   nor defaultLocale`); `source = normalizeLocale(root.lang)`, `sourceDir = null`. Own-folder mode when
   `defaultLocale` is another key: that key must exist and there must be no `root` key; `sourceDir` = that key;
   `source` from its `lang`. Targets: every other key, in order, `{ tag: normalizeLocale(lang), dir: key }`.
   `pasteBlock = null`.
-- read ok, `locales` null, or `locales` holding only the default language (only `root`, or only the `defaultLocale`
-  key), is the single-language case: `--locales` required (`init --starlight: this site has one language;
-  pass --locales de,fr (the languages to add)`); `source = normalizeLocale(flags.sourceLocale ?? "en")`; targets from
-  the comma list, each `{ tag: normalizeLocale(t), dir: tag.toLowerCase() }`; root mode; `pasteBlock` = the Starlight
-  `locales` block to paste, one line per locale, `root` first: `      root: { label: "<label>", lang: "<source>" },`
-  then `      "<dir>": { label: "<label>", lang: "<tag>" },`, framed by `    locales: {` and `    },`, where `<label>`
-  is `new Intl.DisplayNames([tag], { type: "language" }).of(tag)`.
+- read ok, single-language: `--locales` required (`init --starlight: this site has one language; pass --locales
+  de,fr (the languages to add)`); targets from the comma list, each `{ tag: normalizeLocale(t), dir:
+  tag.toLowerCase() }`. Two shapes:
+  - `locales` null: `source = normalizeLocale(flags.sourceLocale ?? "en")`; root mode; `pasteBlock` holds the whole
+    block to ADD to the `starlight()` options, `root` first: `      root: { label: "<label>", lang: "<source>" },`
+    then `      "<dir>": { label: "<label>", lang: "<tag>" },`, framed by `    locales: {` and `    },`; the header line
+    is `add this to the starlight() options in astro.config:`.
+  - `locales` holding only the default language (only `root`, or only the `defaultLocale` key): `--source-locale` is
+    refused as in the multilingual case; `source` = that entry's `lang`; `sourceDir` = `null` for `root`, else the
+    `defaultLocale` key; `pasteBlock` is the whole block to REPLACE the existing one (the existing entry first, under
+    its own key, then the new ones), header `replace the locales block of the starlight() options in astro.config
+    with:`.
+  `<label>` is `new Intl.DisplayNames([tag], { type: "language" }).of(tag)`; the header is stored with the block
+  (`pasteBlock` is the header line plus the block lines, joined by `\n`).
 - read not ok: `--locales` required (`init --starlight: astro.config could not be read statically (<reason>); pass
   --locales de,fr and, if the site's default language is not English, --source-locale <tag>`); as the
   single-language case otherwise, but `pasteBlock = null` and `warnings = ["astro.config could not be read
@@ -612,33 +634,41 @@ it before building the site`; a version that does not parse as `x.y.z` numbers, 
 database URL check first (as `init.ts:70`); an existing config is left byte-identical with the line `<path> already
 exists: left unchanged; --starlight wrote nothing` and the run still migrates; otherwise read `astro.config` in the
 folder of the config file to be written (`dirname` of the `--config` path, else `cwd`),
-compute the answers (usage errors before any write and before connecting), check that `@mogging/starlight/preset`
-resolves from that folder (`createRequire(join(folder, "mogging.config.ts")).resolve("@mogging/starlight/preset")`;
-failing: `UsageError("init --starlight: @mogging/starlight is not installed in <folder>; run npm install -D
-@mogging/starlight @mogging/core first")`, so no config is written that cannot load), write `starlightConfigText` with
-the same `wx` rule as `writeTemplate` (`init.ts:42-59`), write the answer warnings, the version warning and the paste
-block to stderr at once (so a later migration failure does not lose them, and a re-run that finds the config cannot
-show them again), then load and migrate as today. Stderr, right after the write: `warning: <w>`
-per answer warning and the version warning, then, when `pasteBlock` is set, `add this to the starlight() options in
-astro.config:` followed by the block's lines. Stdout lines: `created <path>`, then the migration lines. `data` gains
-`starlight: { source, targets, sourceDir, docsDir, pasteBlock }` (only with `--starlight`).
+compute the answers (usage errors before any write and before connecting), write `starlightConfigText` with the same
+`wx` rule as `writeTemplate` (`init.ts:42-59`), then load it once with `deps.loadModule(path)`: if that throws (most
+often `@mogging/starlight` or `@mogging/core` is not installed where the config can import it), delete the file this
+run just created and throw `UsageError(\`init --starlight: the written config does not load (${message}); install
+@mogging/starlight and @mogging/core next to it (npm install -D @mogging/starlight @mogging/core) and run init
+--starlight again\`)`. (Loading the real file covers every import the config makes and every package exports shape;
+a `createRequire().resolve` pre-check would refuse the published `import`-only exports map: measured on Node 24.21.0,
+`ERR_PACKAGE_PATH_NOT_EXPORTED`.) After a successful load, write the answer warnings, the version warning and the
+paste block to stderr at once (so a later migration failure does not lose them), then load the project and migrate as
+today. Stderr: `warning: <w>` per answer warning and the version warning, then the `pasteBlock` lines. Stdout lines:
+`created <path>`, then the migration lines. With `--starlight`, `data` gains `starlight: { source, targets, sourceDir,
+docsDir, pasteBlock }`, or `starlight: null` when the config already existed.
 
-- [ ] **Step 1: Write the failing tests** (every `init --starlight` test runs in a folder under `packages/cli`, as
-  `packages/cli/test/init.test.ts:11-31` does, so `@mogging/core` and `@mogging/starlight` resolve for the preset
-  check and the jiti loader; only the missing-package test uses `os.tmpdir()`):
+- [ ] **Step 1: Write the failing tests** (every `init --starlight` test runs with the real jiti loader in a folder
+  under `packages/cli`, as `packages/cli/test/init.test.ts:11-31` does, so `@mogging/core` and `@mogging/starlight`
+  resolve; only the not-loadable test uses `os.tmpdir()`):
   - "a root-locale site gets a config that loads and validates": `astro.config.mjs` = `ASTRO_ROOT_DE_ZH`; `init
     --starlight` exit 0; the written file loaded with jiti has `config.locales` `{ source: "en", chains: { de: ["en"],
     "zh-CN": ["en"] } }` and `defineStarlightLayout(mod.starlight, mod.config).localeDirs` `{ de: "de", "zh-CN":
     "zh-cn" }`.
   - "an own-folder site (defaultLocale en) gets sourceDir en".
-  - "a single-language site needs --locales and gets the block to paste": without it exit 2 and no file; with
-    `--locales de` exit 0 and stderr contains `"de": { label: "Deutsch", lang: "de" },`; a `locales` block with only
-    `root` is the same case.
-  - "a missing @mogging/starlight is exit 2 and writes nothing": run from an `os.tmpdir()` folder (where nothing
-    resolves), exit 2 with `@mogging/starlight is not installed`, and no config file exists.
+  - "a single-language site needs --locales and gets the block to add": without it exit 2 and no file; with
+    `--locales de` exit 0 and stderr contains `add this to the starlight() options` and `"de": { label: "Deutsch",
+    lang: "de" },`; `data.starlight.pasteBlock` equals the stderr block.
+  - "a locales block with only the default language keeps its source": `root: { label: "Français", lang: "fr" }` with
+    `--locales de` gives `source` `fr`, stderr says `replace the locales block`, and the block's first entry is
+    `root: { label: "Français", lang: "fr" }`; `{ en: { lang: "en" } }` with `defaultLocale: "en"` gives `sourceDir`
+    `en`; `--source-locale` next to either is exit 2.
+  - "a config that does not load is removed again": from an `os.tmpdir()` folder (where `@mogging/starlight` does not
+    resolve), exit 2, stderr contains `the written config does not load`, and no `mogging.config.ts` exists.
+  - "the warnings survive a failed migration": with a `connect` whose queries reject, the run fails, and stderr
+    still holds the paste block and the version warning.
   - "an unreadable astro.config needs --locales": exit 2 without; exit 0 with `--locales de`, plus the warning line.
   - "--locales next to readable locales is exit 2"; "--locales without --starlight is exit 2".
-  - "an existing config is left unchanged and says --starlight wrote nothing".
+  - "an existing config is left unchanged and says --starlight wrote nothing"; `--json` `data.starlight` is `null`.
   - "the version check": `node_modules/@astrojs/starlight/package.json` with `0.44.1` gives the outside-range line;
     without the file, the not-installed line; `0.43.2` gives none; `0.43.2` in the PARENT folder's `node_modules`
     gives none (hoisted).
@@ -680,7 +710,10 @@ devDependencies `@mogging/cli`, `@mogging/core`, `@mogging/ai` at `0.0.0` (the v
 zero-price noncommercial key, linking `LICENSE.md` of the package), then: `cp .env.example .env`, `docker compose up
 -d`, `npm install` (Node 22.23.4 or later), "replace the sample pages with yours", then the session `npm run mogging -- migrate`, `... import`,
 add the `ai` export (uncomment the block, set `OPENROUTER_API_KEY` and a monthly cap), `... compile --locales
-de,zh-CN --budget <usd>`, `... review`, `... publish`, `... export`, `npm run build`, commit; the 30-day evaluation and
+de,zh-CN --budget <usd>`, `... review` (interactive) or `... review --approve-clean`, then publish the approved
+drafts in one release (`... release create first`, `... release add first --all-approved`, `... release publish
+first`, `packages/cli/src/commands/release.ts:144-151`; a bare `publish` is a usage error, `publish.ts:115`), `...
+export`, `npm run build`, commit; the 30-day evaluation and
 what stops after it; the supported team setup (spec 5.7) and the known limits (spec 7.1), each in a short section.
 
 - [ ] **Step 1: Write the failing tests** in `template.test.ts`:
@@ -689,10 +722,11 @@ what stops after it; the supported team setup (spec 5.7) and the known limits (s
     `createJiti(import.meta.url, { alias: { "@mogging/core": <core src/index.ts>, "@mogging/starlight/preset":
     <starlight src/preset.ts> } })` validates with `defineStarlightLayout`, and `localeDrift(read, layout)` is `[]`.
   - "mogging.config.ts is what init --starlight writes": equals `starlightConfigText` of the answers above.
-  - "package.json pins": the exact versions above and the `mogging` script string.
+  - "package.json pins": the exact versions above, `engines.node` `>=22.23.4` and the `mogging` script string.
   - "the database URL agrees across .env.example and compose.yaml": user, password, database and port.
   - "README puts the licence first and the session in order": the first `## ` heading contains `Licence`; the indexes
-    of `migrate`, `import`, `compile`, `review`, `publish`, `export`, `npm run build` in the text increase.
+    of `migrate`, `import`, `compile --locales`, `review`, `release publish`, `export`, `npm run build` in the text
+    increase, and the text has no line holding `mogging -- publish` without a target or `--release`.
 - [ ] **Step 2: Run to see them fail.** `pnpm --filter @mogging/cli test template` - FAIL.
 - [ ] **Step 3: Write the template files.**
 - [ ] **Step 4: Run the tests, typecheck, suite.**
@@ -709,9 +743,11 @@ what stops after it; the supported team setup (spec 5.7) and the known limits (s
 `starlight` into `dest`, returns `{ [name]: absoluteTarballPath }`), `requireFrom(root, pkg, name)` (loads a
 dependency of a workspace package, such as `postgres` or `yaml`, through `createRequire` of
 `packages/<pkg>/package.json`, as `pack-smoke.mjs:44-45` does: the repository root resolves neither),
-`throwawaySchema(baseUrl)` (creates an `accept_<hex>` schema and returns `{ url, tables(), drop() }`, the URL carrying
-`search_path`, as `pack-smoke.mjs:73-78`), `siteEnv(extra)` (an allowlisted child environment: `PATH`, `HOME`,
-`MOGGING_ACTOR=accept` plus `extra`, and never the inherited `DATABASE_URL`, because `node --env-file` does not
+`throwawaySchema(baseUrl)` (creates an `accept_<hex>` schema and returns `{ url, tables(schema?), drop() }`,
+`tables` counting the tables of the given schema, default the throwaway one, the URL carrying `search_path`, as
+`pack-smoke.mjs:73-78`), `siteEnv(extra)` (an allowlisted child environment: `PATH`, `HOME`, `MOGGING_ACTOR=accept`,
+the proxy and CA variables when set (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` in either case, `NODE_EXTRA_CA_CERTS`,
+`npm_config_cafile`), plus `extra`, and never the inherited `DATABASE_URL`, because `node --env-file` does not
 override a variable that is already set: measured, `X=inherited node --env-file=.env` prints `X=inherited`) and
 `installSite(siteDir, tarballs, extraDev)` (removes every `@mogging/*` entry from the site's `dependencies` and
 `devDependencies`, then adds all five tarballs as `file:<tarball>`: `@mogging/starlight` under `dependencies`, the
@@ -724,23 +760,29 @@ printing `OK <step>` and failing the script with a message on a wrong exit or ou
 1. `DATABASE_URL` required (exit 2 otherwise, as pack-smoke). Build and pack; copy `templates/starlight` to
    `<tmp>/site` (no `node_modules`); `installSite(site, tarballs, { ai: "7.0.154" })`.
 2. Throwaway schema; write `<site>/.env` with its URL, so every command below runs through the template's own
-   `npm run mogging -- <args>` script with `siteEnv({})` (no `DATABASE_URL` inherited), proving the `.env` loading.
-3. `migrate`; then `tables()` of the throwaway schema is above 0 and the `public` schema's table count is unchanged
+   script as `npm run --silent mogging -- <args>` (one helper; `--silent` because npm prints its `> name script`
+   banner to stdout, which would break every `--json` parse: measured with npm 11.19.0) with `siteEnv({})` (no
+   `DATABASE_URL` inherited), proving the `.env` loading.
+3. `migrate`; then `tables()` of the throwaway schema is above 0 and `tables("public")` is unchanged
    (the `.env` URL was used); `import` exits 0 and reports `created` for the three English files.
 4. Write `<site>/mogging.accept.config.ts`: re-exports `config` and `starlight` from `./mogging.config.ts` and adds an
    `ai` export: `defineAiConfig({ provider: { kind: "custom", models: { "mock/translate": model } }, models: {
    translate: "mock/translate" }, prices: { "mock/translate": { inputUsdPerMtok: 1, outputUsdPerMtok: 2,
    contextTokens: 128000 } }, budgets: { monthlyCapUsd: 5 } })`, where `model` is a `MockLanguageModelV3` (`ai/test`)
    whose `doGenerate` reads the user message's `<<<DATA\n...\nDATA>>>` block (`packages/cli/test/mockModel.ts:66-85`)
-   and answers `{ fields, glossaryTermsUsed: [] }`, `fields` being the request's `translate` object with every string
-   leaf prefixed `Übersetzt: ` (placeholders and structure untouched), with the usage block of `mockModel.ts:15-22`.
+   and answers `{ fields, glossaryTermsUsed: [] }`, `fields` being the request's `translate` object in which every
+   string leaf WITHOUT a line break is prefixed `Übersetzt: ` and every multi-line leaf (a body) is returned
+   unchanged (a prefix in front of a body could turn its first heading into a paragraph and fail validation), with
+   the usage block of `mockModel.ts:15-22`. The titles carry the mark into the built pages.
 5. `compile --locales de,zh-CN --budget 1 --config mogging.accept.config.ts` exits 0.
 6. `review list --json` before approving lists 6 `DRAFT_AI` items (three pages, two locales); `review --approve-clean
-   --json` reports `data.approved === 6` (every draft was clean: the prefix keeps placeholders, so the validator raises
-   no warning); then `review list --state APPROVED --json` and, for each item, `publish docs/<item.slug> --locale
-   <item.locale>`, all exit 0.
+   --json` reports `data.approved === 6`; then the README's release flow: `release create accept`, `release add
+   accept --all-approved`, `release publish accept`, all exit 0; `review list --state APPROVED --json` is then
+   empty.
 7. `export` exits 0; `src/content/docs/de/guides/getting-started.md` and `.../zh-cn/guides/getting-started.md` exist
-   and contain `Übersetzt: `; `.mogging/manifest.json` exists.
+   and contain `Übersetzt: `; `.mogging/manifest.json` exists. A second `export --json` exits 0 with every action
+   `keep` (nothing rewritten); `status --json` `data.rows` holds no row whose `locale` is `de` or `zh-CN` and whose `state` is `stale` or
+   `missing` (`packages/cli/src/commands/status.ts:80`).
 8. `npx astro build` exits 0; `dist/de/guides/getting-started/index.html` and
    `dist/zh-cn/guides/getting-started/index.html` each contain `Übersetzt: `; `dist/index.html` exists and does not contain `Übersetzt: `.
 9. `finally`: drop the schema, remove the temporary folder and the copied `LICENSE.md` files (as
@@ -776,7 +818,8 @@ the template's (no `@mogging/*`). Pages, each English with a hand-made German tr
 The run (spec 7: "init --starlight, the day-one import, a rename and an export, then astro build"):
 1. Build, pack, copy the fixture to `<tmp>/site`, convert `src/content/docs/de/guides/setup.md` to CRLF line endings,
    `installSite(site, tarballs, {})` (all five tarballs, Task 10). Throwaway schema; commands run as
-   `node_modules/.bin/mogging` with `siteEnv({ DATABASE_URL: <the schema URL> })`.
+   `node_modules/.bin/mogging` with `siteEnv({ DATABASE_URL: <the schema URL> })`; after step 2's migration,
+   `tables()` is above 0 and `tables("public")` is unchanged.
    Record every German file's text.
 2. `mogging init --starlight` exits 0 and writes `mogging.config.ts` with `chains: { "de": ["en"] }`.
 3. `mogging import` exits 0: English `created`, German `created` and published, a warning line for `de/guides/wip.md`
@@ -837,7 +880,10 @@ body.
 
 **Files:**
 - Create: `packages/starlight/README.md`
-- Modify: `AGENTS.md:37-48` ("Package layering": the new package; "Commands": `accept:starlight`, `accept:adopter`),
+- Modify: `packages/cli/README.md` (the command list: Starlight `import`/`export` flags, `rename`, `init --starlight`,
+  `track --collection`, `compile --include-untracked`; `:20` "packs the four packages" stays true for `smoke:pack`,
+  and the two acceptance scripts are added beside it),
+  `AGENTS.md:37-48` ("Package layering": the new package; "Commands": `accept:starlight`, `accept:adopter`),
   `AGENTS.md:105` (the Starlight status line: implemented), `README.md` (project structure and scripts sections),
   `TODO.md` (Plan 6a follow-ups: drop "export's input.locales not normalized"; add the items below)
 - Test: `packages/starlight/test/readme.test.ts` (new)
@@ -847,8 +893,10 @@ command; then the first session in order (install `@mogging/cli`, `@mogging/core
 `@mogging/starlight` as dev dependencies (the written config imports `@mogging/core`, and its AI block
 `@mogging/ai`), with
 `@mogging/starlight` in the site's dependencies when `npx astro add` is used; Postgres from the template's
-`compose.yaml` or a hosted `DATABASE_URL`; `mogging init --starlight`; `mogging migrate`; the `ai` export with a
-provider key and a monthly cap; `mogging import`; `mogging compile`; `mogging review`; `mogging publish`; `mogging
+`compose.yaml` or a hosted `DATABASE_URL`; `mogging init --starlight` (a single-language site adds `--locales
+de,fr` and pastes the printed block into `astro.config`); `mogging migrate`; the `ai` export with a
+provider key and a monthly cap; `mogging import`; `mogging compile --locales <tags> --budget <usd>`; `mogging
+review`; the release flow of Task 9 (`release create`, `release add --all-approved`, `release publish`); `mogging
 export`; commit); the evaluation and what stops after it (design 12.3: guarded writers refuse, export and the built
 site keep working); supported versions (`@astrojs/starlight >=0.43.0 <0.44.0`, Astro `^7.2.10`; `init --starlight`
 warns outside them); day one (`untracked`, `mogging track --collection docs --locale <l>`, `compile
@@ -896,7 +944,7 @@ bulk publish of approved drafts would help large sites).
 - Rulings recorded for the reviewer: the preset is the authoritative field list and a test pins it equal to plan 6a's
   fixture instead of moving the fixture (moving it would make `@mogging/markdown`'s tests import a package that depends
   on `@mogging/markdown`); a real `export` prints no `keep` lines but a count (a dry run prints them all); a stopped
-  import is exit 4 when any other file was `created`, `updated` or `unchanged`.
+  import is exit 4 when any other file was `created` or `updated` (round 1).
 - Line citations were read on main `361f6c3`; every task that modifies a cited region starts with the Step 0 check.
 - Not decided here and why: the GitHub Actions majors are looked up at execution (they move); the template's page
   wording is the builder's (spec 9).
@@ -935,6 +983,34 @@ bulk publish of approved drafts would help large sites).
   - Anomalies reported by the seats, checked: the `importStarlight.ts:161` citation is `:160-161` (folded); the
     `files` list naming `README.md` before Task 13 writes it is harmless (`npm pack` skips a missing listed file);
     shortened tool output is the session's output condenser, not a defect. Nothing was captured.
+
+- Panel round 2 (2026-11-17; Sonnet solo seats Axiom Breaker, Cascade Analyst, Fold Verifier (bespoke): 13
+  findings; agy seats Adopter Walkthrough (bespoke), Protocol Pedant second pass: 3 findings; brief
+  `.clavity/seams/plan6b-panel-r2.md`). agy's reply was flagged ECHO MISSING; its echo was the plan's last line with
+  the backticks dropped (checked against the file), so it read to the end and its findings were verified and folded
+  like the others. All FOLDED:
+  - The READMEs documented a bare `publish` and `compile` (usage errors, `publish.ts:115`, `compile.ts:25-26`): the
+    release flow (`release create`, `release add --all-approved`, `release publish`) and `compile --locales --budget`
+    in both READMEs and in Task 10's run (Tasks 9, 10, 13).
+  - `checkLoaded` could not see the positionals or the config: `run.ts` passes a closure, and `LoadedConfig` carries
+    `config`, so Task 5's and Task 7's collection and locale checks run before connecting too (Task 2).
+  - The preset-resolution pre-check would refuse the published `import`-only exports map (measured
+    `ERR_PACKAGE_PATH_NOT_EXPORTED` on Node 24.21.0) and never checked `@mogging/core`: init loads the written config
+    once and deletes it when it does not load (agy's simpler option, Q2) (Task 8).
+  - The default-only `locales` fold contradicted the multilingual bullet and lost the existing source: that case keeps
+    the entry's `lang` and folder, refuses `--source-locale`, and prints a REPLACE block (Task 8).
+  - Init's stderr block had no test of surviving a failed migration, and `data.starlight` was undefined for an
+    existing config (`null` now) (Task 8).
+  - The astro warnings reached only `lines`, never `--json`: they go to the front of the report's `warnings`
+    (Tasks 4, 5); an unsupported extension is asserted to appear once (Task 4).
+  - `npm run` prints its banner to stdout (measured, npm 11.19.0): `npm run --silent` in one helper (Task 10).
+  - Task 11 had no schema check; `tables(schema?)`; `siteEnv` passes proxy and CA variables (Tasks 10, 11).
+  - The mock's prefix on a multi-line body could break its structure: only single-line leaves are prefixed (Task 10).
+  - Task 10 adds a second `export` that rewrites nothing and a `status` with no stale or missing row (Q3).
+  - The root-entry test parses `index.ts` with the TypeScript API (multi-line re-exports) (Task 1); the template test
+    pins `engines` (Task 9); `packages/cli/README.md` is updated (Task 13); the self-audit ruling on the stop exit now
+    says `created`/`updated`.
+  - Anomaly reported by a seat, checked: `packages/cli/README.md` lists the pre-6b commands (folded into Task 13).
 
 ## Stand-downs
 
