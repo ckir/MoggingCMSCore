@@ -248,6 +248,41 @@ describe("exportFolder, Starlight removals (spec 5.5)", () => {
     });
   });
 
+  test("unpublishing the shared scope never removes a published translation", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = await exportedTwo(ctx);
+      // A shared draft that keeps the slug visible, then the shared scope is unpublished; German stays published.
+      const a = await getDocument(ctx, { collection: "docs", slug: "a" });
+      await saveDraft(ctx, { docId: a!.id, locale: "shared", data: { ...a!.shared.published!.data } });
+      await unpublish(ctx, { docId: a!.id, locale: "shared" });
+      const r = await run(ctx, root);
+      expect(actionsOf(r, "remove")).toEqual([]);
+      expect(exists(root, `${D}/de/a.md`)).toBe(true);
+      expect(manifestPaths(root)).toEqual([`${D}/de/a.md`, `${D}/de/b.md`]);
+    });
+  });
+
+  test("a live document whose only shared head is a draft slug: its own locale heads decide", async () => {
+    await setup(async (_sql, ctx) => {
+      const { id } = await createDocument(ctx, { collection: "docs" });
+      await saveDraft(ctx, { docId: id, locale: "shared", data: { slug: "drafty" } });
+      await saveDraft(ctx, { docId: id, locale: "de", data: { title: "Entwurf" } });
+      await publish(ctx, { docId: id, locale: "de" });
+      const text = page("Entwurf");
+      const root = docsProject({ "other.md": page("O"), "de/drafty.md": text });
+      writeManifestFile(root, [entry(`${D}/de/drafty.md`, "drafty", text)]);
+      const r = await run(ctx, root);
+      expect(actionsOf(r, "remove")).toEqual([]);
+      expect(read(root, `${D}/de/drafty.md`)).toBe(text);
+      expect(manifestPaths(root)).toContain(`${D}/de/drafty.md`);
+      await unpublish(ctx, { docId: id, locale: "de" });
+      const r2 = await run(ctx, root);
+      expect(actionsOf(r2, "remove")).toEqual([{ action: "remove", path: `${D}/de/drafty.md`, reason: "its translation is unpublished" }]);
+      expect(exists(root, `${D}/de/drafty.md`)).toBe(false);
+      expect(manifestPaths(root)).not.toContain(`${D}/de/drafty.md`);
+    });
+  });
+
   test("a file never becomes removable because English changed", async () => {
     await setup(async (_sql, ctx) => {
       const root = await exportedTwo(ctx);

@@ -279,12 +279,12 @@ async function loadDocuments(ctx: Ctx, collection: string): Promise<DocumentReco
   return records;
 }
 
-/** The slug (published, else draft) of every document of the collection, deleted ones too when asked, page by page. */
-async function listSlugs(ctx: Ctx, collection: string, includeDeleted: boolean): Promise<Set<string>> {
+/** The slug (published, else draft) of every document of the collection, deleted ones too, page by page. */
+async function listAllSlugs(ctx: Ctx, collection: string): Promise<Set<string>> {
   const slugs = new Set<string>();
   for (let after: string | undefined; ;) {
     const page = await listDocuments(ctx, {
-      collection, limit: PAGE, includeDeleted, ...(after === undefined ? {} : { after }),
+      collection, limit: PAGE, includeDeleted: true, ...(after === undefined ? {} : { after }),
     });
     for (const i of page.items) if (i.slug !== null) slugs.add(i.slug);
     if (page.next === null) break;
@@ -293,15 +293,27 @@ async function listSlugs(ctx: Ctx, collection: string, includeDeleted: boolean):
   return slugs;
 }
 
+/** The slug a document answers to: its published shared slug, else its draft one (as `listDocuments` reads it). */
+function slugOfRecord(doc: DocumentRecord): string | null {
+  for (const head of [doc.shared.published, doc.shared.draft]) {
+    const slug = head?.data["slug"];
+    if (typeof slug === "string" && slug !== "") return slug;
+  }
+  return null;
+}
+
 /**
  * Plans the removals of spec 5.5 and returns the paths it removes. A manifest entry (already checked against the
  * layout, so it is never an English file) of an evaluated locale is removed only when the file still has the bytes
- * the manifest recorded and its document is soft-deleted or its locale has no published head. A live document
- * decides before a deleted one that holds the same slug; a slug no document has at all (a fresh or restored
- * database) removes nothing and is reported. A changed file is left, warned about and stays listed.
+ * the manifest recorded and its document is soft-deleted or the document's OWN locale has no published head (the
+ * shared scope never decides). A live document decides before a deleted one that holds the same slug; a slug no
+ * document has at all (a fresh or restored database) removes nothing and is reported. A changed file is left,
+ * warned about and stays listed.
+ *
+ * @param live every live document of the collection, with the slug it answers to (published, else draft).
  */
 async function planRemovals(
-  ctx: Ctx, run: Run, live: ReadonlyArray<{ doc: DocumentRecord; slug: string }>, evaluated: readonly string[],
+  ctx: Ctx, run: Run, live: ReadonlyMap<string, DocumentRecord>, evaluated: readonly string[],
 ): Promise<Set<string>> {
   const removed = new Set<string>();
   const candidates = [...run.manifest.values()]
@@ -309,18 +321,14 @@ async function planRemovals(
     .sort((a, b) => byText(a.path, b.path));
   if (candidates.length === 0) return removed;
 
-  const liveSlugs = await listSlugs(ctx, run.col.name, false);
-  const allSlugs = await listSlugs(ctx, run.col.name, true);
-  const docBySlug = new Map(live.map((d) => [d.slug, d.doc]));
+  const allSlugs = await listAllSlugs(ctx, run.col.name);
 
   for (const e of candidates) {
-    const doc = docBySlug.get(e.slug);
+    const doc = live.get(e.slug);
     let why: string;
     if (doc !== undefined) {
       const pair = Object.hasOwn(doc.locales, e.locale) ? doc.locales[e.locale] : undefined;
       if (pair?.published) continue; // a live published translation: the write path owns this file
-      why = "its translation is unpublished";
-    } else if (liveSlugs.has(e.slug)) {
       why = "its translation is unpublished";
     } else if (allSlugs.has(e.slug)) {
       why = "its document is deleted";
@@ -649,12 +657,17 @@ export async function exportStarlight(
   }
 
   // Slots.
-  const docs = (await loadDocuments(ctx, col.name))
-    .filter((d) => d.deletedAt === null)
+  const live = (await loadDocuments(ctx, col.name)).filter((d) => d.deletedAt === null);
+  const liveBySlug = new Map<string, DocumentRecord>();
+  for (const doc of live) {
+    const slug = slugOfRecord(doc);
+    if (slug !== null) liveBySlug.set(slug, doc);
+  }
+  const docs = live
     .map((doc) => ({ doc, slug: doc.shared.published?.data["slug"] }))
     .filter((d): d is { doc: DocumentRecord; slug: string } => typeof d.slug === "string" && d.slug !== "")
     .sort((a, b) => byText(a.slug, b.slug));
-  const removed = await planRemovals(ctx, run, docs, evaluated);
+  const removed = await planRemovals(ctx, run, liveBySlug, evaluated);
   const slots: Slot[] = [];
   for (const { doc, slug } of docs) {
     const candidates = sourceBySlug.get(slug) ?? [];
