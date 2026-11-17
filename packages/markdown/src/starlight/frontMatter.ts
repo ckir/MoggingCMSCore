@@ -34,7 +34,7 @@ export type SplitPage = {
 };
 
 /** Astro's own front-matter regex (`@astrojs/internal-helpers@0.13.0` `src/frontmatter.ts:17`), quoted verbatim. */
-const ASTRO_FRONT_MATTER = /(?:^﻿?|^\s*\n)(?:---|\+\+\+)([\s\S]*?\n)(?:---|\+\+\+)/;
+const ASTRO_FRONT_MATTER = /(?:^\uFEFF?|^\s*\n)(?:---|\+\+\+)([\s\S]*?\n)(?:---|\+\+\+)/;
 const FORBIDDEN_KEYS: readonly string[] = ["__proto__", "constructor", "prototype"];
 
 /** Reports whether `v` is a plain mapping (not an array, Date or null). */
@@ -135,7 +135,7 @@ function extractMogging(text: string): { between: string; frontMatter: string; b
  */
 export function readStarlightFile(text: string): StarlightFile {
   try {
-    const norm = (text.startsWith("﻿") ? text.slice(1) : text).replace(/\r\n/g, "\n").normalize("NFC");
+    const norm = (text.startsWith("\uFEFF") ? text.slice(1) : text).replace(/\r\n/g, "\n").normalize("NFC");
     const mine = extractMogging(norm);
     const astro = ASTRO_FRONT_MATTER.exec(norm);
     if (astro !== null) {

@@ -58,13 +58,24 @@ describe("readStarlightFile: safety", () => {
   });
 
   test("blank lines before --- are refused naming the limit", () => {
-    expect(() => readStarlightFile("\n\n---\ntitle: x\n---\nbody")).toThrow(/front matter.*blank lines/);
+    expect(() => readStarlightFile("\n\n---\ntitle: x\n---\nbody")).toThrow(/front matter: blank lines before the opening ---/);
   });
 
   test("an opening or closing fence Astro reads differently is refused", () => {
-    expect(() => readStarlightFile("--- \ntitle: x\n---\nbody")).toThrow(/front matter/);
-    expect(() => readStarlightFile("---\ntitle: x\n---x\nbody\n---\n")).toThrow(/front matter/);
-    expect(() => readStarlightFile("---\ntitle: x\n--- \nbody\n---\n")).toThrow(/front matter/);
+    const different = /different front-matter block/;
+    expect(() => readStarlightFile("--- \ntitle: x\n---\nbody")).toThrow(different);
+    expect(() => readStarlightFile("---\ntitle: x\n---x\nbody\n---\n")).toThrow(different);
+    expect(() => readStarlightFile("---\ntitle: x\n--- \nbody\n---\n")).toThrow(different);
+  });
+
+  test("the Astro comparison runs on normalized text: BOM and CRLF input diverge the same way", () => {
+    const different = /different front-matter block/;
+    expect(() => readStarlightFile("\uFEFF---\r\ntitle: x\r\n---x\r\nbody\r\n---\r\n")).toThrow(different);
+    expect(() => readStarlightFile("\uFEFF--- \r\ntitle: x\r\n---\r\nbody")).toThrow(different);
+    expect(() => readStarlightFile("\uFEFF\r\n\r\n---\r\ntitle: x\r\n---\r\nbody")).toThrow(/blank lines before the opening ---/);
+    expect(() => readStarlightFile("\uFEFF+++\r\ntitle = 'x'\r\n+++\r\nbody")).toThrow(/TOML/);
+    // The clean BOM + CRLF file is not a divergence.
+    expect(readStarlightFile("\uFEFF---\r\ntitle: x\r\n---\r\nbody").data).toEqual({ title: "x" });
   });
 
   test("a missing closing fence is a front matter error", () => {
