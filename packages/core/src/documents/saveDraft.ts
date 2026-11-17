@@ -6,6 +6,7 @@ import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
 import { assertLicensed } from "../licence/guard.js";
 import { normalizeLocale } from "../schema/locale.js";
 import { hashValue } from "../values/hash.js";
+import { assertSlugFree, lockSlugs } from "./slugGuard.js";
 import { normalizeValue, stripTopLevelNulls } from "../values/normalize.js";
 
 export type SaveDraftInput = {
@@ -40,12 +41,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * @returns the new version number allocated for the scope.
  * @throws {LicenceError} `LICENCE_REQUIRED` when the evaluation has ended without a key.
  * @throws {ValidationError} for a malformed or undeclared locale, an undeclared or wrongly-scoped
- * field, an invalid value, U+0000, or `untracked` on a shared or source-locale save.
+ * field, an invalid value, U+0000, `untracked` on a shared or source-locale save, or (shared scope) a slug
+ * that another live document of the collection already holds as its shared published or draft head.
  * @throws {NotFoundError} for a malformed, unknown or deleted document, or a collection absent from
  * the config.
  * @throws {ConflictError} when `expectedVersion` does not match the current head (draft head, else
  * published head, else 0).
- * @remarks One transaction that locks the `documents` row and writes one snapshot. No cache, webhook
+ * @remarks One transaction that locks the `documents` row (a shared save then takes the collection's
+ * advisory slug lock) and writes one snapshot. No cache, webhook
  * or external effect. History rows are retained; the previous draft head is only unmarked, not
  * deleted.
  */
@@ -88,6 +91,13 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
   return sql.begin(async (tx) => {
     const [doc] = await tx`select id from documents where id = ${input.docId} and deleted_at is null for update`;
     if (!doc) throw new NotFoundError(`Document "${input.docId}" not found`);
+
+    // Shared scope only (the slug field is never localized): serialize writers of this collection's slugs, after
+    // the documents row lock, then refuse a slug another live document holds (spec 8).
+    if (isShared) {
+      await lockSlugs(tx, [collection.name]);
+      await assertSlugFree(tx, ctx, { collection: collection.name, docId: input.docId, data });
+    }
 
     const table = isShared ? tx`document_shared` : tx`document_localized`;
     const scope = isShared ? tx`` : tx`and locale = ${locale}`;

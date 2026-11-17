@@ -1,6 +1,7 @@
 import type { Ctx } from "../ctx.js";
 import { NotFoundError, NotPublishableError, ValidationError } from "../errors.js";
 import { normalizeLocale } from "../schema/locale.js";
+import { assertSlugFree, lockSlugs } from "./slugGuard.js";
 
 export type PublishInput = { docId: string; locale: string | "shared"; version?: number };
 
@@ -38,6 +39,8 @@ export type Tx = Parameters<Parameters<Ctx["sql"]["begin"]>[1]>[0];
  * @throws {NotFoundError} when the scope has no snapshots or the requested version does not exist.
  * @throws {NotPublishableError} when the target is neither a publishable draft head nor a
  * historical published row.
+ * @throws {ValidationError} for an undeclared or malformed locale, or (shared scope) when the target's slug is
+ * held by another live document of the collection (checked under the collection's slug lock).
  * @remarks Does not check the licence, actor validity, document existence, `deleted_at`, or the
  * release state: callers own those checks. No external side effects.
  */
@@ -68,6 +71,18 @@ export async function publishWithinTx(tx: Tx, ctx: Ctx, input: PublishInput, sta
     throw new NotPublishableError(
       `Version ${target.version} of ${label} (state ${target.state}) cannot be published`,
     );
+  }
+
+  // Shared scope: the slug the target would publish must still be free (spec 8). The collection comes from the
+  // documents row (the input carries none); the slug lock is re-entrant and comes after the documents row lock.
+  if (isShared) {
+    const [docRow] = await tx`select collection from documents where id = ${input.docId}`;
+    if (docRow) {
+      const collection = docRow.collection as string;
+      const [snap] = await tx`select data from document_shared where doc_id = ${input.docId} and version = ${target.version}`;
+      await lockSlugs(tx, [collection]);
+      await assertSlugFree(tx, ctx, { collection, docId: input.docId, data: (snap?.data ?? {}) as Record<string, unknown> });
+    }
   }
 
   // Clear the old published head first: the partial unique index allows only one.

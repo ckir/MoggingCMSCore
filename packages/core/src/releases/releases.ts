@@ -2,6 +2,7 @@ import { assertActor, type Ctx } from "../ctx.js";
 import { ConflictError, NotFoundError, NotPublishableError, StaleReleaseError, ValidationError } from "../errors.js";
 import { assertLicensed } from "../licence/guard.js";
 import { publishWithinTx } from "../documents/publishCore.js";
+import { lockSlugs } from "../documents/slugGuard.js";
 import { normalizeLocale } from "../schema/locale.js";
 import { rejectNul } from "../values/nul.js";
 
@@ -171,7 +172,8 @@ export async function removeFromRelease(ctx: Ctx, input: RemoveFromReleaseInput)
  * @throws {LicenceError} `LICENCE_REQUIRED` when the evaluation has ended without a key.
  * @throws {NotFoundError} for a malformed or unknown release, or a missing or soft-deleted item
  * document.
- * @throws {ValidationError} for an already-published or empty release, or a NUL actor.
+ * @throws {ValidationError} for an already-published or empty release, a NUL actor, or a shared item whose
+ * slug another live document of the collection holds (spec 8).
  * @throws {NotPublishableError} when any item is no longer a publishable draft head.
  * @throws {StaleReleaseError} when stale items exist and `allowStale` is not exactly `true`; the
  * machine-readable list is on `err.items`.
@@ -202,6 +204,14 @@ export async function publishRelease(ctx: Ctx, input: PublishReleaseInput): Prom
     if (locked.length !== docIds.length) {
       const have = new Set(locked.map((r) => r.id as string));
       throw new NotFoundError(`Document "${docIds.find((d) => !have.has(d))}" not found`);
+    }
+    // Slug locks (spec 8): once, up front, for every collection with a shared item, in sorted order, after the
+    // documents row locks. Two releases (or a release and a save) thus never wait on collection locks in
+    // opposite orders; publishWithinTx re-takes the same locks re-entrantly.
+    const sharedDocIds = [...new Set(items.filter((i) => i.locale === null).map((i) => i.doc_id as string))];
+    if (sharedDocIds.length > 0) {
+      const cols = await tx`select distinct collection from documents where id in ${tx(sharedDocIds)}`;
+      await lockSlugs(tx, cols.map((r) => r.collection as string));
     }
     // One ms-granular instant, read once after the locks.
     const [{ t }] = (await tx`select date_trunc('milliseconds', clock_timestamp()) as t`) as unknown as [{ t: Date }];
