@@ -65,7 +65,8 @@ come back exactly as they went in once line endings are LF and the text is NFC.
 
 - Reference-style links and definitions are opaque, so their link text is not translated.
 - A suppressed (empty-tree) **body** exports as an empty body and re-imports as absent.
-- Concurrent imports of the same new slug can create two documents (core has no unique slug index).
+- Two concurrent imports of the same new slug create one document: the core slug guard serializes them, and the second import reports that file as an error (the slug is taken); re-run it.
+- With `publish`, a file that lacks a field the collection marks `required` is an error: core refuses to publish it, and its save in the same transaction is rolled back. (Starlight mode instead keeps an incomplete translation as an unpublished draft.)
 - Export never deletes stale files.
 - Renaming a page between `.md` and `.mdx` changes its tree `mode`, so its hash changes and its
   translations show as stale.

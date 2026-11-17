@@ -35,7 +35,6 @@ export type Tx = Parameters<Parameters<Ctx["sql"]["begin"]>[1]>[0];
  * @param input document, scope and optional explicit version.
  * @param stamp millisecond-granular ISO instant, already truncated and read after the row lock.
  * @returns resolves when the rows are updated inside `tx`.
- * @throws {ValidationError} for an undeclared or malformed locale.
  * @throws {NotFoundError} when the scope has no snapshots or the requested version does not exist.
  * @throws {NotPublishableError} when the target is neither a publishable draft head nor a
  * historical published row.

@@ -104,9 +104,9 @@ Lists and objects are embedded values, not joins. A list of references is `list(
 but each entry is still just an id string. This is deliberate: the store is document-oriented and
 snapshots are immutable, so cross-document integrity is an application concern.
 
-Slugs are unique per collection among live documents' shared heads: `saveDraft` and `publish` refuse a
-slug another live document holds (under a per-collection advisory lock). `document_shared` has a
-non-unique index on the heads' `slug` key for these lookups.
+Slugs are unique per collection among live documents' shared heads: `saveDraft`, `publish` and
+`publishRelease` refuse a slug another live document holds (under a per-collection advisory lock).
+`document_shared` has a non-unique index on the heads' `slug` key for these lookups.
 
 ## 2. Database model
 
@@ -713,7 +713,7 @@ These are properties of the current implementation, not bugs to discover:
 - No scheduling, webhooks, cache invalidation, search indexing, or notification side effects.
 - No media upload, storage adapter, or image transformation.
 - No referential integrity for `reference` fields.
-- Migration `0001` was edited in place before v0.1; databases created before plan 4 must be
+- Migration `0001` was edited in place before v0.1; databases created before plan 7 must be
   recreated because the runner tracks applied migrations by name only.
 - `content_provenance.version` and `release_items.draft_version` are conventional references without
   foreign keys; tooling must handle a missing or superseded target.

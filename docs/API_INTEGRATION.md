@@ -300,7 +300,7 @@ function InlineView(node: Inline) {
 }
 ```
 
-`applyMarks`, `Callout`, `MdxBlock`, `MdxInline`, `TableView`, and `Markdown` are application
+`applyMarks`, `Callout`, `MdxBlock`, `MdxInline`, and `TableView` are application
 components, not CMS exports. The CMS supplies structure; styling, syntax highlighting, MDX
 evaluation and link handling are yours.
 
@@ -469,7 +469,7 @@ All engine errors extend `MoggingError` and carry a stable `code`:
 
 | Class | `code` | Typical cause |
 | --- | --- | --- |
-| `ValidationError` | `validation_error` | Malformed locale, undeclared field, wrong value type, bad limit, U+0000, unknown warning acknowledgement. |
+| `ValidationError` | `validation_error` | Malformed locale, undeclared field, wrong value type, bad limit, U+0000, unknown warning acknowledgement, a slug another live document of the collection holds, publishing a target that lacks a required field. |
 | `NotFoundError` | `not_found` | Unknown collection, document, version, release, or draft head. |
 | `ConflictError` | `conflict` | `expectedVersion` mismatch, release item held at another version, duplicate release name. |
 | `NotPublishableError` | `not_publishable` | Publishing a `DRAFT_AI`, approving a non-AI head, releasing a non-draft head. |

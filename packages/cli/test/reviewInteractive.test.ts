@@ -511,6 +511,7 @@ describe("interactive review: the edit step", () => {
   test("a value holding a header line is refused by e with no file written; the menu returns", async () => {
     await withDb(async (sql) => {
       const docId = await publishedDoc(sql);
+      // A code fence, not md(...) text: treeToMarkdown would escape `=== title ===` (`\=== title ===`), so the guard would never see the header line; a fence keeps it verbatim.
       await draftWith(sql, docId, "de", { title: "Einleitung", body: markdownToTree("eins\n\n```\n=== title ===\n```\n\nzwei") });
       const s = start(sql, ["docs/intro"], { editor: editor(() => void problems.push("the editor must not run")) });
       await s.answer(MENU, "e");

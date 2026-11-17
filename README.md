@@ -195,7 +195,7 @@ and their types are inferred by the compiler. Document payloads cross the SDK bo
 is the only schema-related command, and it applies the bundled SQL in
 `packages/core/migrations/`.
 
-If the database was created before plan 4, recreate it rather than reusing it: migration `0001` was
+If the database was created before plan 7, recreate it rather than reusing it: migration `0001` was
 edited in place and the runner tracks migrations by name only. See
 [docs/dev-setup.md](docs/dev-setup.md).
 
