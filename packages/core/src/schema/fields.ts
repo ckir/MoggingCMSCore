@@ -19,6 +19,7 @@ export type Field =
   | (Base & { kind: "boolean" })
   | (Base & { kind: "dateTime" })
   | (Base & { kind: "slug" })
+  | (Base & { kind: "json" })
   | (Base & { kind: "reference"; collection: string })
   | (Base & { kind: "list"; item: Field })
   | (Base & { kind: "object"; fields: Record<string, Field> });
@@ -39,6 +40,14 @@ export const number = (o?: FieldOptions): Field => ({ kind: "number", ...base(o)
 export const boolean = (o?: FieldOptions): Field => ({ kind: "boolean", ...base(o) });
 export const dateTime = (o?: FieldOptions): Field => ({ kind: "dateTime", ...base(o) });
 export const slug = (): Field => ({ kind: "slug", ...base() });
+/**
+ * An opaque JSON field: any JSON value, stored verbatim (NFC-normalized strings) and never localized.
+ * The AI pipeline never sends it to the model and compares it by value.
+ *
+ * @param o field options; `localized: true` is refused by `defineConfig`, and `body` is only for richText.
+ * @returns a `json` field declaration.
+ */
+export const json = (o?: FieldOptions): Field => ({ kind: "json", ...base(o) });
 export const reference = (collection: string, o?: FieldOptions): Field => ({
   kind: "reference", collection, ...base(o),
 });

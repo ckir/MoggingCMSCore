@@ -39,7 +39,7 @@ const READERS = [
 ];
 // Pure helpers and schema builders: no ctx at all.
 const NO_CTX = [
-  "defineConfig", "defineCollection", "text", "richText", "number", "boolean", "dateTime", "slug", "reference", "list",
+  "defineConfig", "defineCollection", "text", "richText", "number", "boolean", "dateTime", "slug", "json", "reference", "list",
   "object", "normalizeLocale", "chainFor", "hashValue", "normalizeValue", "verifyKey",
 ];
 

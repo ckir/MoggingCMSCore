@@ -8,7 +8,7 @@ import type { Ctx, DocumentRecord, DraftHead, DraftReview, Field, ReviewField, L
 // PUBLIC_KEYS, publishWithinTx, resolveLocale, ...) fails the exact-surface test.
 const FUNCTIONS = [
   "defineConfig", "defineCollection",
-  "text", "richText", "number", "boolean", "dateTime", "slug", "reference", "list", "object",
+  "text", "richText", "number", "boolean", "dateTime", "slug", "json", "reference", "list", "object",
   "normalizeLocale", "chainFor", "migrate",
   "createDocument", "deleteDocument", "getDocument", "listDocuments",
   "saveDraft", "publish", "unpublish", "recordAiDraft", "approve", "approveClean",

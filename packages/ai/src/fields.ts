@@ -2,12 +2,13 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { Field } from "@mogging/core";
 
-type LeafKind = "text" | "richText" | "other";
+type LeafKind = "text" | "richText" | "json" | "other";
 
 function leafKinds(field: Field, into: Set<LeafKind>): void {
   switch (field.kind) {
     case "text": into.add("text"); return;
     case "richText": into.add("richText"); return;
+    case "json": into.add("json"); return;
     case "list": leafKinds(field.item, into); return;
     case "object": for (const f of Object.values(field.fields)) leafKinds(f, into); return;
     case "number":
@@ -28,7 +29,7 @@ export function isTranslatable(field: Field): boolean {
   if (field.kind !== "list" && field.kind !== "object") return false;
   const kinds = new Set<LeafKind>();
   leafKinds(field, kinds);
-  return kinds.has("text") && !kinds.has("richText");
+  return kinds.has("text") && !kinds.has("richText") && !kinds.has("json");
 }
 
 function fieldSchema(field: Field): z.ZodType {
@@ -38,6 +39,7 @@ function fieldSchema(field: Field): z.ZodType {
     case "dateTime":
     case "slug":
     case "reference": return z.string();
+    case "json": return z.unknown();
     case "number": return z.number();
     case "boolean": return z.boolean();
     case "list": return z.array(nestedSchema(field.item));
@@ -122,6 +124,7 @@ function walk(field: Field, source: unknown, draft: unknown, path: string, out: 
     case "dateTime":
     case "slug":
     case "reference":
+    case "json":
       if (!isDeepStrictEqual(source, draft)) out.push(`${path}: non-text value changed`);
       return;
   }

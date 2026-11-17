@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
   boolean, chainFor, defineCollection, defineConfig, list, normalizeLocale, number,
-  object, reference, richText, slug, text, ValidationError, MoggingError, ConflictError,
+  json, object, reference, richText, slug, text, ValidationError, MoggingError, ConflictError,
   NotPublishableError, StaleReleaseError, NotFoundError,
 } from "../src/index.js";
 import type { Field } from "../src/index.js";
@@ -113,4 +113,19 @@ test("normalizeLocale accepts UN M.49 numeric regions and three-letter languages
 test("defineConfig rejects a body field that is not richText", () => {
   const bad = defineCollection("notes", { title: { ...text(), body: true } as Field, body: richText({ body: true }) });
   expect(() => defineConfig({ collections: [bad], locales })).toThrow(/only a richText field can be the body/);
+});
+
+test("json is a shared opaque kind", () => {
+  expect(json()).toMatchObject({ kind: "json", localized: false });
+  const cfg = (fields: Record<string, Field>) => () =>
+    defineConfig({
+      collections: [defineCollection("p", { slug: slug(), body: richText({ localized: true, body: true }), ...fields })],
+      locales,
+    });
+  expect(cfg({ meta: json() })).not.toThrow();
+  expect(cfg({ meta: json({ localized: true }) })).toThrow(ValidationError);
+  expect(cfg({ meta: json({ localized: true }) })).toThrow(/json cannot be localized/);
+  expect(cfg({ meta: list(json(), { localized: true }) })).toThrow(/json cannot be localized/);
+  expect(cfg({ meta: object({ a: json() }, { localized: true }) })).toThrow(/json cannot be localized/);
+  expect(cfg({ meta: json({ body: true }) })).toThrow(/only a richText field can be the body/);
 });

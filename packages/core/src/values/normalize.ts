@@ -22,6 +22,8 @@ function nfcDeep(v: unknown, path: string): unknown {
   if (isPlainObject(v)) {
     const out: Record<string, unknown> = {};
     for (const [k, x] of Object.entries(v)) {
+      // Assigning out["__proto__"] would set the prototype instead of an own key, so refuse it at any depth.
+      if (k === "__proto__") throw new ValidationError(`${path}.__proto__: forbidden key`);
       if (x === undefined) continue;
       rejectNul(k, `${path}.${k}`);
       out[k.normalize("NFC")] = nfcDeep(x, `${path}.${k}`);
@@ -46,6 +48,8 @@ function normalizeAt(field: Field, value: unknown, path: string): unknown {
         throw new ValidationError(`${path}: expected richText (string, object or array)`);
       }
       if (value === null) throw new ValidationError(`${path}: expected richText, got null`);
+      return nfcDeep(value, path);
+    case "json":
       return nfcDeep(value, path);
     case "number":
       if (typeof value !== "number" || !Number.isFinite(value)) {

@@ -1,5 +1,6 @@
 import { NotFoundError, ValidationError } from "../errors.js";
 import type { Collection } from "./collection.js";
+import type { Field } from "./fields.js";
 import { normalizeLocale } from "./locale.js";
 
 export type MoggingConfig = {
@@ -10,6 +11,14 @@ export type MoggingConfig = {
   /** Purchase address named in the licence refusal (spec 12.3); default https://mogging.dev/buy. */
   purchaseUrl?: string;
 };
+
+/** True when the field is a `json` field or holds one anywhere inside its list item or object fields. */
+function containsJson(f: Field): boolean {
+  if (f.kind === "json") return true;
+  if (f.kind === "list") return containsJson(f.item);
+  if (f.kind === "object") return Object.values(f.fields).some(containsJson);
+  return false;
+}
 
 export function defineConfig(c: {
   collections: Collection[];
@@ -28,6 +37,9 @@ export function defineConfig(c: {
     names.add(col.name);
     let bodies = 0;
     for (const [fname, f] of Object.entries(col.fields)) {
+      if (f.localized && containsJson(f)) {
+        throw new ValidationError(`${col.name}.${fname}: json cannot be localized`);
+      }
       if (f.kind === "slug" && f.localized) {
         throw new ValidationError(`${col.name}.${fname}: slug cannot be localized`);
       }

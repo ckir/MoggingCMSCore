@@ -6,7 +6,7 @@ export {
 } from "./errors.js";
 export type { LicenceErrorCode } from "./errors.js";
 
-export { text, richText, number, boolean, dateTime, slug, reference, list, object } from "./schema/fields.js";
+export { text, richText, number, boolean, dateTime, slug, json, reference, list, object } from "./schema/fields.js";
 export type { Field, FieldOptions } from "./schema/fields.js";
 export { defineCollection } from "./schema/collection.js";
 export type { Collection } from "./schema/collection.js";

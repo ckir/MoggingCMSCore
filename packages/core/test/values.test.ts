@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  boolean, dateTime, list, number, object, reference, richText, slug, text, ValidationError,
+  boolean, dateTime, json, list, number, object, reference, richText, slug, text, ValidationError,
 } from "../src/index.js";
 import { hashValue } from "../src/values/hash.js";
 import { isEmptyValue, normalizeValue, stripTopLevelNulls } from "../src/values/normalize.js";
@@ -98,4 +98,22 @@ test("U+0000 is rejected in text, slug, reference and every richText string and 
 });
 test("other control characters stay legal", () => {
   expect(normalizeValue(text(), "a\u0001b\tc")).toBe("a\u0001b\tc");
+});
+
+test("a __proto__ key is refused in json and richText", () => {
+  expect(() => normalizeValue(json(), JSON.parse('{"a":{"__proto__":{"x":1}}}'))).toThrow(/__proto__/);
+  expect(() => normalizeValue(richText(), JSON.parse('{"type":"root","children":[],"__proto__":{"x":1}}'))).toThrow(ValidationError);
+  expect(() => normalizeValue(richText(), JSON.parse('{"type":"root","children":[],"__proto__":{"x":1}}'))).toThrow(/__proto__/);
+  expect(({} as Record<string, unknown>)["x"]).toBeUndefined();
+});
+test("json normalizes any JSON value", () => {
+  expect(normalizeValue(json(), { a: [1, null, "e\u0301"] })).toEqual({ a: [1, null, "\u00e9"] });
+  expect(() => normalizeValue(json(), "x\u0000")).toThrow(ValidationError);
+  expect(() => normalizeValue(json(), JSON.parse('{"a":{"__proto__":{"x":1}}}'))).toThrow(ValidationError);
+  expect(() => normalizeValue(json(), JSON.parse('{"a":{"__proto__":{"x":1}}}'))).toThrow(/__proto__/);
+  expect(() => normalizeValue(json(), new Date())).toThrow(ValidationError);
+  expect(() => normalizeValue(json(), NaN)).toThrow(ValidationError);
+  expect(normalizeValue(json(), { k: undefined })).toEqual({});
+  expect(() => normalizeValue(json(), { "a\u0000": 1 })).toThrow(ValidationError);
+  expect(normalizeValue(json(), { a: 1 })).toEqual({ a: 1 });
 });

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
-  boolean, dateTime, list, number, object, reference, richText, slug, text,
+  boolean, dateTime, json, list, number, object, reference, richText, slug, text,
 } from "@mogging/core";
+import { contextValues } from "../src/prompt.js";
 import { checkShape, isTranslatable, outputSchema, stringLeaves } from "../src/fields.js";
 
 // Mirrors the posts fixture at packages/core/test/fixtures.ts:8-15.
@@ -201,5 +202,16 @@ describe("checkShape", () => {
 
   test("a text leaf must stay a string", () => {
     expect(checkShape(text(), "a", 5)).toEqual(["$: expected text"]);
+  });
+});
+
+describe("json", () => {
+  test("a json leaf is never sent and is compared by value", () => {
+    const fields = { sh: object({ t: text(), j: json() }), plain: text() };
+    const out = contextValues(fields, { sh: { t: "hi", j: { a: 1 } }, plain: "x" }, 10_000);
+    expect(out).toEqual({ plain: "x" });
+    expect(isTranslatable(object({ t: text(), j: json() }, { localized: true }))).toBe(false);
+    expect(checkShape(json(), { a: 1 }, { a: 1 })).toEqual([]);
+    expect(checkShape(json(), { a: 1 }, { a: 2 })).toEqual(["$: non-text value changed"]);
   });
 });

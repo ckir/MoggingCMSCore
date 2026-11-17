@@ -1,10 +1,12 @@
+import YAML from "yaml";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { Sql } from "postgres";
-import { LicenceError, ValidationError, defineCollection, defineConfig, richText, text, getDocument, listDocuments, migrate, recordAiDraft, approve } from "@mogging/core";
+import { LicenceError, ValidationError, defineCollection, defineConfig, richText, slug, text, json, getDocument, listDocuments, migrate, recordAiDraft, approve } from "@mogging/core";
+import { exportFolder } from "../src/export.js";
 import { importFolder } from "../src/import.js";
 import { isSafeSlug } from "../src/slug.js";
 import { withTestDb } from "./db.js";
@@ -426,5 +428,27 @@ describe("isSafeSlug", () => {
     for (const bad of ["", "/a", "a/", "a//b", ".", "..", "a/../b", "a/./b", "a\\b", "a\0b"]) {
       expect(isSafeSlug(bad)).toBe(false);
     }
+  });
+});
+
+describe("json field", () => {
+  test("a shared json field round-trips through the generic layout", async () => {
+    await withTestDb(async (sql) => {
+      await migrate(sql);
+      const pages = defineCollection("pages", {
+        slug: slug(), meta: json(), body: richText({ localized: true, body: true }),
+      });
+      const cfg = defineConfig({ collections: [pages], locales: { source: "en", chains: { de: ["en"] } } });
+      const ctx = { sql, config: cfg, actor: "tester" };
+      const dir = writeTree(null, { "en/pages/a.md": "---\nmeta:\n  a: [1, ~]\n  b: x\n---\nHello\n" });
+      const r = await importFolder(ctx, { dir, publish: true });
+      expect(r.errors).toEqual([]);
+      const out = fs.mkdtempSync(path.join(os.tmpdir(), "mog-json-"));
+      const e = await exportFolder(ctx, { dir: out });
+      const file = e.files.find((f) => f.endsWith("pages/a.md"))!;
+      expect(file).toBeDefined();
+      const m = /^---\n([\s\S]*?)\n---\n/.exec(fs.readFileSync(path.join(out, ...file.split("/")), "utf8"))!;
+      expect((YAML.parse(m[1]!) as Record<string, unknown>)["meta"]).toEqual({ a: [1, null], b: "x" });
+    });
   });
 });
