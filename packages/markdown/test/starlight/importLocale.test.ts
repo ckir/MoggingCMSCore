@@ -224,6 +224,85 @@ describe("importFolder, Starlight mode, locale files", () => {
     });
   });
 
+  test("carry-forward takes the prev from the newer human draft head, not the older published head", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = docsProject({ "a.md": page("A", "prev: false\n"), "de/a.md": page("Eins", "prev: Alt\n") });
+      await run(ctx, root);
+      const doc = (await bySlug(ctx, "a"))!;
+      expect(doc.locales["de"]!.published!.data["prev"]).toEqual({ label: "Alt" });
+      await saveDraft(ctx, { docId: doc.id, locale: "de", data: { title: "Zwei", prev: { label: "Neu" } } });
+      put(root, "de/a.md", page("Drei"));
+      const r = await run(ctx, root);
+      expect(fileOf(r, "de/a.md")).toMatchObject({ outcome: "updated", published: false });
+      const de = (await bySlug(ctx, "a"))!.locales["de"]!;
+      expect(de.published!.data["prev"]).toEqual({ label: "Alt" });
+      expect(de.draft).toMatchObject({ state: "DRAFT_HUMAN", data: { title: "Drei", prev: { label: "Neu" } } });
+    });
+  });
+
+  test("pending: a file equal to a DRAFT_AI or an APPROVED draft head stays unpublished even with publish", async () => {
+    await setup(async (sql, ctx) => {
+      const root = docsProject({ "a.md": page("A") });
+      await run(ctx, root);
+      const doc = (await bySlug(ctx, "a"))!;
+      const src = doc.locales["en"]!.published!;
+      await recordAiDraft(ctx, {
+        docId: doc.id, locale: "de", fields: { title: "KI" }, sourceVersion: src.version, sourceHashes: src.sourceHashes, provenance: [],
+      });
+      put(root, "de/a.md", "---\ntitle: KI\n---\n");
+      const published = async (): Promise<number> =>
+        (await sql`select count(*)::int as n from document_localized where doc_id = ${doc.id} and locale = 'de' and is_head_published`)[0]!.n as number;
+      for (const state of ["DRAFT_AI", "APPROVED"]) {
+        if (state === "APPROVED") await approve(ctx, { docId: doc.id, locale: "de" });
+        expect((await bySlug(ctx, "a"))!.locales["de"]!.draft).toMatchObject({ state, data: { title: "KI" } });
+        const rows = await counts(sql);
+        const r = await run(ctx, root, {}, true);
+        expect(r.errors).toEqual([]);
+        expect(fileOf(r, "de/a.md")).toMatchObject({ outcome: "unchanged", published: false });
+        expect(await published()).toBe(0);
+        expect(await counts(sql)).toBe(rows);
+      }
+    });
+  });
+
+  test("ED6-3: a locale file whose English file is gone is made canonical against the English path it would have", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = docsProject({ "a.md": page("A"), "b.md": page("B") });
+      await run(ctx, root);
+      fs.rmSync(path.join(root, D, "a.md"));
+      put(root, "de/a.md", page("Hallo", "hero:\n  image:\n    file: ../../../assets/h.webp\n    alt: H\n", "![x](pic.png)"));
+      const r = await run(ctx, root);
+      expect(r.errors).toEqual([]);
+      expect(fileOf(r, "de/a.md")).toMatchObject({ outcome: "updated", published: true });
+      const de = (await bySlug(ctx, "a"))!.locales["de"]!.published!.data;
+      // English path is src/content/docs/a.md: one folder up from de/ for the hero, `./de/pic.png` for the body
+      expect((de["hero"] as { image: { file: string } }).image.file).toBe("../../assets/h.webp");
+      expect(JSON.stringify(de["body"])).toContain('"./de/pic.png"');
+    });
+  });
+
+  test("ED6-3, own-folder layout: the missing English file's place is under the source folder", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = project({ [`${D}/en/a.md`]: page("A"), [`${D}/en/b.md`]: page("B") });
+      const own = () => importFolder(ctx, { dir: root, starlight: { layout: layoutOwn } });
+      await own();
+      fs.rmSync(path.join(root, D, "en", "a.md"));
+      fs.mkdirSync(path.join(root, D, "de"), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, D, "de", "a.md"),
+        page("Hallo", "hero:\n  image:\n    file: ../../../assets/h.webp\n    alt: H\n", "![x](pic.png)"),
+      );
+      const r = await own();
+      expect(r.errors).toEqual([]);
+      expect(r.files.find((f) => f.file === `${D}/de/a.md`)).toMatchObject({ outcome: "updated", published: true });
+      const de = (await bySlug(ctx, "a"))!.locales["de"]!.published!.data;
+      // English path is src/content/docs/en/a.md: same depth as de/a.md (the hero is unchanged), but a sibling folder
+      // (the body image sits next to de/a.md, which is `../de/pic.png` from en/a.md)
+      expect((de["hero"] as { image: { file: string } }).image.file).toBe("../../../assets/h.webp");
+      expect(JSON.stringify(de["body"])).toContain('"../de/pic.png"');
+    });
+  });
+
   test("not day one: a hand-work file is saved and published in one run with publish", async () => {
     await setup(async (sql, ctx) => {
       const root = docsProject({ "a.md": page("A"), "de/a.md": page("Eins") });

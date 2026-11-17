@@ -565,10 +565,11 @@ async function planLocales(
     if (cls === "hand work" && !(dayOne && Object.keys(c.localized).length === 0)) {
       for (const name of unionValues) {
         if (present(c.localized[name])) continue;
-        // The published head first, then a human or approved draft head; AI text is never carried into a human draft.
-        const draftSource = pair?.draft != null && pair.draft.state !== "DRAFT_AI" ? pair.draft.data[name] : undefined;
-        const kept = [pair?.published?.data[name], draftSource].find(present);
-        if (kept !== undefined) c.localized[name] = kept;
+        // The newer head carries it: the draft head when it is a human or approved draft, else the published head.
+        // A DRAFT_AI head is never a source (AI text must not reach a human draft without `approve`).
+        const head = pair?.draft != null && pair.draft.state !== "DRAFT_AI" ? pair.draft : pair?.published;
+        const kept = head?.data[name];
+        if (present(kept)) c.localized[name] = kept;
       }
       const draft = pair?.draft ?? null;
       const published = pair?.published ?? null;
