@@ -16,8 +16,8 @@
   "dependencies": {
     "@astrojs/starlight": "0.43.0",
     "@mogging/starlight": "0.0.0",
-    "astro": "7.4.4",
-    "sharp": "0.35.4"
+    "astro": "7.4.7",
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@mogging/ai": "0.0.0",
