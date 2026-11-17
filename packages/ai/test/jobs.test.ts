@@ -108,6 +108,25 @@ test("non-text fields are reported, not enqueued", async () => {
   });
 });
 
+test("includeUntracked queues untracked fields; the default does not", async () => {
+  await withTestDb(async (sql) => {
+    const docId = await migrateAndSeed(sql);
+    const ctx = ctxFor(sql, model);
+    await saveDraft(ctx, { docId, locale: "de", data: allDe(), untracked: true });
+    await publish(ctx, { docId, locale: "de" });
+
+    const plain = await enqueueStale(ctx, { locales: ["de"] });
+    expect(plain.enqueued).toBe(0);
+    expect(await jobs(sql)).toEqual([]);
+
+    const opted = await enqueueStale(ctx, { locales: ["de"], includeUntracked: true });
+    expect(opted.enqueued).toBe(1);
+    const [job, ...rest] = await jobs(sql);
+    expect(rest).toEqual([]);
+    expect(job).toMatchObject({ locale: "de", field_paths: FIELDS, state: "QUEUED" });
+  });
+});
+
 test("a second call reports duplicates and inserts nothing", async () => {
   await withTestDb(async (sql) => {
     await migrateAndSeed(sql);

@@ -114,3 +114,27 @@ test("a job that went back to QUEUED with back-off still counts as pending", asy
   expect(r.worker).toMatchObject({ completed: 0, requeued: 1 });
   expect(r.pendingJobs).toBe(1);
 }));
+
+test("compile with includeUntracked drafts untracked fields", async () => withTestDb(async (sql) => {
+  const docId = await migrateAndSeed(sql);
+  const model = mockModel([identity]);
+  const ctx = ctxFor(sql, model);
+  await saveDraft(ctx, {
+    docId, locale: "de", untracked: true,
+    data: { title: "Hallo", body: markdownToTree("# Hallo\n"), legal: "AGB gelten", tags: ["a", "b"] },
+  });
+  await publish(ctx, { docId, locale: "de" });
+
+  const plain = await compile(ctx, { locales: ["de"], budgetUsd: 1 });
+  expect(plain.enqueue.enqueued).toBe(0);
+  expect(model.doGenerateCalls).toHaveLength(0);
+  expect(await jobStates(sql)).toEqual([]);
+
+  const opted = await compile(ctx, { locales: ["de"], budgetUsd: 1, includeUntracked: true });
+  expect(opted.enqueue.enqueued).toBe(1);
+  expect(opted.worker).toMatchObject({ completed: 1, failed: 0, errors: 0 });
+  expect(model.doGenerateCalls).toHaveLength(1);
+  expect(await jobStates(sql)).toEqual([{ doc_id: docId, locale: "de", state: "COMPLETED" }]);
+  const [draft] = await sql`select state from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
+  expect(draft!.state).toBe("DRAFT_AI");
+}));

@@ -353,3 +353,33 @@ test("jsonb round trip: stored self-hash equals hashValue of the data read back"
   expect(first.title).toBe("Caf\u00e9");
   expect((first.body as { text: string }).text).toBe("Caf\u00e9");
 }));
+
+// ---- untracked target saves (day-one translations: no source hash is recorded) ----
+
+test("an untracked save records no source hash and publishes as untracked", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B" } });
+  await publish(ctx, { docId, locale: "en" });
+  const { version: v1 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: "B de" }, untracked: true });
+  expect(await hashesOf(sql, docId, "de", v1)).toEqual({});
+  await publish(ctx, { docId, locale: "de" });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "untracked", "de.body": "untracked" });
+  // An ordinary save that changes only the title stamps it; the unchanged body stays untracked (carry-forward).
+  const { version: v2 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de 2", body: "B de" } });
+  expect(await hashesOf(sql, docId, "de", v2)).toEqual({ title: hashValue("T") });
+  await publish(ctx, { docId, locale: "de" });
+  expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "untracked" });
+}));
+
+test("untracked is refused for shared and for the source locale", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setup(sql);
+  await expect(saveDraft(ctx, { docId, locale: "shared", data: { slug: "x" }, untracked: true }))
+    .rejects.toThrow(/untracked applies to a target locale/);
+  await expect(saveDraft(ctx, { docId, locale: "en", data: { title: "T" }, untracked: true }))
+    .rejects.toThrow(/untracked applies to a target locale/);
+  await expect(saveDraft(ctx, { docId, locale: "EN", data: { title: "T" }, untracked: true }))
+    .rejects.toBeInstanceOf(ValidationError);
+  const [{ s }] = await sql`select count(*)::int as s from document_shared where doc_id = ${docId}`;
+  const [{ l }] = await sql`select count(*)::int as l from document_localized where doc_id = ${docId}`;
+  expect([s, l]).toEqual([0, 0]);
+}));

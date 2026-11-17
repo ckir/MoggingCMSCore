@@ -15,7 +15,11 @@ import { listLimit } from "./provenance.js";
 
 type Json = Parameters<Sql["json"]>[0];
 
-export type EnqueueInput = { locales: string[]; collection?: string; docIds?: string[] };
+export type EnqueueInput = {
+  locales: string[]; collection?: string; docIds?: string[];
+  /** Also queue fields whose target value records no source hash (`untracked`), e.g. day-one translations. Default false. */
+  includeUntracked?: boolean;
+};
 export type Skipped = {
   docId: string; locale: string; field: string | null; reason: "not translatable" | "human draft pending" | "draft already current";
 };
@@ -134,7 +138,7 @@ export async function enqueueStale(ctx: AiCtx, input: EnqueueInput): Promise<Enq
   }
 
   const skipped: Skipped[] = [];
-  // (docId, locale) -> stale or missing translatable fields; insertion order is the sweep order.
+  // (docId, locale) -> stale, missing (or opted-in untracked) translatable fields; insertion order is the sweep order.
   const groups = new Map<string, { docId: string; locale: string; collection: Collection; fields: string[] }>();
   for (const collection of collections) {
     for (const locale of locales) {
@@ -145,7 +149,7 @@ export async function enqueueStale(ctx: AiCtx, input: EnqueueInput): Promise<Enq
         rows.push(...await getSyncState(ctx, { collection: collection.name, locale }));
       }
       for (const r of rows) {
-        if (r.state !== "stale" && r.state !== "missing") continue;
+        if (r.state !== "stale" && r.state !== "missing" && !(r.state === "untracked" && input.includeUntracked === true)) continue;
         const field = Object.hasOwn(collection.fields, r.field) ? collection.fields[r.field] : undefined;
         if (!field || !isTranslatable(field)) {
           skipped.push({ docId: r.docId, locale: r.locale, field: r.field, reason: "not translatable" });

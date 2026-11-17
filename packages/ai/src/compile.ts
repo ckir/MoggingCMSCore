@@ -6,6 +6,8 @@ import { runWorker, type WorkerReport } from "./worker.js";
 
 export type CompileInput = {
   locales: string[]; budgetUsd: number; collection?: string; docIds?: string[]; log?: (line: string) => void;
+  /** Also translate fields whose target value records no source hash (`untracked`); passed to `enqueueStale`. Default false. */
+  includeUntracked?: boolean;
 };
 export type CompileReport = { enqueue: EnqueueReport; worker: WorkerReport; pendingJobs: number };
 
@@ -21,7 +23,9 @@ export async function compile(ctx: AiCtx, input: CompileInput): Promise<CompileR
   if (typeof input.budgetUsd !== "number" || !Number.isFinite(input.budgetUsd) || !(input.budgetUsd > 0)) {
     throw new ValidationError(`budgetUsd must be a positive number, got ${input.budgetUsd}`);
   }
-  const enqueue = await enqueueStale(ctx, { locales: input.locales, collection: input.collection, docIds: input.docIds });
+  const enqueue = await enqueueStale(ctx, {
+    locales: input.locales, collection: input.collection, docIds: input.docIds, includeUntracked: input.includeUntracked,
+  });
   const locales = [...new Set(input.locales.map(normalizeLocale))];
   const worker = await runWorker(ctx, {
     once: true,

@@ -13,6 +13,12 @@ export type SaveDraftInput = {
   locale: string | "shared";
   data: Record<string, unknown>;
   expectedVersion?: number;
+  /**
+   * Target-locale saves only: record no source hash at all, so every saved field reads as `untracked` in
+   * `getSyncState` (used for day-one translations that were never produced from a tracked source version).
+   * Refused for `"shared"` and for the source locale.
+   */
+  untracked?: boolean;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -26,14 +32,15 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * The current draft head is cleared and replaced. This is also the human-takeover path over a
  * `DRAFT_AI` or `APPROVED` head. A target-locale save records the current published source hash for
  * each changed or new field and carries the base head's hash forward for unchanged fields, so a
- * re-save does not assert translation freshness.
+ * re-save does not assert translation freshness. With `untracked: true` (target locales only) no hash is
+ * recorded at all, and the saved fields read as `untracked` once published.
  *
  * @param ctx engine context; the write must be licensed and the actor NUL-free.
  * @param input document id, scope, complete field data, and optional expected head version.
  * @returns the new version number allocated for the scope.
  * @throws {LicenceError} `LICENCE_REQUIRED` when the evaluation has ended without a key.
  * @throws {ValidationError} for a malformed or undeclared locale, an undeclared or wrongly-scoped
- * field, an invalid value, or U+0000.
+ * field, an invalid value, U+0000, or `untracked` on a shared or source-locale save.
  * @throws {NotFoundError} for a malformed, unknown or deleted document, or a collection absent from
  * the config.
  * @throws {ConflictError} when `expectedVersion` does not match the current head (draft head, else
@@ -51,6 +58,9 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
   if (!isShared) {
     const declared = new Set([config.locales.source, ...Object.keys(config.locales.chains)]);
     if (!declared.has(locale)) throw new ValidationError(`Locale "${locale}" is not declared in the config`);
+  }
+  if (input.untracked === true && (isShared || locale === config.locales.source)) {
+    throw new ValidationError("untracked applies to a target locale only");
   }
   if (!UUID.test(input.docId)) throw new NotFoundError(`Document "${input.docId}" not found`);
 
@@ -119,7 +129,7 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
     const sourceHashes: Record<string, string> = {};
     if (locale === config.locales.source) {
       for (const [k, v] of Object.entries(data)) sourceHashes[k] = hashValue(v);
-    } else {
+    } else if (input.untracked !== true) {
       const baseData = (base?.data ?? {}) as Record<string, unknown>;
       const baseHashes = (base?.source_hashes ?? {}) as Record<string, string>;
       const [src] = await tx`select data from document_localized
