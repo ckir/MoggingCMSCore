@@ -243,7 +243,7 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 
 **Files:**
 - Modify: `packages/core/src/schema/fields.ts:1-48`, `packages/core/src/schema/config.ts:29-40`,
-  `packages/core/src/values/normalize.ts:34-87`, `packages/core/src/index.ts:9`,
+  `packages/core/src/values/normalize.ts:11-32,34-87`, `packages/core/src/index.ts:9`,
   `packages/ai/src/fields.ts:5-19,34-46,92-128`
 - Test: `packages/core/test/schema.test.ts`, `packages/core/test/values.test.ts`, `packages/core/test/api.test.ts`,
   `packages/ai/test/fields.test.ts`, `packages/markdown/test/import.test.ts`
@@ -259,6 +259,9 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     `defineConfig` with `json({ localized: true })` throws `ValidationError` matching `/json cannot be localized/`;
     with `list(json(), { localized: true })` and `object({ a: json() }, { localized: true })` throws the same; with
     `json({ body: true })` throws `/only a richText field can be the body/` (existing message, `config.ts:36`).
+  - `values.test.ts` "a __proto__ key is refused in json and richText": `normalizeValue(json(), JSON.parse('{"a":{"__proto__":{"x":1}}}'))`
+    and `normalizeValue(richText(), JSON.parse('{"type":"root","children":[],"__proto__":{"x":1}}'))` both throw
+    `ValidationError(/__proto__/)`, and `({}).x` stays undefined.
   - `values.test.ts` "json normalizes any JSON value": `normalizeValue(json(), { a: [1, null, "é"] })` equals the NFC
     form with the nested null kept; `normalizeValue(json(), "x\u0000")` throws `ValidationError`;
     `normalizeValue(json(), JSON.parse('{"a":{"__proto__":{"x":1}}}'))` throws `ValidationError(/__proto__/)`; a `Date`, `NaN`,
@@ -278,7 +281,7 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   case `"json"`: `return nfcDeep(value, path)`. `nfcDeep` (`normalize.ts:11-32`, object branch 22-30, shared by `json` and `richText`)
   refuses an object key `__proto__` at any depth with `ValidationError(\`${path}.__proto__: forbidden key\`)`
   (assignment would drop it and set the prototype, measured; panel rounds 2 AX-1 and 3, which found `richText`
-  affected too). This one check in `nfcDeep` covers both kinds; Step 1 adds the test
+  affected too). This one check in `nfcDeep` covers both kinds; Step 1's `values.test.ts` bullet includes
   `normalizeValue(richText(), JSON.parse('{"type":"root","children":[],"__proto__":{"x":1}}'))` throws
   `ValidationError(/__proto__/)` (panel round 4 FR4-2). `defineConfig`: refuse `json` with `localized: true`, and walk each
   localized field's `item`/`fields` refusing a nested `json` (message
@@ -294,7 +297,7 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 **Files:**
 - Modify: `packages/core/src/schema/fields.ts` (FieldOptions, Base, `base()`), `packages/core/src/schema/config.ts`,
   `packages/ai/src/fields.ts:25-32` and the switches, `packages/ai/src/validate.ts:22-29,95-100`,
-  `packages/ai/src/translate.ts:98`, `packages/ai/src/jobs.ts:79,92` (the enqueue estimate)
+  `packages/ai/src/translate.ts:98`, `packages/ai/src/jobs.ts:79,90` (the enqueue estimate)
 - Test: `packages/core/test/schema.test.ts`, `packages/ai/test/fields.test.ts`, `packages/ai/test/validate.test.ts`,
   `packages/ai/test/translate.test.ts`
 
@@ -323,7 +326,9 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     equals `{ title: "Ü", actions: [{ text: "Los", link: "/start" }] }`; `checkShape(hero, source, { ..., link: "/x" })`
     contains `"$.actions[0].link: non-text value changed"`. With the fixture-shaped `image: object({ alt: text(),
     file: text({ translate: false }) })` and a source image holding only `file`, the wire value has no `image` and the
-    merged draft has the source's `image`; a source list `[null, { text: "a", link: "/b" }]` keeps the null.
+    merged draft has the source's `image`; a source list `[null, { text: "a", link: "/b" }]` keeps the null; a list
+    item `{ link: "/c" }` (no translatable leaf) projects to `{}`, so `wireValue` of `[{ text: "a", link: "/b" },
+    { link: "/c" }]` is `[{ text: "a" }, {}]` (length 2).
   - "the enqueue estimate counts what is sent" (`estimateJob` is private, `jobs.ts:70`): two documents whose `hero`
     values differ only in the length of a `translate: false` link get equal `estimateMicros` from `enqueueStale`.
   - ai `translate.test.ts` "a field with nothing to translate is not sent": a job of `title` and `prev` where `prev`
@@ -336,7 +341,7 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     the model answers without `link`, and the outcome's field value has `link: "/start"`.
 - [ ] **Step 2: Run, see FAIL.**
 - [ ] **Step 3: Implement.** `isTranslatable` line 27: a `text` with `translate === false` returns false.
-  `leafKinds`: a `text` with `translate === false` adds `"other"`. `estimateJob` (`jobs.ts:79,92`) leaves out a field whose wire value has no string leaf (it is
+  `leafKinds`: a `text` with `translate === false` adds `"other"`. `estimateJob` (`jobs.ts:79,90`) leaves out a field whose wire value has no string leaf (it is
   not sent; panel round 4 FR4-5) and uses
   `wireValue(field, value)` for the candidate wire value and the character count. `prepareField` (value
   branch) sets `wire: wireValue(field, value)` and keeps `source: value`. `validateField` (value branch) computes
@@ -561,7 +566,10 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   - Mapping (fixture layout): `sidebar: { order: 2, label: "Intro", badge: "New", attrs: { class: "x" } }` gives
     shared `sidebarOrder: 2`, `sidebarAttrs: { class: "x" }`, localized `sidebarLabel: "Intro"`,
     `sidebarBadge: { text: "New" }` and no `sidebar` in `remainder`; `prev: false` gives `toggles.prevToggle =
-    false`, no localized `prev`; `prev: true` gives `toggles.prevToggle = true`; `prev: "Back"` gives localized
+    false` AND `shared.prevToggle = false` (a toggle is a shared field and is saved with the shared scope; agy round 5
+    F2), no localized `prev`; `prev: true` gives `toggles.prevToggle = true` and `shared.prevToggle = true`; no `prev`
+    key gives neither; a file with no unmapped key gives no `extra` in `shared` (absent, never `{}`; panel round 5
+    ED-5); `prev: "Back"` gives localized
     `prev: { label: "Back" }`; `prev: { link: "/a" }`
     gives `prev: { link: "/a" }`; `prev: {}` and `prev: null` give neither; `prev: 3` is a per-file error; an
     unmapped `owner: "team-a"` and `seo: { noindex: true }` give shared `extra: { owner: "team-a", seo: { noindex: true } }`
@@ -672,7 +680,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   - "file references are rebased": hero image `../../assets/h.webp` (canonical, English at depth 0) renders
     `../../../assets/h.webp` for `de/`.
   - "round trip": `splitPage(readStarlightFile(rendered))` gives back exactly the German localized values (after
-    reverse rebasing) and toggles equal to English's (the self-check of Task 14 relies on this).
+    reverse rebasing) and toggles equal to English's, `true` and absent counting as equal (the self-check of Task 14
+    relies on this).
 - [ ] **Step 2: Run, see FAIL.**
 - [ ] **Step 3: Implement** per the interface.
 - [ ] **Step 4: Tests, typecheck, suite.** PASS.
@@ -690,13 +699,17 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   type Scan = {
     sources: ScannedFile[];                    // source-locale files, by slug
     locales: ScannedFile[];                    // locale files (locale = BCP 47 tag)
-    unsupported: string[];                     // files with another Starlight extension (F-GLOB)
-    symlinks: Array<{ path: string; slug: string; kind: "file" | "folder" }>;  // not followed; slug from the path
+    unsupported: Array<{ path: string; locale: string; slug: string }>;  // files with another Starlight extension (F-GLOB)
+    symlinks: Array<{ path: string; locale: string; slug: string; kind: "file" | "folder" }>;  // not followed
     warnings: FileMessage[];                   // skipped other-locale folders, non-regular files
   };
   function scanDocs(root: string, layout: StarlightLayout, config: MoggingConfig): Scan;
   ```
-  `path` is the project-relative POSIX path; `rel` the path inside the locale (`guides/Getting-Started.md`). Files
+  `path` is the project-relative POSIX path; `rel` the path inside the locale (`guides/Getting-Started.md`). In
+  `symlinks` and `unsupported`, `slug` is relative to the locale folder (never including `en/` in own-folder mode):
+  a file's slug is `deriveSlug(rel)`, a FOLDER's is its segments slugified with no extension stripping (`v1.2/` ->
+  `v12`, the prefix its pages carry; panel round 5 FR5-1). Only symlinks to a folder or to a file with a Starlight
+  extension are listed; any other symlink (an image under `assets/`) is a warning only (FR5-2). Files
   whose NAME starts with `_` are skipped silently (folders starting with `_` are walked, spec 5.2); dot entries are
   skipped; a symbolic link anywhere under `<docsDir>` (file or folder), or `<docsDir>` or one of its components
   below the project root being one, is a warning and not followed. A top-level folder is matched to a locale by
@@ -726,14 +739,15 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 - Produces (internal):
   ```ts
   type FileClass = "published" | "pending" | "behind" | "hand work";
-  function sameLocalized(layout: StarlightLayout, file: Record<string, unknown>, version: Record<string, unknown>): boolean;
-  function classifyHeads(layout: StarlightLayout, file: Record<string, unknown>,
+  function sameLocalized(layout: StarlightLayout, col: Collection, file: Record<string, unknown>, version: Record<string, unknown>): boolean;
+  function classifyHeads(layout: StarlightLayout, col: Collection, file: Record<string, unknown>,
     heads: { published: Record<string, unknown> | null; draft: Record<string, unknown> | null }): "published" | "pending" | null;
-  function classifyEarlier(layout: StarlightLayout, file: Record<string, unknown>,
+  function classifyEarlier(layout: StarlightLayout, col: Collection, file: Record<string, unknown>,
     earlier: Record<string, unknown>[]): "behind" | "hand work";
   ```
-  `sameLocalized`: for each union `value` field, when the file lacks it or holds `{}`, drop it from both sides; set
-  the root `mode` of every richText value on both sides to `"md"` (the mode follows the file extension, not the
+  `sameLocalized`: for each union `value` field (the `value` of each `layout.entries` item with `kind === "union"`;
+  agy round 5 F3), when the file lacks it or holds `{}`, drop it from both sides; set the root `mode` of every
+  top-level richText field's value (found through `col.fields`; panel round 5 ED-1) on both sides to `"md"` (the mode follows the file extension, not the
   content; panel round 3 FR-3); then compare `hashValue` of the two records (all values already normalized, file
   side un-rebased to canonical). Test: the same body stored as an `md` tree and read from an `.mdx` file is
   `published`. Two passes (panel round 4 IC4-3): callers run `classifyHeads` on every file, collect the ids of files
@@ -764,6 +778,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   export type SafetyStop = { gone: Array<{ slug: string; title: string | null }>; added: Array<{ file: string; slug: string; title: string | null }>; command: string | null };
   export type StarlightImportDetails = { dryRun: boolean; stop: SafetyStop | null; pruned: string[]; behind: string[]; unsupported: string[] };
   export type ImportReport = { files: FileOutcome[]; warnings: FileMessage[]; errors: FileMessage[]; starlight?: StarlightImportDetails };
+  // starlight/importStarlight.ts (internal; importFolder dispatches to it when input.starlight is set):
+  async function importStarlight(ctx: Ctx, input: ImportInput & { starlight: StarlightImportOptions }): Promise<ImportReport>;
   ```
   In Starlight mode `dir` is the project root. The generic path is untouched; `"skipped"` occurs only in Starlight mode.
 - Consumes: Tasks 3, 4, 5, 6, 7, 8, 10; core `createDocument`, `saveDraft`, `publish`, `deleteDocument`,
@@ -796,7 +812,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     front-matter error, a page in a slug collision, and pages `guides/a` and `guides/b` under a symlinked folder
     `guides` are not gone: no prune, no safety stop pairing, no rename suggestion; and `prune: true` refuses with
     `ValidationError(/could not be read/)` naming them while any source entry is unreadable, deleting nothing. A new
-    `draft: true` page does not block prune.
+    `draft: true` page does not block prune; a page whose English file is now `a.markdown` is not gone (FR5-3); a
+    symlinked English FILE `b.md` keeps document `b` found; a symlink under `de/` does not block prune.
   - "first run": a fresh database with English, `de/` and `zh-cn/` files of new pages imports all of them in one
     call (German and Chinese as day-one, published, untracked); the dry run of the same tree reports the same
     outcomes (panel round 2 TO-5).
@@ -812,8 +829,9 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   file, whose slug is derived from its path without following it; all read from `Scan.symlinks` and
   `Scan.unsupported`, panel round 4 IC4-1), and every
   document whose slug lies under a symlinked FOLDER (its derived slug is a prefix of the document's slug at a `/`
-  boundary) counts as found (panel round 3 FR-1). Prune refuses while any source entry is UNREADABLE: a per-file
-  error, a collision, or a symlink; a skipped new `draft: true` page is not unreadable (FR-2). A
+  boundary) counts as found (panel round 3 FR-1). Prune refuses while any SOURCE-LOCALE entry is UNREADABLE: a
+  per-file error, a collision, or a listed symlink (a locale folder's symlink or an asset symlink never blocks prune;
+  panel round 5 FR5-2); a skipped new `draft: true` page is not unreadable (FR-2). A
   `LicenceError` aborts the run as in `import.ts:264`. Add one own-folder test (`layoutOwn`): a new page and a changed
   page.
 - [ ] **Step 4: Tests, typecheck, suite.** PASS, and every existing `import.test.ts` test passes unchanged.
@@ -880,6 +898,10 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   types `StarlightExportOptions`, `ExportAction`, `StarlightExportDetails`)
 
 **Interfaces:**
+- Consumes (agy round 5 F1): Task 4 `getDocuments`, `listPublishedVersions`; Task 6 `deriveSlug`, layout maps;
+  Task 7 `readStarlightFile`, `splitPage`, `readAstroFrontMatter` (`./frontMatter.js`); Task 8 `rebaseTree`,
+  `rebaseValueAt` (`./rebase.js`); Task 9 `renderLocaleFile` (`./render.js`); Task 10 `scanDocs` (`./scan.js`);
+  Task 11 `classifyHeads`, `classifyEarlier`, `sameLocalized` (`./classify.js`); core `listDocuments`.
 - Produces:
   ```ts
   export type StarlightExportOptions = { layout: StarlightLayout; dryRun?: boolean; starlightLocaleDirs?: string[] | null };
@@ -887,6 +909,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   export type ExportAction = { action: "write" | "keep" | "remove" | "skip" | "refuse" | "move"; path: string; to?: string; reason: string };
   export type StarlightExportDetails = { dryRun: boolean; actions: ExportAction[]; attention: FileMessage[] };
   export type ExportReport = { files: string[]; warnings: FileMessage[]; starlight?: StarlightExportDetails };
+  // starlight/exportStarlight.ts (internal; exportFolder dispatches to it when input.starlight is set):
+  async function exportStarlight(ctx: Ctx, input: ExportInput & { starlight: StarlightExportOptions }): Promise<ExportReport>;
   type ManifestEntry = { path: string; slug: string; locale: string; version: number; sha256: string };  // internal
   // manifest.ts (internal; Tasks 15 and 16 use these):
   function readManifest(root: string): { entries: ManifestEntry[]; warning: string | null };
@@ -908,7 +932,9 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   its follows-English front matter equals what export would copy: both the file and the English file are read with
   Astro's options (F-YAML, so a plain date and a quoted one differ), the localized mapped paths and union value forms
   are removed from both, the file's top-level keys that English lacks and the layout does not map are removed, and the
-  rest is deeply equal (a `Date` compared by time) with each union toggle equal. A kept file is never rendered and so
+  rest is deeply equal (a `Date` compared by time) with each union toggle equal, where a toggle of `true` and an
+  absent toggle are the same (spec 5.9: `true` means the generated link, as absent; export writes no key for it;
+  panel round 5 ED-2; the Task 9 round-trip test compares toggles the same way). A kept file is never rendered and so
   never re-parsed. Comparisons of body trees (classification and self-check) ignore the root's `mode`; export stamps
   the stored tree with the mode of the extension it writes, and when that mode differs from the stored tree's (an
   English `.md` <-> `.mdx` change) a rendered body that does not re-parse to the same tree in the new mode (`{` or
@@ -921,7 +947,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   dropped only for files this run evaluated and classified `pending`/`hand work`, or removed (panel round 2 BS-2).
   `input.collections` is ignored in Starlight mode (one collection); `input.locales` restricts the locales evaluated.
   At the start of a run, files named `*.<hex>.mogging-tmp` under `<docsDir>` and `.mogging/` (found with `lstat`, not
-  followed) are leftovers of an interrupted run: they are removed and each is reported in `warnings` (panel round 2
+  followed) are leftovers of an interrupted run: they are unlinked without following (a symlinked leftover loses
+  only the link, never its target; panel round 5 ED-4) and each is reported in `warnings` (panel round 2
   BS-6); a real run AND a dry run list them as `remove` actions (so the two runs' actions stay equal), and a dry run removes
   nothing (panel rounds 3 FR-5 and 4 FR4-1). A self-check failure throws `Error("internal: export self-check failed for <path>: <field>")`.
   Manifest file: `{"version":1,"files":[` newline, one compact JSON entry per line sorted by `path`, `]}` newline;
@@ -980,7 +1007,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   - Dry run: `actions` equal to the real run's, no file or manifest written.
   - Manifest: a corrupt manifest gives one warning and is treated as empty (D9).
 - [ ] **Step 2: Run, see FAIL.**
-- [ ] **Step 3: Implement.** Heads come from `listDocuments` pages + `getDocuments` (no per-file read); earlier
+- [ ] **Step 3: Implement.** Heads come from `listDocuments({ limit: 200 })` pages + `getDocuments` (no per-file
+  read; the default limit is 50, `resolve.ts:203`; panel round 5 ED-3); earlier
   versions from one `listPublishedVersions` per locale for the divergent files. The English file of each document is
   the scanned source file whose derived slug equals the published shared slug. Every target path is computed from
   the English file's `rel`, the locale folder and `docsDir`, and checked with `path.resolve` to stay inside
@@ -1151,6 +1179,18 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     estimate skips unsent fields; FR4-6 files with another Starlight extension count as found (Tasks 1, 2, 12, 14).
   - Notes: "three bulk reads", `read/versions.ts`, `normalize.ts:11-32`, `compile.test.ts`, and the Task 17 test
     now crosses page boundaries.
+
+- Panel round 5 (2026-11-17, narrow; seats Fold Regression on the round-4 folds and Executor Dry Run of Tasks 7, 11,
+  14; Sonnet solo 9 findings + 5 notes; agy 3 findings, its reply flagged ECHO MISSING because it quoted the last
+  line without its backticks: each agy finding was verified against the plan before folding). All FOLDED:
+  - FR5-1 folder slugs without extension stripping; FR5-2 `Scan.symlinks`/`unsupported` carry locale and a
+    locale-relative slug, only source-locale entries block prune; FR5-3 tests for those folds (Tasks 2, 10, 12).
+  - ED-1 `sameLocalized` takes `col`; ED-2 toggle `true` equals absent in the keep test and round trip; ED-3
+    `listDocuments` limit 200 in export; ED-4 leftovers unlinked without following; ED-5 empty remainder gives no
+    `extra` (Tasks 7, 9, 11, 14).
+  - agy F1 `importStarlight`/`exportStarlight` signatures and Task 14's Consumes; F2 toggles saved in `shared`; F3
+    union fields come from `layout.entries` (Tasks 7, 11, 12, 14).
+  - Notes: `jobs.ts:79,90`, `normalize.ts:11-32`, the richText `__proto__` test moved into Task 1 Step 1.
 
 ## Stand-downs
 
