@@ -51,6 +51,14 @@ describe("the @mogging/starlight README", () => {
     expect(text).toContain("MOGGING_LICENSE_KEY");
   });
 
+  it("names where a key is bought and where it goes before the first install command", () => {
+    const install = commandLines().find((l) => l.includes("npm install"));
+    expect(install).toBeDefined();
+    const before = text.slice(0, text.indexOf(install!));
+    expect(before).toContain("https://mogging.dev/buy");
+    expect(before).toContain("MOGGING_LICENSE_KEY");
+  });
+
   it("has a section on adding a language", () => {
     expect(lines.some((l) => /^#{2,} /.test(l) && l.includes("language"))).toBe(true);
   });

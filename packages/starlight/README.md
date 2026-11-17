@@ -32,9 +32,10 @@ repository).
 The key goes in the `MOGGING_LICENSE_KEY` environment variable of the process that runs `mogging`, or in the `license`
 field of `defineConfig` (the variable wins). Keys are checked offline; nothing contacts a licence server. The `mogging`
 command does not read `.env` files, so export the variable in your shell, or load your `.env` the way the template's
-`mogging` npm script does. Where to register for the zero-price key and where to buy a commercial one will be linked
-here with the v0.1 release. Until then you need no key: the 30-day evaluation starts at your first `migrate`, and the
-message every refused command prints names the address to buy one.
+`mogging` npm script does. A commercial key is bought at <https://mogging.dev/buy>. A refused guarded command prints the same address in its
+message, or the `purchaseUrl` that your project sets in `defineConfig`. The registration page for the zero-price
+`noncommercial` key is not published yet; its link will be added here with the v0.1 release. The 30-day evaluation needs
+no key and starts at your first `migrate`.
 
 ## Install
 
