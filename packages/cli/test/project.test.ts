@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Sql } from "postgres";
 import { loadProject, resolveActor, resolveDatabaseUrl } from "../src/project.js";
@@ -9,6 +9,7 @@ import { UsageError } from "../src/types.js";
 import type { CommandSpec, Deps } from "../src/types.js";
 import { withTestDb } from "./db.js";
 import { testDeps } from "./fixtures.js";
+import { starlightConfig, starlightDeps, starlightDocs, starlightProject } from "./starlightFixtures.js";
 
 const dirs: string[] = [];
 function tempDir(): string {
@@ -266,6 +267,91 @@ describe("real jiti (run without a loadModule seam)", () => {
       const t = realLoader(sql, dir);
       expect(await run(["probe"], t.deps)).toBe(2);
       expect(t.base.stderr()).toContain(join(dir, "mogging.config.ts"));
+    });
+  });
+});
+
+describe("loadProject: the starlight export", () => {
+  test("a starlight export is validated at load and exposed with the project root", async () => {
+    const dir = tempDir();
+    touch(dir, "mogging.config.ts");
+    const r = recording(dir, { config: starlightConfig, starlight: starlightDocs.layout });
+    const project = await loadProject(r.deps, {});
+    expect(project.starlight?.kind).toBe("starlight");
+    expect(project.starlight?.localeDirs).toEqual({ de: "de", "zh-CN": "zh-cn" });
+    expect(project.root).toBe(dirname(project.configPath));
+    expect(project.root).toBe(dir);
+  });
+
+  test("--config in another folder makes that folder the project root", async () => {
+    const tmp = tempDir();
+    mkdirSync(join(tmp, "a"));
+    mkdirSync(join(tmp, "b"));
+    touch(join(tmp, "b"), "mogging.config.ts");
+    const r = recording(join(tmp, "a"), { config: starlightConfig, starlight: starlightDocs.layout });
+    const project = await loadProject(r.deps, { config: join(tmp, "b", "mogging.config.ts") });
+    expect(project.root).toBe(join(tmp, "b"));
+  });
+
+  test("no starlight export leaves project.starlight undefined", async () => {
+    const dir = tempDir();
+    touch(dir, "mogging.config.ts");
+    const r = recording(dir, { config: goodConfig });
+    const project = await loadProject(r.deps, {});
+    expect(project.starlight).toBeUndefined();
+    expect(project.root).toBe(dir);
+  });
+
+  test.each([
+    ["an unknown collection and an unknown key", { collection: "nope", passthrough: "extra" }],
+    ["a string", "docs"],
+    ["null", null],
+  ])("a malformed starlight export (%s) is exit 2 before connecting", async (_name, starlight) => {
+    await withTestDb(async (sql) => {
+      const root = starlightProject({});
+      const connect = vi.fn(() => {
+        throw new Error("connect must not be called");
+      });
+      const t = starlightDeps(sql, root, {
+        loadModule: async () => ({ config: starlightConfig, starlight }),
+        connect: connect as unknown as Deps["connect"],
+      });
+      expect(await run(["status"], t)).toBe(2);
+      expect(t.stderr()).toContain("must export `starlight` as a valid Starlight layout");
+      expect(connect).not.toHaveBeenCalled();
+    });
+  });
+
+  test("checkLoaded runs before connecting", async () => {
+    await withTestDb(async (sql) => {
+      const root = starlightProject({});
+      const seen: unknown[] = [];
+      const make = (check: CommandSpec["checkLoaded"]): CommandSpec => ({
+        name: "probe", summary: "p", usage: "mogging probe", options: {}, project: "full", arity: [0, 0],
+        checkLoaded: check,
+        run: async () => ({ data: { ran: true }, lines: ["ran"] }),
+      });
+
+      const connect = vi.fn(() => {
+        throw new Error("connect must not be called");
+      });
+      const failing = starlightDeps(sql, root, {
+        commands: [make(() => { throw new UsageError("x"); })],
+        connect: connect as unknown as Deps["connect"],
+      });
+      expect(await run(["probe"], failing)).toBe(2);
+      expect(failing.stderr()).toContain("x");
+      expect(connect).not.toHaveBeenCalled();
+
+      const passing = starlightDeps(sql, root, {
+        commands: [make((flags, positionals, loaded) => { seen.push({ flags, positionals, loaded }); })],
+      });
+      expect(await run(["probe"], passing)).toBe(0);
+      expect(passing.stdout()).toContain("ran");
+      expect(seen).toHaveLength(1);
+      const { loaded } = seen[0] as { loaded: Record<string, unknown> };
+      expect(loaded).toMatchObject({ root, cwd: root, configPath: join(root, "mogging.config.ts") });
+      expect((loaded.starlight as { kind: string }).kind).toBe("starlight");
     });
   });
 });

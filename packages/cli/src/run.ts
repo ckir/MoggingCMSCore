@@ -132,7 +132,7 @@ export async function run(argv: string[], overrides: Partial<Deps> = {}): Promis
 
     // 5. the project and the licence line
     if (spec.project === "full") {
-      project = await loadProject(deps, flags);
+      project = await loadProject(deps, flags, (loaded) => spec.checkLoaded?.(flags, positionals, loaded));
       licence = licenceInfo(await getLicenceState(project.ctx, { publicKeys: deps.licenceKeys }));
       for (const line of licenceLines(licence)) io.err(`${line}\n`);
       if (spec.needsAi && project.ai === undefined) {

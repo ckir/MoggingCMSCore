@@ -1,10 +1,12 @@
 import { lstatSync } from "node:fs";
 import { userInfo } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { AiConfig } from "@mogging/ai";
 import type { MoggingConfig } from "@mogging/core";
+import { defineStarlightLayout } from "@mogging/markdown";
+import type { StarlightLayout, StarlightLayoutInput } from "@mogging/markdown";
 import { UsageError } from "./types.js";
-import type { Deps, Flags, Project } from "./types.js";
+import type { Deps, Flags, LoadedConfig, Project } from "./types.js";
 
 /** The discovery order for the config file; `init` agrees with it on what counts as an existing config. */
 export const CONFIG_NAMES = ["mogging.config.ts", "mogging.config.mts", "mogging.config.js", "mogging.config.mjs"];
@@ -73,10 +75,39 @@ function osUser(): string | undefined {
 }
 
 /**
- * Loads the config module and connects. Every usage error (no config, no URL, a bad export) is raised before
- * `deps.connect`, so a failure never leaves a connection that nobody closes.
+ * Validates the optional `starlight` export against the config. Matches the error by `name`, not `instanceof`,
+ * because the layout code and the config may come from different copies of core.
  */
-export async function loadProject(deps: Deps, flags: Flags): Promise<Project> {
+function starlightLayout(exported: unknown, config: MoggingConfig, configPath: string): StarlightLayout | undefined {
+  if (exported === undefined) return undefined;
+  const prefix = `${configPath} must export \`starlight\` as a valid Starlight layout`;
+  if (typeof exported !== "object" || exported === null) {
+    throw new UsageError(`${prefix}: the export is not an object`);
+  }
+  try {
+    return defineStarlightLayout(exported as StarlightLayoutInput, config);
+  } catch (err) {
+    if (err instanceof Error && err.name === "ValidationError") throw new UsageError(`${prefix}: ${err.message}`);
+    throw err;
+  }
+}
+
+/**
+ * Loads the config module, validates its exports and connects. Every usage error (no config, no URL, a bad export, a
+ * failing `check`) is raised before `deps.connect`, so a failure never leaves a connection that nobody closes.
+ *
+ * @param deps the injected process seams.
+ * @param flags the parsed global and command flags.
+ * @param check a command's config-dependent usage check, called with the loaded config before connecting.
+ * @returns the open project.
+ * @throws {UsageError} for a missing or malformed config or `starlight` export, a missing database URL, or anything
+ * `check` throws.
+ */
+export async function loadProject(
+  deps: Deps,
+  flags: Flags,
+  check?: (loaded: LoadedConfig) => void,
+): Promise<Project> {
   const configPath = findConfig(deps, flags);
   const url = resolveDatabaseUrl(flags, deps.env);
   const mod = await deps.loadModule(configPath);
@@ -85,11 +116,16 @@ export async function loadProject(deps: Deps, flags: Flags): Promise<Project> {
       `${configPath} must export \`config\` (defineConfig) with a collections array and locales.source; the export is missing or malformed`,
     );
   }
+  const starlight = starlightLayout(mod.starlight, mod.config, configPath);
+  const root = dirname(configPath);
+  check?.({ config: mod.config, starlight, configPath, root, cwd: deps.cwd });
   const sql = deps.connect(url);
   return {
     sql,
     ctx: { sql, config: mod.config, actor: resolveActor(flags, deps.env, osUser()) },
     ai: mod.ai as AiConfig | undefined,
+    starlight,
+    root,
     configPath,
     close: async () => {
       await sql.end();

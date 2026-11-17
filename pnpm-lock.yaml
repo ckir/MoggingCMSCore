@@ -64,6 +64,9 @@ importers:
         specifier: ^4
         version: 4.1.0
     devDependencies:
+      '@mogging/starlight':
+        specifier: workspace:*
+        version: link:../starlight
       '@types/node':
         specifier: ^22
         version: 22.20.5

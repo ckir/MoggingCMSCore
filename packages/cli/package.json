@@ -24,6 +24,7 @@
     "postgres": "^4"
   },
   "devDependencies": {
+    "@mogging/starlight": "workspace:*",
     "@types/node": "^22",
     "ai": "7.0.154",
     "tsx": "^4",
