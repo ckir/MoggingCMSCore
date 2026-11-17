@@ -279,6 +279,80 @@ async function loadDocuments(ctx: Ctx, collection: string): Promise<DocumentReco
   return records;
 }
 
+/** The slug (published, else draft) of every document of the collection, deleted ones too when asked, page by page. */
+async function listSlugs(ctx: Ctx, collection: string, includeDeleted: boolean): Promise<Set<string>> {
+  const slugs = new Set<string>();
+  for (let after: string | undefined; ;) {
+    const page = await listDocuments(ctx, {
+      collection, limit: PAGE, includeDeleted, ...(after === undefined ? {} : { after }),
+    });
+    for (const i of page.items) if (i.slug !== null) slugs.add(i.slug);
+    if (page.next === null) break;
+    after = page.next;
+  }
+  return slugs;
+}
+
+/**
+ * Plans the removals of spec 5.5 and returns the paths it removes. A manifest entry (already checked against the
+ * layout, so it is never an English file) of an evaluated locale is removed only when the file still has the bytes
+ * the manifest recorded and its document is soft-deleted or its locale has no published head. A live document
+ * decides before a deleted one that holds the same slug; a slug no document has at all (a fresh or restored
+ * database) removes nothing and is reported. A changed file is left, warned about and stays listed.
+ */
+async function planRemovals(
+  ctx: Ctx, run: Run, live: ReadonlyArray<{ doc: DocumentRecord; slug: string }>, evaluated: readonly string[],
+): Promise<Set<string>> {
+  const removed = new Set<string>();
+  const candidates = [...run.manifest.values()]
+    .filter((e) => evaluated.includes(e.locale))
+    .sort((a, b) => byText(a.path, b.path));
+  if (candidates.length === 0) return removed;
+
+  const liveSlugs = await listSlugs(ctx, run.col.name, false);
+  const allSlugs = await listSlugs(ctx, run.col.name, true);
+  const docBySlug = new Map(live.map((d) => [d.slug, d.doc]));
+
+  for (const e of candidates) {
+    const doc = docBySlug.get(e.slug);
+    let why: string;
+    if (doc !== undefined) {
+      const pair = Object.hasOwn(doc.locales, e.locale) ? doc.locales[e.locale] : undefined;
+      if (pair?.published) continue; // a live published translation: the write path owns this file
+      why = "its translation is unpublished";
+    } else if (liveSlugs.has(e.slug)) {
+      why = "its translation is unpublished";
+    } else if (allSlugs.has(e.slug)) {
+      why = "its document is deleted";
+    } else {
+      warn(run, e.path, `manifest entry for "${e.slug}": the database does not know this document; the file is left (a fresh or restored database?)`);
+      continue;
+    }
+
+    const problem = guard(run, [e.path]);
+    if (problem !== null) { refuse(run, e.path, problem); continue; }
+    let bytes: Buffer;
+    try {
+      const st = fs.lstatSync(path.join(run.root, ...e.path.split("/")));
+      if (!st.isFile()) { warn(run, e.path, "listed in the manifest but not a regular file; left"); continue; }
+      bytes = fs.readFileSync(path.join(run.root, ...e.path.split("/")));
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") { run.manifest.delete(e.path); continue; } // already gone
+      throw err;
+    }
+    if (sha256(bytes) !== e.sha256) {
+      warn(run, e.path, `changed since export, so it is not removed although ${why}; left in place and listed`);
+      continue;
+    }
+    run.steps.push({ t: "remove", path: e.path });
+    act(run, "remove", e.path, why);
+    run.manifest.delete(e.path);
+    removed.add(e.path);
+  }
+  return removed;
+}
+
 /** Reads the English file of a document, or says why it cannot be used. */
 function readEnglish(root: string, slug: string, candidates: ScannedFile[]): EnglishPage | string {
   const usable = candidates.filter((f) => f.error === null);
@@ -437,8 +511,8 @@ function decide(run: Run, slot: Slot, sourceLocale: string): void {
 
   let reason = "new";
   if (ex === null) {
-    const listed = run.manifest.get(targetRel);
-    if (listed !== undefined && listed.locale === slot.locale && listed.slug === slot.slug) {
+    // A file the manifest listed for this slot, under this name or another (an extension or case change), is gone.
+    if ((run.listedBySlot.get(`${slot.locale}\0${slot.slug}`) ?? []).length > 0) {
       reason = "recreated";
       warn(run, targetRel, "listed in the manifest but missing on disk; recreated from the published translation");
     }
@@ -471,8 +545,9 @@ function decide(run: Run, slot: Slot, sourceLocale: string): void {
  * would write, and checks every target for symbolic links; nothing is written until the whole plan exists, so a
  * self-check failure throws before any file moves. The apply phase removes interrupted-run leftovers, moves,
  * removes and writes files one by one through a temporary file and a rename, then replaces `.mogging/manifest.json`.
- * English files are never written, moved or removed. Withdrawn documents and locales (removals) are not handled
- * here.
+ * English files are never written, moved or removed. Removals (spec 5.5) are planned before the slots: a locale
+ * file the manifest lists, whose bytes still match the manifest and whose document is deleted or whose locale is
+ * unpublished, is removed together with its manifest entry; nothing else is ever removed.
  *
  * @param ctx engine context (reads only).
  * @param input `dir` is the project root; `starlight` carries the layout, `dryRun` and `starlightLocaleDirs`;
@@ -579,12 +654,13 @@ export async function exportStarlight(
     .map((doc) => ({ doc, slug: doc.shared.published?.data["slug"] }))
     .filter((d): d is { doc: DocumentRecord; slug: string } => typeof d.slug === "string" && d.slug !== "")
     .sort((a, b) => byText(a.slug, b.slug));
+  const removed = await planRemovals(ctx, run, docs, evaluated);
   const slots: Slot[] = [];
   for (const { doc, slug } of docs) {
     const candidates = sourceBySlug.get(slug) ?? [];
     let english: EnglishPage | string | null = null;
     for (const locale of evaluated) {
-      const files = localeFiles.get(`${locale}\0${slug}`) ?? [];
+      const files = (localeFiles.get(`${locale}\0${slug}`) ?? []).filter((f) => !removed.has(f.path));
       const pair = doc.locales[locale];
       const pub = pair?.published ?? null;
       if (files.length === 0 && pub === null) continue;
