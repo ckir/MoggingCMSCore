@@ -33,7 +33,7 @@ Tracked debt promoted from local anomaly captures (see the clavity open-issues s
 - [ ] `@mogging/core` `assertSlugFree` scans the collection's heads once per shared save, so a cold import of 12,000 files took about 323 s (measured in the final review); needs an index or a set read per run. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/core` no test covers a slug field not named `slug`; the slugGuard test titled "unpublishing alone" has no unpublish step. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/core` an untracked save over a tracked base drops the stored source hashes (by spec, but undocumented): document it in `docs/CONTENT_ARCHITECTURE.md`. Recorded 2026-11-17, plan 6a final review.
-- [ ] `@mogging/core` the `getDocuments` and versions tests lack a real other-collection document, a deleted document and a published source-locale case. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/core` the `getDocuments` and versions tests lack a deleted document and a published source-locale case (the other-collection case was closed by the plan 6a test audit). Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/ai` the "is this field sent" predicate is written twice (the estimate in `jobs.ts` and `translate.ts`); no worker-level test runs a job whose fields are all unsent. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/markdown` a bare `..` is not canonical in `rebase.ts`. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/markdown` `rebaseEsm` skips silently what it cannot offset, which could hide an offset regression; add an assertion or a warning. Recorded 2026-11-17, plan 6a final review.

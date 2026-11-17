@@ -115,6 +115,21 @@ describe("exportFolder, Starlight mode", () => {
     });
   });
 
+  test("completeness: an empty body tree and an empty hero mapping count as missing, so both heads are skipped", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = docsProject({ "a.md": page("A"), "h.md": page("H", "hero:\n  title: Welcome\n", "Body") });
+      await imp(ctx, root);
+      await translate(ctx, "a", "de", { title: "A-de", body: { type: "root", children: [] } });
+      await translate(ctx, "h", "de", { title: "H-de", body: md("Inhalt"), hero: {} });
+      const r = await run(ctx, root);
+      expect(actionFor(r, "skip", `${D}/de/a.md`)).toMatchObject({ reason: "incomplete" });
+      expect(actionFor(r, "skip", `${D}/de/h.md`)).toMatchObject({ reason: "incomplete" });
+      expect(exists(root, `${D}/de/a.md`)).toBe(false);
+      expect(exists(root, `${D}/de/h.md`)).toBe(false);
+      expect(r.files).toEqual([]);
+    });
+  });
+
   test("an incomplete head whose file exists at the target path is listed in attention; with no file it stays silent", async () => {
     await setup(async (_sql, ctx) => {
       const root = docsProject({ "a.md": page("A"), "b.md": page("B") });

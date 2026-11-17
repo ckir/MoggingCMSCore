@@ -702,6 +702,20 @@ describe("importFolder, Starlight mode, locale files", () => {
     });
   });
 
+  test("a translation whose hero is an empty mapping while English has a hero is incomplete: a draft, never published", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = docsProject({ "h.md": page("H", "hero:\n  title: Welcome\n", "Body"), "de/h.md": page("H-de", "hero:\n  title: Willkommen\n", "Inhalt") });
+      await run(ctx, root, {}, true);
+      fs.writeFileSync(path.join(root, D, "de", "h.md"), "---\ntitle: H-de\nhero: {}\n---\nInhalt\n");
+      const r = await run(ctx, root, {}, true);
+      expect(warningsOf(r, "de/h.md")).toContain("incomplete translation (missing hero); saved as an unpublished draft");
+      expect(fileOf(r, "de/h.md")).toMatchObject({ outcome: "updated", published: false });
+      const de = (await bySlug(ctx, "h"))!.locales["de"]!;
+      expect(de.published!.data["hero"]).toEqual({ title: "Willkommen" });
+      expect(de.draft!.data["hero"]).toEqual({});
+    });
+  });
+
   test("day one: an incomplete translation (title only, English has a body) is saved untracked but not published", async () => {
     await setup(async (_sql, ctx) => {
       const root = docsProject({ "a.md": page("A"), "de/a.md": "---\ntitle: Hallo\n---\n" });

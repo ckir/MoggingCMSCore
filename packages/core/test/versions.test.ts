@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
-  NotFoundError, ValidationError, createDocument, listLocaleRows, listPublishedVersions, migrate, publish, rejectDraft,
-  saveDraft, unpublish,
+  NotFoundError, ValidationError, createDocument, defineCollection, defineConfig, listLocaleRows, listPublishedVersions,
+  migrate, publish, rejectDraft, richText, saveDraft, slug, unpublish,
 } from "../src/index.js";
 import { ctxFor, insertAiDraftLocalized, insertPublishedLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
@@ -80,4 +80,24 @@ test("listPublishedVersions refuses shared, undeclared and malformed locales, a 
   }
   await expect(listPublishedVersions(ctx, { collection: "posts", locale: "de", docIds: Array(1001).fill(id) })).rejects.toBeInstanceOf(ValidationError);
   await expect(listPublishedVersions(ctx, { collection: "nope", locale: "de", docIds: [id] })).rejects.toBeInstanceOf(NotFoundError);
+}));
+
+test("listPublishedVersions and listLocaleRows return nothing for the id of another collection's document", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const base = ctxFor(sql);
+  const { id } = await createDocument(base, { collection: "posts" });
+  await saveDraft(base, { docId: id, locale: "de", data: { title: "Titel" } });
+  await publish(base, { docId: id, locale: "de" });
+  const config = defineConfig({
+    collections: [defineCollection("notes", { slug: slug(), title: richText({ localized: true, body: true }) }), ...base.config.collections],
+    locales: base.config.locales,
+  });
+  const ctx = { ...base, config };
+  expect(await listPublishedVersions(ctx, { collection: "notes", locale: "de", docIds: [id] })).toEqual([]);
+  expect(await listLocaleRows(ctx, { collection: "notes", docIds: [id] })).toEqual([]);
+  // the same calls on the document's own collection do see it, so the empty results above are the filter's doing
+  expect(await listPublishedVersions(ctx, { collection: "posts", locale: "de", docIds: [id] })).toEqual([
+    { docId: id, version: 1, data: { title: "Titel" } },
+  ]);
+  expect(await listLocaleRows(ctx, { collection: "posts", docIds: [id] })).toEqual([{ docId: id, locale: "de" }]);
 }));
