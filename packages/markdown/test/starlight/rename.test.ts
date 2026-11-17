@@ -250,7 +250,7 @@ describe("renamePage (spec 5.6)", () => {
     });
   });
 
-  test("a depth change is refused when the page or a translation holds a relative file reference, and nothing changes", async () => {
+  test("a change of the English file's folder is refused when the page or a translation holds a relative file reference, and nothing changes", async () => {
     await setup(async (_sql, ctx) => {
       const root = docsProject({
         "guides/old.md": page("Old", "", "![x](./img.png)"), "de/guides/old.md": page("Alt", "", "Text"),
@@ -266,11 +266,18 @@ describe("renamePage (spec 5.6)", () => {
       expect(readTree(root)).toEqual(before);
       expect((await docOf(ctx, "guides/old")).shared.published!.data["slug"]).toBe("guides/old");
 
-      // Absolute references and links are not file references; the same depth is unaffected.
+      // Absolute references and links are not file references.
       await ren(ctx, root, "guides/three", "three");
       expect(exists(root, `${D}/three.md`)).toBe(true);
-      await ren(ctx, root, "guides/old", "docs/old");
-      expect(exists(root, `${D}/docs/old.md`)).toBe(true);
+      // The same depth in another folder is refused too; the same folder is unaffected.
+      await expect(ren(ctx, root, "guides/old", "docs/old")).rejects.toThrow(/relative file references/);
+      await expect(ren(ctx, root, "guides/old", "docs/old", { dryRun: true })).rejects.toBeInstanceOf(ValidationError);
+      expect(exists(root, `${D}/guides/old.md`)).toBe(true);
+      expect((await docOf(ctx, "guides/old")).shared.published!.data["slug"]).toBe("guides/old");
+      await ren(ctx, root, "guides/old", "guides/older");
+      expect(exists(root, `${D}/guides/older.md`)).toBe(true);
+      // A translation's reference counts as well.
+      await expect(ren(ctx, root, "guides/two", "docs/two")).rejects.toThrow(/relative/);
     });
   });
 
@@ -308,6 +315,15 @@ describe("renamePage (spec 5.6)", () => {
       await expect(ren(ctx, root, "nope", "guides/new", { dryRun: true })).rejects.toBeInstanceOf(ValidationError);
       expect(readTree(root)).toEqual(before);
       expect((await docOf(ctx, "guides/old")).shared.published!.data["slug"]).toBe("guides/old");
+    });
+  });
+
+  test("a page without a relative reference may change folder, at the same depth too", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = await twoLocales(ctx);
+      await ren(ctx, root, "guides/old", "docs/old");
+      expect(exists(root, `${D}/docs/old.md`)).toBe(true);
+      expect(exists(root, `${D}/de/docs/old.md`)).toBe(true);
     });
   });
 
@@ -368,15 +384,23 @@ describe("renamePage (spec 5.6)", () => {
     });
   });
 
-  test("a pending shared draft is replaced: the published head with the new slug is saved over it and published", async () => {
+  test("a pending shared draft that is not an interrupted rename refuses the rename before any write, dry run included", async () => {
     await setup(async (_sql, ctx) => {
       const root = await twoLocales(ctx);
       const doc = await docOf(ctx, "guides/old");
-      await saveDraft(ctx, { docId: doc.id, locale: "shared", data: { ...doc.shared.published!.data, sidebarOrder: 9 } });
-      await ren(ctx, root, "guides/old", "guides/new");
-      const after = await docOf(ctx, "guides/new");
-      expect(after.shared.published!.data["sidebarOrder"]).toBe(4);
-      expect(after.shared.draft).toBeNull();
+      const { version } = await saveDraft(ctx, { docId: doc.id, locale: "shared", data: { ...doc.shared.published!.data, sidebarOrder: 9 } });
+      const before = readTree(root);
+      for (const dryRun of [true, false]) {
+        await expect(ren(ctx, root, "guides/old", "guides/new", { dryRun })).rejects.toThrow(
+          'guides/old: the shared scope has an unpublished draft; publish or discard it before renaming',
+        );
+      }
+      await expect(ren(ctx, root, "guides/old", "guides/new")).rejects.toBeInstanceOf(ValidationError);
+      expect(readTree(root)).toEqual(before);
+      const after = await docOf(ctx, "guides/old");
+      expect(after.shared.published!.version).toBe(doc.shared.published!.version);
+      expect(after.shared.draft!.version).toBe(version);
+      expect(after.shared.draft!.data["sidebarOrder"]).toBe(9);
     });
   });
 

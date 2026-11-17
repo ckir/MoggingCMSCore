@@ -118,7 +118,7 @@ function relativeRefsOf(layout: StarlightLayout, col: Collection, doc: DocumentR
 }
 
 /** One planned file move. */
-type Move = { from: string; to: string };
+type Move = { locale: string; from: string; to: string };
 
 /** The plan: moves in execution order, and the path every locale's file will have afterwards. */
 type Plan = { moves: Move[]; finals: Map<string, string> };
@@ -209,7 +209,7 @@ function planMoves(
         );
       }
     }
-    moves.push({ from: f.path, to: target });
+    moves.push({ locale, from: f.path, to: target });
   }
   return { moves, finals };
 }
@@ -298,8 +298,7 @@ function searchReferences(root: string, layout: StarlightLayout, slug: string): 
  * @returns the moves (planned in a dry run, which stops after planning), the references to the old slug, and a
  * reminder about redirects.
  * @throws {ValidationError} for a `to` that is not a derived-form slug, whose last segment starts with `_`, that
- * would leave the docs folder or sit in a locale folder; for an unknown `from`; for a duplicate slug; for a depth
- * change when the page or any translation holds a relative file reference.
+ * would leave the docs folder or sit in a locale folder; for an unknown `from`; for a duplicate slug; for a pending shared draft that does not hold `to`; for a change of the English file's folder when the page or any translation holds a relative file reference.
  * @throws {ConflictError} when a move target exists with different parsed content (the message names both files).
  * @throws {LicenceError} when core's licence guard refuses the database step.
  */
@@ -323,15 +322,24 @@ export async function renamePage(ctx: Ctx, input: RenameInput): Promise<RenameRe
     throw new ValidationError(`Slug "${to}" is already used by another document in collection "${col.name}"`);
   }
 
-  // (2) Plan every move; refuse a conflict and a depth change before any write.
+  // (2) Plan every move; refuse a conflict, a pending shared draft and a folder change before any write.
   const scan = scanDocs(root, layout, ctx.config);
   const plan = planMoves(root, layout, col, ctx.config.locales.source, from, to, scan);
   const step = dbStep(doc, to);
-  if ((step !== "none" || plan.moves.length > 0) && from.split("/").length !== to.split("/").length) {
+  const draft = doc.shared.draft;
+  if (step === "save" && draft !== null && draft.data["slug"] !== to) {
+    throw new ValidationError(`${from}: the shared scope has an unpublished draft; publish or discard it before renaming`);
+  }
+  // A stored relative reference is canonical relative to the English file's DIRECTORY (D11), so it breaks whenever
+  // that directory changes, not only its depth.
+  const english = plan.moves.find((m) => m.locale === ctx.config.locales.source);
+  const folderOf = (p: string): string => p.split("/").slice(0, -1).join("/");
+  const folderChanged = english !== undefined ? folderOf(english.from) !== folderOf(english.to) : folderOf(from) !== folderOf(to);
+  if ((step !== "none" || plan.moves.length > 0) && folderChanged) {
     const where = relativeRefsOf(layout, col, doc);
     if (where.length > 0) {
       throw new ValidationError(
-        `rename: "${from}" to "${to}" changes the folder depth and the page holds relative file references ` +
+        `rename: "${from}" to "${to}" changes the folder of the English file and the page holds relative file references ` +
           `(${where.join(", ")}); the stored references would need rebasing. Move the page by hand`,
       );
     }
