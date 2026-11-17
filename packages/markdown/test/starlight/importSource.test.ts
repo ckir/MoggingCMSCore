@@ -494,7 +494,7 @@ describe("importFolder, Starlight mode, source pages", () => {
     });
   });
 
-  test("first run, English only: a fresh database imports new pages in one call; the dry run reports the same", async () => {
+  test("first run: a fresh database imports new pages in one call; the dry run reports the same", async () => {
     await setup(async (sql, ctx) => {
       const root = docsProject({
         "index.mdx": page("Home", "", "Welcome"), "guides/one.md": page("One"), "guides/two.md": page("Two"),
@@ -504,9 +504,12 @@ describe("importFolder, Starlight mode, source pages", () => {
       expect(await counts(sql)).toBe("0/0/0");
       const real = await run(ctx, root);
       expect(real.errors).toEqual([]);
+      // `de/one.md` has no page `one` (the English page is `guides/one`): a locale file with no live document is skipped
       expect(real.files.map((f) => [f.file, f.outcome, f.published])).toEqual([
+        [`${D}/de/one.md`, "skipped", false],
         [`${D}/guides/one.md`, "created", true], [`${D}/guides/two.md`, "created", true], [`${D}/index.mdx`, "created", true],
       ]);
+      expect(real.warnings.map((w) => w.file)).toEqual([`${D}/de/one.md`]);
       expect(dry.files.map((f) => [f.file, f.outcome, f.published])).toEqual(real.files.map((f) => [f.file, f.outcome, f.published]));
       expect(dry.files.every((f) => f.docId === null)).toBe(true);
       expect(real.warnings).toEqual(dry.warnings);
@@ -558,7 +561,7 @@ describe("importFolder, Starlight mode, source pages", () => {
     });
   }, 120_000);
 
-  test("the own-folder layout: a new page and a changed page; locale files are left alone", async () => {
+  test("the own-folder layout: a new page and a changed page; the locale file is imported day one", async () => {
     await setup(async (_sql, ctx) => {
       const root = project({
         [`${D}/en/a.md`]: page("A"), [`${D}/en/b.md`]: page("B"), [`${D}/de/a.md`]: page("Hallo"),
@@ -566,6 +569,7 @@ describe("importFolder, Starlight mode, source pages", () => {
       const own = (opts: Record<string, unknown> = {}) => importFolder(ctx, { dir: root, starlight: { layout: layoutOwn, ...opts } });
       const r1 = await own();
       expect(r1.files).toEqual([
+        { file: `${D}/de/a.md`, docId: expect.any(String), outcome: "updated", published: true },
         { file: `${D}/en/a.md`, docId: expect.any(String), outcome: "created", published: true },
         { file: `${D}/en/b.md`, docId: expect.any(String), outcome: "created", published: true },
       ]);
@@ -573,9 +577,9 @@ describe("importFolder, Starlight mode, source pages", () => {
       put(root, "en/b.md", page("B2"));
       put(root, "en/c.md", page("C"));
       const r2 = await own();
-      expect(r2.files.map((f) => f.outcome)).toEqual(["unchanged", "updated", "created"]);
+      expect(r2.files.map((f) => f.outcome)).toEqual(["unchanged", "unchanged", "updated", "created"]);
       expect((await bySlug(ctx, "b"))!.locales.en!.published!.data["title"]).toBe("B2");
-      expect((await bySlug(ctx, "a"))!.locales["de"]).toBeUndefined();
+      expect((await bySlug(ctx, "a"))!.locales["de"]!.published!.data["title"]).toBe("Hallo");
     });
   });
 });

@@ -2,13 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Sql } from "postgres";
 import {
-  ValidationError, createDocument, deleteDocument, getDocuments, hashValue, listDocuments, normalizeValue, publish,
-  saveDraft,
+  ValidationError, createDocument, deleteDocument, getDocuments, hashValue, listDocuments, listLocaleRows,
+  listPublishedVersions, normalizeValue, publish, saveDraft,
 } from "@mogging/core";
 import type { Collection, Ctx, DocumentRecord, HeadPair } from "@mogging/core";
 import type {
   FileMessage, FileOutcome, ImportInput, ImportReport, SafetyStop, StarlightImportOptions,
 } from "../import.js";
+import { classifyEarlier, classifyHeads } from "./classify.js";
+import type { FileClass } from "./classify.js";
 import { rebaseTree, rebaseValueAt } from "./rebase.js";
 import type { StarlightLayout } from "./layout.js";
 import { readStarlightFile, splitPage } from "./frontMatter.js";
@@ -69,6 +71,8 @@ type Plan = {
   prune: Array<{ id: string; slug: string }>;
   stop: SafetyStop | null;
   unsupported: string[];
+  /** The live documents by published slug, then by draft slug (the locale pass finds a page's document here). */
+  bySlug: Map<string, DocumentRecord>;
 };
 
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -91,14 +95,15 @@ function slugOf(s: { data: Rec } | null): string | null {
 const publishable = (state: string): boolean => state === "DRAFT_HUMAN" || state === "APPROVED";
 
 /**
- * Brings the values of an English file to the stored canonical form: the body's image sources and ESM specifiers
- * and the layout's `fileRefs` are rebased from the file to itself (`img.png` becomes `./img.png`), then every value
- * is normalized again (`normalizeValue` also refuses a NUL).
+ * Brings the values of a file to the stored canonical form: the body's image sources and ESM specifiers and the
+ * layout's `fileRefs` are rebased from the file to `toPath` (`img.png` becomes `./img.png`; an English file is
+ * rebased to itself, a locale file to its English page), then every value is normalized again (`normalizeValue` also
+ * refuses a NUL).
  *
  * @returns the canonical shared and localized values and the rebasing errors (an `mdxjsEsm` block that did not parse).
  */
 function canonical(
-  layout: StarlightLayout, col: Collection, filePath: string, shared: Rec, localized: Rec,
+  layout: StarlightLayout, col: Collection, filePath: string, shared: Rec, localized: Rec, toPath: string = filePath,
 ): { shared: Rec; localized: Rec; errors: string[] } {
   const errors: string[] = [];
   const bodyName = Object.entries(col.fields).find(([, f]) => f.body)?.[0];
@@ -107,14 +112,14 @@ function canonical(
     for (const [k, v] of Object.entries(scope)) {
       let value = v;
       if (k === bodyName && isPlain(value)) {
-        const r = rebaseTree(value as unknown as RichTextRoot, filePath, filePath);
+        const r = rebaseTree(value as unknown as RichTextRoot, filePath, toPath);
         errors.push(...r.errors);
         value = r.tree;
       }
       if (isLocalized) {
         for (const ref of layout.fileRefs) {
           const [head, ...leaf] = ref.split(".") as [string, ...string[]];
-          if (head === k) value = rebaseValueAt(value, leaf, filePath, filePath);
+          if (head === k) value = rebaseValueAt(value, leaf, filePath, toPath);
         }
       }
       out[k] = normalizeValue(col.fields[k]!, value, k);
@@ -295,7 +300,11 @@ async function planSource(ctx: Ctx, input: ImportInput & { starlight: StarlightI
     writes.push({ file: r.file, record: doc?.rec ?? null, scopes });
   }
 
-  return { ctx, options, col, scan, outcomes, warnings, errors, pages, writes, prune, stop, unsupported };
+  const bySlug = new Map<string, DocumentRecord>();
+  for (const [slug, d] of byPub) bySlug.set(slug, d.rec);
+  for (const [slug, d] of byDraft) if (!bySlug.has(slug)) bySlug.set(slug, d.rec);
+
+  return { ctx, options, col, scan, outcomes, warnings, errors, pages, writes, prune, stop, unsupported, bySlug };
 }
 
 /**
@@ -337,12 +346,301 @@ async function applySource(plan: Plan): Promise<void> {
   }
 }
 
+/** The most document ids one `listLocaleRows` or `listPublishedVersions` call takes. */
+const CHUNK = 1000;
+
+const FOLLOWS = "export will write the English value the next time it writes this file";
+
+/** What the apply phase does with one locale file. */
+type LocaleAct =
+  | { kind: "none" }
+  | { kind: "save"; untracked: boolean; publish: boolean }
+  | { kind: "publish" };
+
+/** A locale file with the document it belongs to and what the run does with it. */
+type LocaleItem = {
+  file: ScannedFile;
+  /** The document, or `null` for a page this run creates (its id is read from the page's outcome at apply). */
+  record: DocumentRecord | null;
+  /** The source file of a page the run creates; `null` when `record` is set. */
+  pageFile: string | null;
+  data: Rec;
+  act: LocaleAct;
+};
+
+/** Everything the locale pass computed. */
+type LocalePlan = {
+  items: LocaleItem[];
+  /** Project-relative paths of the files that equal an earlier published version, sorted. */
+  behind: string[];
+};
+
+/** Whether `v` holds something: any value but `undefined`, `null` and an empty object. */
+const present = (v: unknown): boolean => v !== undefined && v !== null && !(isPlain(v) && Object.keys(v).length === 0);
+
+/** Whether two values (either may be absent) are equal as canonical JSON. */
+const sameValue = (a: unknown, b: unknown): boolean =>
+  a === undefined || b === undefined ? a === b : hashValue({ v: a }) === hashValue({ v: b });
+
+/**
+ * The value of the front-matter key `draft` in a canonical shared record: the field a plain layout entry maps it to,
+ * else the passthrough's `draft` key.
+ *
+ * @returns `true`/`false` when the record carries it as a boolean, otherwise `undefined`.
+ */
+function draftOf(layout: StarlightLayout, shared: Rec): boolean | undefined {
+  const entry = layout.entries.find((e) => e.kind === "plain" && e.path.length === 1 && e.path[0] === "draft");
+  const v = entry !== undefined && entry.kind === "plain"
+    ? shared[entry.field]
+    : isPlain(shared[layout.passthrough]) ? (shared[layout.passthrough] as Rec)["draft"] : undefined;
+  return typeof v === "boolean" ? v : undefined;
+}
+
+/**
+ * The follows-English report of one locale file (spec 5.9): every key whose value the file sets and English does
+ * not set the same way, once per key, and every unmapped key only the file has. The draft key and the union toggles
+ * are handled by their own rules. Each message starts with `<key>: `.
+ */
+function followsReport(
+  layout: StarlightLayout, file: { shared: Rec; localized: Rec }, english: Rec,
+): string[] {
+  const out: string[] = [];
+  for (const e of layout.entries) {
+    const key = e.path.join(".");
+    if (e.kind === "plain") {
+      if (e.localized || key === "draft") continue;
+      if (Object.hasOwn(file.shared, e.field) && !sameValue(file.shared[e.field], english[e.field])) out.push(`${key}: ${FOLLOWS}`);
+    } else {
+      // `true` means "use the generated link", the same as absent (spec 5.9): only `false` is a setting.
+      const fileToggle = file.shared[e.toggle] === false ? false : undefined;
+      const englishToggle = english[e.toggle] === false ? false : undefined;
+      const fileHas = Object.hasOwn(file.shared, e.toggle) || present(file.localized[e.value]);
+      if (fileHas && fileToggle !== englishToggle) out.push(`${key}: ${FOLLOWS}`);
+    }
+  }
+  const own = file.shared[layout.passthrough];
+  const theirs = english[layout.passthrough];
+  if (isPlain(own)) {
+    for (const k of Object.keys(own).sort(byText)) {
+      if (k === "draft") continue;
+      if (!isPlain(theirs) || !Object.hasOwn(theirs, k)) {
+        out.push(`${k}: not mapped by the layout; export drops it when it rewrites this file`);
+      } else if (!sameValue(own[k], theirs[k])) {
+        out.push(`${k}: ${FOLLOWS}`);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Phase 1 for the locale files (spec 5.3, 5.4, 5.9): finds each file's document, reads and canonicalizes it,
+ * classifies it (against the heads of the plan's page reads, then, for the files that matched neither head and whose
+ * locale has rows, against the earlier published versions in one batched read per locale), applies `--restore`, the
+ * follows-English report and the locale-draft rule, and decides what the apply phase does. Nothing is written.
+ */
+async function planLocales(
+  plan: Plan, input: ImportInput & { starlight: StarlightImportOptions },
+): Promise<LocalePlan> {
+  const { ctx, col, scan, options } = plan;
+  const { layout } = options;
+  const files = [...scan.locales].sort((a, b) => byText(a.path, b.path));
+  const restore = new Set(options.restore ?? []);
+  const pageBySlug = new Map<string, SourcePage>(plan.pages.map((p) => [p.file.slug, p]));
+  const sourcePathBySlug = new Map<string, string>(scan.sources.filter((s) => s.slug !== "").map((s) => [s.slug, s.path]));
+  const sourceBase = layout.sourceDir === null ? layout.docsDir : `${layout.docsDir}/${layout.sourceDir}`;
+  const pruned = new Set(plan.prune.map((p) => p.id));
+  const setOutcome = (file: string, outcome: FileOutcome["outcome"], docId: string | null): void => {
+    plan.outcomes.set(file, { file, docId, outcome, published: false });
+  };
+
+  type Cand = {
+    file: ScannedFile;
+    page: SourcePage | null;
+    record: DocumentRecord | null;
+    localized: Rec;
+    shared: Rec;
+  };
+  const cands: Cand[] = [];
+  for (const f of files) {
+    if (f.error !== null) { plan.errors.set(f.path, f.error); setOutcome(f.path, "error", null); continue; }
+    // (1) the document: a page of this run (new pages included), else a live document holding the slug.
+    const page = pageBySlug.get(f.slug) ?? null;
+    let record: DocumentRecord | null = null;
+    let live = false;
+    if (page !== null) {
+      live = !page.skipped;
+      record = page.record;
+    } else {
+      const found = plan.bySlug.get(f.slug);
+      if (found !== undefined && !pruned.has(found.id)) { record = found; live = true; }
+    }
+    if (!live) {
+      plan.warnings.push({ file: f.path, message: `no live document for the slug "${f.slug}"; the file is not imported` });
+      setOutcome(f.path, "skipped", null);
+      continue;
+    }
+    // (2) read, split, un-rebase to the English page's place.
+    try {
+      const english = sourcePathBySlug.get(f.slug) ?? `${sourceBase}/${f.rel}`;
+      const parsed = readStarlightFile(fs.readFileSync(path.join(input.dir, ...f.path.split("/")), "utf8"));
+      const split = splitPage(layout, col, parsed, f.ext === ".mdx" ? "mdx" : "md");
+      const canon = canonical(layout, col, f.path, split.shared, split.localized, english);
+      if (canon.errors.length > 0) throw new ValidationError(canon.errors[0]!);
+      for (const w of split.warnings) plan.warnings.push({ file: f.path, message: w });
+      cands.push({ file: f, page, record, localized: canon.localized, shared: canon.shared });
+    } catch (e) {
+      plan.errors.set(f.path, msg(e));
+      setOutcome(f.path, "error", record?.id ?? null);
+    }
+  }
+
+  // The (document, locale) pairs that have a row of any state: one call per chunk of documents.
+  const ids = [...new Set(cands.flatMap((c) => (c.record === null ? [] : [c.record.id])))];
+  const rows = new Set<string>();
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    for (const r of await listLocaleRows(ctx, { collection: col.name, docIds: ids.slice(i, i + CHUNK) })) {
+      rows.add(`${r.docId}\0${r.locale}`);
+    }
+  }
+  const hasRows = (c: Cand): boolean => c.record !== null && rows.has(`${c.record.id}\0${c.file.locale}`);
+
+  // (3) classify against the heads; the earlier-version pass only for the files that matched neither head.
+  const classes = new Map<Cand, FileClass>();
+  const needEarlier = new Map<string, Cand[]>();
+  for (const c of cands) {
+    const pair = c.record?.locales[c.file.locale];
+    const first = classifyHeads(layout, col, c.localized, {
+      published: pair?.published?.data ?? null, draft: pair?.draft?.data ?? null,
+    });
+    if (first !== null) classes.set(c, first);
+    else if (!hasRows(c)) classes.set(c, "hand work");
+    else needEarlier.set(c.file.locale, [...(needEarlier.get(c.file.locale) ?? []), c]);
+  }
+  for (const [locale, group] of needEarlier) {
+    const byDoc = new Map<string, Rec[]>();
+    const docIds = [...new Set(group.map((c) => c.record!.id))];
+    for (let i = 0; i < docIds.length; i += CHUNK) {
+      for (const v of await listPublishedVersions(ctx, { collection: col.name, locale, docIds: docIds.slice(i, i + CHUNK) })) {
+        byDoc.set(v.docId, [...(byDoc.get(v.docId) ?? []), v.data]);
+      }
+    }
+    for (const c of group) classes.set(c, classifyEarlier(layout, col, c.localized, byDoc.get(c.record!.id) ?? []));
+  }
+
+  const items: LocaleItem[] = [];
+  const behind: string[] = [];
+  const unionValues = layout.entries.flatMap((e) => (e.kind === "union" ? [e.value] : []));
+  for (const c of cands) {
+    const f = c.file;
+    const pair = c.record?.locales[f.locale];
+    const warn = (message: string): void => { plan.warnings.push({ file: f.path, message }); };
+    let cls = classes.get(c)!;
+
+    // (4) --restore.
+    const restored = restore.has(f.path);
+    if (restored && cls === "published") warn("already current: the file equals the published translation; nothing was restored");
+    if (restored && cls === "behind") cls = "hand work";
+    if (cls === "behind") behind.push(f.path);
+
+    // (5) the follows-English report.
+    const english = c.page?.shared ?? c.record?.shared.published?.data ?? {};
+    for (const m of followsReport(layout, c, english)) warn(m);
+
+    // (6) the locale-draft rule.
+    const fileDraft = draftOf(layout, c.shared);
+    const englishDraft = draftOf(layout, english) === true;
+    const localeDraft = fileDraft === true && !englishDraft;
+    if (localeDraft && (cls === "hand work" || cls === "pending")) {
+      warn("draft: the file says draft: true while the English page does not; its translation is kept as an unpublished draft and is not published while the flag stays");
+    } else if (localeDraft && cls === "published") {
+      warn(`draft: ${FOLLOWS}; a published translation is not withdrawn by this flag, run \`mogging unpublish --locale\` to withdraw it`);
+    } else if (fileDraft !== undefined && fileDraft !== englishDraft) {
+      warn(`draft: ${FOLLOWS}`);
+    }
+
+    // (7) and (8) what to write.
+    let act: LocaleAct = { kind: "none" };
+    const dayOne = !hasRows(c);
+    if (cls === "hand work" && !(dayOne && Object.keys(c.localized).length === 0)) {
+      for (const name of unionValues) {
+        if (present(c.localized[name])) continue;
+        // The published head first, then a human or approved draft head; AI text is never carried into a human draft.
+        const draftSource = pair?.draft != null && pair.draft.state !== "DRAFT_AI" ? pair.draft.data[name] : undefined;
+        const kept = [pair?.published?.data[name], draftSource].find(present);
+        if (kept !== undefined) c.localized[name] = kept;
+      }
+      const draft = pair?.draft ?? null;
+      const published = pair?.published ?? null;
+      if (draft !== null) {
+        const lost = draft.state !== "DRAFT_HUMAN" || published === null || draft.version > published.version;
+        if (lost) {
+          warn(`replaced ${draft.state === "DRAFT_HUMAN" ? "unpublished" : "pending"} ${draft.state} draft v${draft.version} for ${f.locale}`);
+        }
+      }
+      act = { kind: "save", untracked: dayOne, publish: !localeDraft && (dayOne || input.publish === true) };
+    } else if (cls === "pending" && input.publish === true && !localeDraft && pair?.draft?.state === "DRAFT_HUMAN") {
+      act = { kind: "publish" };
+    }
+
+    items.push({ file: f, record: c.record, pageFile: c.record === null ? c.page!.file.path : null, data: c.localized, act });
+    setOutcome(f.path, act.kind === "none" ? "unchanged" : "updated", c.record?.id ?? null);
+    if (act.kind === "publish" || (act.kind === "save" && act.publish)) plan.outcomes.get(f.path)!.published = true;
+  }
+  return { items, behind: behind.sort(byText) };
+}
+
+/**
+ * Phase 2 for the locale files: one transaction per file (the save, then the publish), after the source pages are
+ * written, so a new page's document exists. A file that fails becomes an `error` outcome and the run goes on; a
+ * licence error aborts it.
+ */
+async function applyLocales(plan: Plan, lp: LocalePlan): Promise<void> {
+  const { ctx } = plan;
+  const inTx = <T>(fn: (tctx: Ctx) => Promise<T>): Promise<T> =>
+    ctx.sql.begin(async (tx) => fn({ ...ctx, sql: tx as unknown as Sql })) as Promise<T>;
+
+  for (const item of lp.items) {
+    const path_ = item.file.path;
+    let docId = item.record?.id ?? null;
+    if (docId === null) {
+      const source = plan.outcomes.get(item.pageFile!);
+      docId = source !== undefined && source.outcome !== "error" ? source.docId : null;
+      if (docId === null) {
+        plan.warnings.push({ file: path_, message: "its English page was not imported; the file is not imported" });
+        plan.outcomes.set(path_, { file: path_, docId: null, outcome: "skipped", published: false });
+        continue;
+      }
+      plan.outcomes.get(path_)!.docId = docId;
+    }
+    const act = item.act;
+    if (act.kind === "none") continue;
+    const locale = item.file.locale;
+    try {
+      await inTx(async (tctx) => {
+        if (act.kind === "save") {
+          await saveDraft(tctx, { docId: docId!, locale, data: item.data, ...(act.untracked ? { untracked: true } : {}) });
+          if (act.publish) await publish(tctx, { docId: docId!, locale });
+        } else {
+          await publish(tctx, { docId: docId!, locale });
+        }
+      });
+    } catch (e) {
+      if (isNamed(e, "LicenceError")) throw e;
+      plan.errors.set(path_, msg(e));
+      plan.outcomes.set(path_, { file: path_, docId, outcome: "error", published: false });
+    }
+  }
+}
+
 /**
  * The Starlight mode of `importFolder` (spec 5.3 to 5.6) for the source (English) pages. It is plan-then-apply: the
  * plan reads the files and the collection's documents (a page of documents at a time, never per file) and computes
  * every outcome; the apply writes one transaction per page, then prunes. English is always published. A `dryRun`
- * returns the plan's report and writes nothing. Locale files are not handled here yet; a later pass adds its own plan
- * step after `planSource` and its apply step after `applySource`.
+ * returns the plan's report and writes nothing. The locale files follow in a second plan-then-apply pass: day-one
+ * translations are saved untracked and published, later files are classified (`published`, `pending` and `behind`
+ * write nothing, `hand work` is saved as a human draft), and the follows-English report and the locale-draft rule
+ * run on every file.
  *
  * @param ctx engine context; the licence-guarded writes check the licence and the actor.
  * @param input `dir` is the project root; `starlight` carries the layout and the flags.
@@ -355,7 +653,11 @@ export async function importStarlight(
   ctx: Ctx, input: ImportInput & { starlight: StarlightImportOptions },
 ): Promise<ImportReport> {
   const plan = await planSource(ctx, input);
-  if (input.starlight.dryRun !== true) await applySource(plan);
+  const locales = await planLocales(plan, input);
+  if (input.starlight.dryRun !== true) {
+    await applySource(plan);
+    await applyLocales(plan, locales);
+  }
   const files = [...plan.outcomes.values()].sort((a, b) => byText(a.file, b.file));
   const errors: FileMessage[] = [...plan.errors].map(([file, message]) => ({ file, message })).sort((a, b) => byText(a.file, b.file));
   return {
@@ -366,7 +668,7 @@ export async function importStarlight(
       dryRun: input.starlight.dryRun === true,
       stop: plan.stop,
       pruned: plan.prune.map((p) => p.slug),
-      behind: [],
+      behind: locales.behind,
       unsupported: plan.unsupported,
     },
   };
