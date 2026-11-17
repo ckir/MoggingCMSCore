@@ -6,7 +6,9 @@ export type {
   Blockquote, ListItem, List, TableCell, TableRow, Table, Code, Container, OpaqueBlock, Block, RichTextRoot,
 } from "./tree.js";
 export { exportFolder } from "./export.js";
-export type { ExportInput, ExportReport } from "./export.js";
+export type {
+  ExportInput, ExportReport, StarlightExportOptions, ExportAction, StarlightExportDetails,
+} from "./export.js";
 export { importFolder } from "./import.js";
 export type {
   ImportInput, FileOutcome, FileMessage, ImportReport, StarlightImportOptions, SafetyStop, StarlightImportDetails,

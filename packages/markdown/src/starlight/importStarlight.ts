@@ -102,7 +102,7 @@ const publishable = (state: string): boolean => state === "DRAFT_HUMAN" || state
  *
  * @returns the canonical shared and localized values and the rebasing errors (an `mdxjsEsm` block that did not parse).
  */
-function canonical(
+export function canonical(
   layout: StarlightLayout, col: Collection, filePath: string, shared: Rec, localized: Rec, toPath: string = filePath,
 ): { shared: Rec; localized: Rec; errors: string[] } {
   const errors: string[] = [];

@@ -5,10 +5,52 @@ import type { Collection, Ctx, Field } from "@mogging/core";
 import { renderFile } from "./contentFile.js";
 import type { FileMessage } from "./import.js";
 import { isSafeSlug } from "./slug.js";
+import { exportStarlight } from "./starlight/exportStarlight.js";
+import type { StarlightLayout } from "./starlight/layout.js";
 import { validateTree } from "./tree.js";
 
-export type ExportInput = { dir: string; collections?: string[]; locales?: string[] };
-export type ExportReport = { files: string[]; warnings: FileMessage[] };
+/**
+ * Options that switch `exportFolder` to the Starlight mode (spec 5.4): `dir` is then the project root and the
+ * layout names the docs folder, the locale folders and the front-matter paths.
+ */
+export type StarlightExportOptions = {
+  /** The validated Starlight layout (`defineStarlightLayout`). */
+  layout: StarlightLayout;
+  /** Plan and report every action and change nothing on disk. */
+  dryRun?: boolean;
+  /**
+   * The locale folders Starlight's own config declares, when known. A Mogging locale whose folder is missing from
+   * the list is skipped and reported; `null` or absent means "write as configured".
+   */
+  starlightLocaleDirs?: string[] | null;
+};
+
+/**
+ * What `exportFolder` exports. With `starlight` set, `dir` is the Starlight project root, `collections` is ignored
+ * (one docs collection) and `locales` restricts the target locales evaluated.
+ */
+export type ExportInput = { dir: string; collections?: string[]; locales?: string[]; starlight?: StarlightExportOptions };
+
+/** One action of a Starlight export run (planned in a dry run, performed otherwise); paths are project-relative POSIX. */
+export type ExportAction = {
+  action: "write" | "keep" | "remove" | "skip" | "refuse" | "move";
+  path: string;
+  /** The destination of a `move`. */
+  to?: string;
+  reason: string;
+};
+
+/** What a Starlight export reports beyond the file list. */
+export type StarlightExportDetails = {
+  dryRun: boolean;
+  /** Every planned or performed action, in execution order. */
+  actions: ExportAction[];
+  /** The causes the operator must act on (exit 4): hand work left, symlink refusals, missing English files and the like. */
+  attention: FileMessage[];
+};
+
+/** What `exportFolder` did: the files it wrote, the warnings, and, in the Starlight mode, the action list. */
+export type ExportReport = { files: string[]; warnings: FileMessage[]; starlight?: StarlightExportDetails };
 
 function isPlain(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Date);
@@ -131,6 +173,7 @@ function bodyMode(col: Collection, ...datas: Array<Record<string, unknown>>): "m
 }
 
 export async function exportFolder(ctx: Ctx, input: ExportInput): Promise<ExportReport> {
+  if (input.starlight !== undefined) return exportStarlight(ctx, { ...input, starlight: input.starlight });
   const { config } = ctx;
   const root = path.resolve(input.dir);
   const source = config.locales.source;
