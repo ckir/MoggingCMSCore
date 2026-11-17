@@ -312,6 +312,75 @@ describe("mogging import in a Starlight project", () => {
     });
   });
 
+  /** Imports pages `a` and `b` (each with a German file), then publishes a different German title for both. */
+  async function restoreSetup(sql: Sql) {
+    const root = starlightProject({
+      [`${D}/a.md`]: page("A"), [`${D}/de/a.md`]: page("Eins"),
+      [`${D}/b.md`]: page("B"), [`${D}/de/b.md`]: page("Zwei"),
+    });
+    expect((await go(sql, root, ["import"])).code).toBe(0);
+    for (const slug of ["a", "b"]) {
+      const doc = (await getDocument(ctxOf(sql), { collection: "docs", slug }))!;
+      await saveDraft(ctxOf(sql), { docId: doc.id, locale: "de", data: { title: "Geaendert" } });
+      await publish(ctxOf(sql), { docId: doc.id, locale: "de" });
+    }
+    return root;
+  }
+  const germanTitle = async (sql: Sql, slug: string): Promise<unknown> =>
+    (await getDocument(ctxOf(sql), { collection: "docs", slug }))!.locales["de"]?.draft?.data["title"];
+
+  test("--restore ./de/a.md reaches the SDK as src/content/docs/de/a.md", async () => {
+    await withDb(async (sql) => {
+      const root = await restoreSetup(sql);
+      const cwd = join(root, D);
+      const r = await go(sql, root, ["import", "--config", join(root, "mogging.config.ts"), "--restore", "./de/a.md"], cwd);
+      expect(r.code).toBe(0);
+      expect(r.err + r.out).not.toContain("no locale file");
+      expect(await germanTitle(sql, "a")).toBe("Eins");
+      expect(await germanTitle(sql, "b")).toBeUndefined(); // b was not named, so it was not restored
+    });
+  });
+
+  test("--restore with an absolute path inside the project reaches the SDK project-relative", async () => {
+    await withDb(async (sql) => {
+      const root = await restoreSetup(sql);
+      const config = join(root, "mogging.config.ts");
+      const r = await go(sql, root, ["import", "--config", config, "--restore", join(root, D, "de", "a.md")], join(root, D, "de"));
+      expect(r.code).toBe(0);
+      expect(r.err + r.out).not.toContain("no locale file");
+      expect(await germanTitle(sql, "a")).toBe("Eins");
+    });
+  });
+
+  test("two --restore values are both passed", async () => {
+    await withDb(async (sql) => {
+      const root = await restoreSetup(sql);
+      const r = await go(sql, root, ["import", "--restore", `${D}/de/a.md`, "--restore", `./${D}/de/b.md`]);
+      expect(r.code).toBe(0);
+      expect(r.err + r.out).not.toContain("no locale file");
+      expect(await germanTitle(sql, "a")).toBe("Eins");
+      expect(await germanTitle(sql, "b")).toBe("Zwei");
+    });
+  });
+
+  test("a file named ..x.md inside the project is accepted by --restore", async () => {
+    await withDb(async (sql) => {
+      const root = starlightProject({ [`${D}/a.md`]: page("A"), "..x.md": "x" });
+      const r = await go(sql, root, ["import", "--restore", "..x.md"]);
+      expect(r.err).not.toContain("is outside the project");
+      expect(r.code).not.toBe(2);
+    });
+  });
+
+  test("--restore . (the project root itself) is exit 2", async () => {
+    await withDb(async (sql) => {
+      const root = starlightProject({ [`${D}/a.md`]: page("A") });
+      const r = await go(sql, root, ["import", "--restore", "."]);
+      expect(r.code).toBe(2);
+      expect(r.err).toContain(`--restore . is outside the project ${root}`);
+    });
+  });
+
   test("an empty docs folder is exit 1", async () => {
     await withDb(async (sql) => {
       const root = starlightProject({ [`${D}/.keep`]: "" });
