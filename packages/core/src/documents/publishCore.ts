@@ -84,7 +84,7 @@ export async function publishWithinTx(tx: Tx, ctx: Ctx, input: PublishInput, sta
   // A head is published only with every top-level required field of its scope present (empty values count).
   if (collection) {
     const missing = Object.entries(collection.fields)
-      .filter(([name, f]) => f.required && f.localized !== isShared && (target!.data[name] ?? null) === null)
+      .filter(([name, f]) => f.required && f.localized !== isShared && (!Object.hasOwn(target!.data, name) || target!.data[name] === null))
       .map(([name]) => name);
     if (missing.length > 0) {
       throw new ValidationError(

@@ -656,8 +656,12 @@ test("publishRelease refuses the whole release when one item lacks a required fi
   const ctx = { ...ctxFor(sql, "releaser"), config };
   const { id } = await createRelease(ctx, { name: "required" });
   const versions: Array<{ docId: string; version: number }> = [];
-  for (const data of [{ title: "T de", body: md("B de") }, { body: md("B de") }]) {
-    const { id: docId } = await createDocument(ctx, { collection: "notes" });
+  // Items publish in ascending doc_id order (releases.ts), so the complete document gets the smaller id: its item is
+  // published first and the refusal of the second must roll it back.
+  const ids = ["00000001-0000-4000-8000-000000000001", "00000001-0000-4000-8000-000000000002"];
+  for (const [i, data] of [{ title: "T de", body: md("B de") }, { body: md("B de") }].entries()) {
+    const docId = ids[i]!;
+    await sql`insert into documents (id, collection, created_by) values (${docId}, 'notes', 'fixture')`;
     await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: md("B") } });
     await publish(ctx, { docId, locale: "en" });
     const { version } = await saveDraft(ctx, { docId, locale: "de", data });

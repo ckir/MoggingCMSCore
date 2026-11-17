@@ -297,3 +297,21 @@ test("drafts may be incomplete", async () => withTestDb(async (sql) => {
   const rows = await sql`select is_head_draft from document_localized where doc_id = ${docId}`;
   expect(rows.map((r) => r.is_head_draft)).toEqual([true]);
 }));
+
+test("a required field named like an Object.prototype member is enforced", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const config = defineConfig({
+    collections: [defineCollection("notes", {
+      slug: slug(),
+      valueOf: text({ localized: true, required: true }),
+      body: richText({ localized: true, body: true }),
+    })],
+    locales: { source: "en", chains: { de: ["en"] } },
+  });
+  const ctx = { ...ctxFor(sql, "publisher"), config };
+  const { id: docId } = await createDocument(ctx, { collection: "notes" });
+  await saveDraft(ctx, { docId, locale: "en", data: { body: md("x") } });
+  await expect(publish(ctx, { docId, locale: "en" })).rejects.toThrow(
+    `Cannot publish version 1 of ${docId}/en: missing required field valueOf`,
+  );
+}));
