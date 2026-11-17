@@ -825,7 +825,7 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 - Modify: `packages/markdown/src/starlight/importStarlight.ts`
 - Test: `packages/markdown/test/starlight/importLocale.test.ts`
 
-**Interfaces:** as Task 12; consumes Task 7's `readStarlightFile`/`splitPage`, Task 8's rebasing, Task 11's `classify`, Task 4's
+**Interfaces:** as Task 12; consumes Task 7's `readStarlightFile`/`splitPage`, Task 8's rebasing, Task 11's `classifyHeads`/`classifyEarlier`, Task 4's
 `listPublishedVersions` (one call per locale with the ids of files that matched neither head).
 
 - [ ] **Step 1: Failing tests.**
