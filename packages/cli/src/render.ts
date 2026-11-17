@@ -10,8 +10,8 @@ const NONE = "(none)";
 export const kindOf = (kinds: Record<string, string>, path: string): string => (Object.hasOwn(kinds, path) ? kinds[path]! : "");
 
 /**
- * The text a reviewer sees and edits for one field value: `text` is the string, `richText` a tree as Markdown (a
- * string stored in a richText field is itself), absent is `(none)`, anything else is its JSON.
+ * The text a reviewer sees and edits for one field value: `text` is the string, `richText` a tree as Markdown, absent
+ * is `(none)`, anything else is its JSON.
  */
 export function valueText(value: unknown, kind: string): string {
   if (value === undefined || value === null) return NONE;

@@ -62,8 +62,9 @@ export const config = defineConfig({
 - Collection names must be unique.
 - Each collection must have **exactly one** field with `body: true`, and that field must be
   `richText`.
-- A field with `kind: "slug"` cannot be localized. `slug()` takes no options, so every slug is
-  shared.
+- A `slug()` field must be the top-level field named `slug`, and the name `slug` is reserved for it, so a
+  collection has at most one slug. It cannot be localized and takes no options, so every slug is shared.
+- `required: true` is only valid on a top-level field.
 - `source` and every chain key/target are BCP 47-normalized (`de-ch` → `de-CH`). Every chain target
   must be a declared locale (the source or a chain key).
 - Locale chains are not forced to include the source locale. If `de` must fall back to `en`, declare
@@ -74,7 +75,7 @@ export const config = defineConfig({
 | Builder | Accepted normalized value | Notes |
 | --- | --- | --- |
 | `text()` | string | NFC-normalized; empty string is a stored value. |
-| `richText()` | string, object or array | Stored as the portable rich-text tree (or a legacy Markdown string); NFC-normalized recursively. Exactly one `richText` field per collection must set `body: true`. |
+| `richText()` | Rich-text tree | A `RichTextRoot` (`{ type: "root", version: 1, mode, children }`); core checks the root and NFC-normalizes recursively, and `validateTree` in `@mogging/markdown` checks the rest. A string is refused: convert Markdown with `markdownToTree`. Exactly one `richText` field per collection must set `body: true`. |
 | `number()` | finite number | `NaN`/`Infinity` rejected. |
 | `boolean()` | boolean | |
 | `dateTime()` | `Date`, or ISO 8601 string with `Z`/offset | Stored as an ISO string in UTC (`toISOString()`, millisecond precision). A date without an offset is rejected. |
@@ -90,7 +91,7 @@ Every field builder accepts `FieldOptions`:
 | `localized` | `false` | `true` stores the field in a per-locale snapshot; `false` stores it in the document's shared snapshot. |
 | `fallback` | none | A per-field override: an ordered array of locale tags, or `"none"` to disable fallback. Only meaningful on localized fields. |
 | `body` | `false` | Marks the collection's rich-text body. Exactly one per collection; `richText` only. |
-| `required` | `false` | **Declared but not enforced in v0.1.** No read or write path consults this flag. Do not rely on it; see section 9. |
+| `required` | `false` | Enforced at publish: `publish` and `publishRelease` refuse a head that lacks a required field of its scope (`ValidationError`). A key holding an empty value counts as present. Drafts may be incomplete. Top-level fields only. |
 
 ### 1.3 Relationships
 
@@ -103,9 +104,9 @@ Lists and objects are embedded values, not joins. A list of references is `list(
 but each entry is still just an id string. This is deliberate: the store is document-oriented and
 snapshots are immutable, so cross-document integrity is an application concern.
 
-There is also **no unique index on slug**. Two documents in the same collection can share a slug;
-Markdown import identifies a document by `(collection, slug)` and can create duplicates if two
-imports race (documented in `packages/markdown/README.md`).
+Slugs are unique per collection among live documents' shared heads: `saveDraft` and `publish` refuse a
+slug another live document holds (under a per-collection advisory lock). `document_shared` has a
+non-unique index on the heads' `slug` key for these lookups.
 
 ## 2. Database model
 
@@ -397,6 +398,8 @@ later compile can regenerate it. It is not licence-guarded.
 - With `version`, it selects that exact row. The row may be the current draft head (a normal flip)
   or a historical `PUBLISHED` row that is not the current published head (a **republish**). Any
   other row is refused.
+- A target that lacks a required field of its scope is refused with `ValidationError`, for a draft head
+  and for a republish alike.
 - It first clears the old published head (`is_head_published = false`, `unpublished_at`,
   `unpublished_by`) because the partial unique index permits only one.
 - For a draft head, publishing **flips** the row: `state = PUBLISHED`, `is_head_published = true`,
@@ -709,8 +712,7 @@ These are properties of the current implementation, not bugs to discover:
 - No lifecycle hooks, plugins, custom field components, or extension system.
 - No scheduling, webhooks, cache invalidation, search indexing, or notification side effects.
 - No media upload, storage adapter, or image transformation.
-- No referential integrity for `reference` fields and no unique slug index.
-- `required` is accepted by the field builders but never enforced.
+- No referential integrity for `reference` fields.
 - Migration `0001` was edited in place before v0.1; databases created before plan 4 must be
   recreated because the runner tracks applied migrations by name only.
 - `content_provenance.version` and `release_items.draft_version` are conventional references without
