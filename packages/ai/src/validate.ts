@@ -99,8 +99,9 @@ export function validateField(args: {
     // The draft completed with the source's `translate: false` leaves, which the model never saw.
     const merged = withFixedLeaves(field, prepared.source, draft);
     value = merged;
-    sourceText = leafText(prepared.source);
-    draftText = leafText(merged);
+    // The text checks compare only what the model saw and wrote: `translate: false` leaves are in neither text.
+    sourceText = leafText(wireValue(field, prepared.source));
+    draftText = leafText(wireValue(field, merged));
     if (stringLeaves(merged).some((l) => l.text.includes("\u0000"))) rejections.push(reject("contains U+0000"));
     const shape = checkShape(field, prepared.source, merged);
     for (const s of shape) rejections.push(reject(s));

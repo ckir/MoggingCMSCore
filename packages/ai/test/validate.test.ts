@@ -401,6 +401,25 @@ describe("translate: false leaves", () => {
     expect(v).toMatchObject({ ok: false, rejections: ["hero: $.actions: list length 2 expected 1"] });
   });
 
+  test("a glossary term only inside a translate: false leaf demands nothing", () => {
+    const g = [entry({ term: "start", translation: "Beginn", targetLocale: "de" })];
+    // The term occurs only in the link, which the model never saw.
+    const ok = check("hero", hero, source, { title: "Ü", actions: [{ text: "Los" }] }, g, "strict");
+    expect(ok).toMatchObject({ ok: true, warnings: [], glossaryTermsUsed: [] });
+    // The same term in a translatable leaf still demands its translation.
+    const inText = { title: "Start here", actions: [{ text: "Go", link: "/start" }] };
+    const bad = check("hero", hero, inText, { title: "Hier", actions: [{ text: "Los" }] }, g, "strict");
+    expect(bad).toMatchObject({ ok: false, rejections: ['hero: glossary: "start" expected "Beginn"'] });
+    const good = check("hero", hero, inText, { title: "Beginn hier", actions: [{ text: "Los" }] }, g, "strict");
+    expect(good).toMatchObject({ ok: true, glossaryTermsUsed: ["start"] });
+  });
+
+  test("a placeholder only inside a translate: false leaf is not compared", () => {
+    const src = { title: "T", actions: [{ text: "Go", link: "/u/{id}" }] };
+    expect(check("hero", hero, src, { title: "Ü", actions: [{ text: "Los" }] })).toMatchObject({ ok: true });
+    expect(check("hero", hero, src, { title: "Ü {id}", actions: [{ text: "Los" }] })).toMatchObject({ ok: false });
+  });
+
   test("U+0000 in the model's text is still refused", () => {
     const v = check("hero", hero, source, { title: "Ü\u0000", actions: [{ text: "Los" }] });
     expect(v).toMatchObject({ ok: false });
