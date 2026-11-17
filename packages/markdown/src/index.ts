@@ -8,7 +8,9 @@ export type {
 export { exportFolder } from "./export.js";
 export type { ExportInput, ExportReport } from "./export.js";
 export { importFolder } from "./import.js";
-export type { ImportInput, FileOutcome, FileMessage, ImportReport } from "./import.js";
+export type {
+  ImportInput, FileOutcome, FileMessage, ImportReport, StarlightImportOptions, SafetyStop, StarlightImportDetails,
+} from "./import.js";
 export { REJECTION_ORDER, restoreDraft, sentinelize } from "./sentinel.js";
 export type { RejectionCode, SentinelOriginal, SentinelPrepared, RestoreResult } from "./sentinel.js";
 export { defineStarlightLayout } from "./starlight/layout.js";

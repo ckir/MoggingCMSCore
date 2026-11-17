@@ -9,16 +9,74 @@ import type { Collection, Ctx, DocumentRecord, Field, HeadPair } from "@mogging/
 import { mapFile, splitFrontMatter } from "./contentFile.js";
 import type { RefPlaceholder } from "./contentFile.js";
 import { isSafeSlug } from "./slug.js";
+import { importStarlight } from "./starlight/importStarlight.js";
+import type { StarlightLayout } from "./starlight/layout.js";
 
-export type ImportInput = { dir: string; publish?: boolean };
+/**
+ * Options that switch `importFolder` to the Starlight mode (spec 5.3): `dir` is then the project root and the
+ * layout names the docs folder and the collection.
+ */
+export type StarlightImportOptions = {
+  /** The validated Starlight layout (`defineStarlightLayout`). */
+  layout: StarlightLayout;
+  /** Soft-delete every live document of the collection whose source-locale file is gone (spec 5.5). */
+  prune?: boolean;
+  /** Treat gone pages and new files as deletions plus new pages instead of stopping (spec 5.6). */
+  acceptNewAndGone?: boolean;
+  /** Locale files to restore as human drafts (read by the locale pass, not by the source pass). */
+  restore?: string[];
+  /** Compute and report every outcome, write nothing. */
+  dryRun?: boolean;
+};
+
+/**
+ * Input of `importFolder`. Without `starlight` it is the generic `<locale>/<collection>` folder import and `dir` is
+ * the import folder; with it `dir` is the Starlight project root.
+ */
+export type ImportInput = { dir: string; publish?: boolean; starlight?: StarlightImportOptions };
+
+/** What happened to one file; `"skipped"` occurs only in the Starlight mode. */
 export type FileOutcome = {
   file: string;
   docId: string | null;
-  outcome: "created" | "updated" | "unchanged" | "error";
+  outcome: "created" | "updated" | "unchanged" | "error" | "skipped";
   published: boolean;
 };
 export type FileMessage = { file: string; message: string };
-export type ImportReport = { files: FileOutcome[]; warnings: FileMessage[]; errors: FileMessage[] };
+
+/**
+ * The rename safety stop (spec 5.6): the run found both documents whose source file is gone and source files with
+ * no document, so it created and pruned none of them.
+ */
+export type SafetyStop = {
+  /** Documents whose source file is gone, by slug; `title` is their source-locale published title (or `null`). */
+  gone: Array<{ slug: string; title: string | null }>;
+  /** Source files with no document; `title` is the file's front-matter title (or `null`). */
+  added: Array<{ file: string; slug: string; title: string | null }>;
+  /** `mogging rename <old> <new>` when exactly one page is gone and one is new, else `null`. */
+  command: string | null;
+};
+
+/** What a Starlight run reports beyond the per-file lists. Paths are project-relative POSIX paths. */
+export type StarlightImportDetails = {
+  dryRun: boolean;
+  /** The safety stop, or `null` when the run was not stopped. */
+  stop: SafetyStop | null;
+  /** Slugs of the documents soft-deleted by `prune` (or that a dry run would delete). */
+  pruned: string[];
+  /** Locale files that equal an earlier published version (locale pass). */
+  behind: string[];
+  /** Files with a Starlight extension Mogging does not import. */
+  unsupported: string[];
+};
+
+export type ImportReport = {
+  files: FileOutcome[];
+  warnings: FileMessage[];
+  errors: FileMessage[];
+  /** Present in the Starlight mode only. */
+  starlight?: StarlightImportDetails;
+};
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -105,6 +163,7 @@ function fieldOf(col: Collection, name: string): Field {
 }
 
 export async function importFolder(ctx: Ctx, input: ImportInput): Promise<ImportReport> {
+  if (input.starlight !== undefined) return importStarlight(ctx, { ...input, starlight: input.starlight });
   const dir = input.dir;
   let st: fs.Stats | null = null;
   try { st = fs.statSync(dir); } catch { st = null; }
