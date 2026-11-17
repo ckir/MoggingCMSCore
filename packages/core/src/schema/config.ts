@@ -36,6 +36,42 @@ function badTranslateFalse(f: Field): string | null {
   return null;
 }
 
+/** True when a `slug` field sits anywhere below `f` (inside its list item or object fields). */
+function containsSlug(f: Field): boolean {
+  if (f.kind === "list") return f.item.kind === "slug" || containsSlug(f.item);
+  if (f.kind === "object") return Object.values(f.fields).some((s) => s.kind === "slug" || containsSlug(s));
+  return false;
+}
+
+/** The path (relative to `f`) of the first field below `f` that sets `required: true`, or null. */
+function nestedRequired(f: Field): string | null {
+  const below = (path: string, sub: Field): string | null => {
+    if (sub.required) return path;
+    const inner = nestedRequired(sub);
+    return inner === null ? null : `${path}${inner}`;
+  };
+  if (f.kind === "list") return below("[]", f.item);
+  if (f.kind === "object") {
+    for (const [k, sub] of Object.entries(f.fields)) {
+      const p = below(`.${k}`, sub);
+      if (p !== null) return p;
+    }
+  }
+  return null;
+}
+
+/**
+ * Validates and normalizes a configuration.
+ *
+ * @param c the collections, locales and optional licence settings.
+ * @returns the validated config with normalized locale tags.
+ * @throws {ValidationError} when `license` or `purchaseUrl` is not a string, there is no collection, a
+ * collection name repeats, a `json` field is localized, `translate: false` sits on a non-text field, a
+ * `slug` field is localized, a `slug()` field is not named `slug`, a non-slug field is named `slug`, a
+ * `slug()` sits below the top level (inside a list item or object), `required: true` sits below the top
+ * level, a non-richText field is the body, a collection does not have exactly one body field, or a
+ * locale chain references an undeclared locale.
+ */
 export function defineConfig(c: {
   collections: Collection[];
   locales: { source: string; chains: Record<string, string[]> };
@@ -62,6 +98,19 @@ export function defineConfig(c: {
       }
       if (f.kind === "slug" && f.localized) {
         throw new ValidationError(`${col.name}.${fname}: slug cannot be localized`);
+      }
+      if (f.kind === "slug" && fname !== "slug") {
+        throw new ValidationError(`${col.name}.${fname}: a slug field must be named "slug"`);
+      }
+      if (fname === "slug" && f.kind !== "slug") {
+        throw new ValidationError(`${col.name}.slug: the name "slug" is reserved for a slug() field`);
+      }
+      if (containsSlug(f)) {
+        throw new ValidationError(`${col.name}.${fname}: slug() is only valid as a top-level field`);
+      }
+      const req = nestedRequired(f);
+      if (req !== null) {
+        throw new ValidationError(`${col.name}.${fname}${req}: required is only valid on a top-level field`);
       }
       if (f.body) {
         if (f.kind !== "richText") {
