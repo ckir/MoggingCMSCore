@@ -338,6 +338,9 @@ schema (`packages/markdown/src/contentFile.ts:34`), which yields no timestamps, 
 as a string; Starlight's `lastUpdated` needs a date (`src/schema.ts:52`) and gets one only if the scalar is written
 back unquoted. The plan therefore pins that a date-like plain scalar is written back plain (and a quoted one quoted),
 with a round-trip test through Astro's own front-matter parser. No tagged form.
+Owner ruling 2026-11-17 (plan 6a R1; agy-first ALIGNED): export writes a locale file's follows-English keys from the
+English file's YAML nodes as on disk, so their scalar style is English's; values export creates are written with
+YAML's timestamp-aware writer, so a date-like localized string is quoted.
 
 ### 5.9 Front-matter ownership per key (owner, 2026-11-13; agy and Claude agreed; replaces the round-3 list alignment)
 
