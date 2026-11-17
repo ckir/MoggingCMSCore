@@ -6,6 +6,7 @@ import {
 } from "@mogging/core";
 import type { Collection, Ctx, DocumentRecord, Snapshot } from "@mogging/core";
 import type { ExportAction } from "../export.js";
+import type { FileMessage } from "../import.js";
 import type { RichTextRoot } from "../tree.js";
 import { sameLocalized } from "./classify.js";
 import { readStarlightFile, splitPage } from "./frontMatter.js";
@@ -42,6 +43,8 @@ export type RenameReport = {
   actions: ExportAction[];
   /** Every line of `astro.config.*` and of the Markdown files under the docs folder that holds the old slug as text. Empty in a dry run. */
   references: Array<{ file: string; line: number; text: string }>;
+  /** The scan's warnings (a skipped other-locale folder, a symbolic link, a file that is not regular and the like), the same in a dry run. */
+  warnings: FileMessage[];
   /** A reminder that old URLs need a redirect and that sidebar entries are not edited. */
   reminder: string;
 };
@@ -295,10 +298,11 @@ function searchReferences(root: string, layout: StarlightLayout, slug: string): 
  *
  * @param ctx engine context; the database step is core's licence-guarded `saveDraft` and `publish`.
  * @param input the project root, layout, old and new slug, and the optional `dryRun`.
- * @returns the moves (planned in a dry run, which stops after planning), the references to the old slug, and a
- * reminder about redirects.
+ * @returns the moves (planned in a dry run, which stops after planning), the references to the old slug, the scan's
+ * warnings, and a reminder about redirects.
  * @throws {ValidationError} for a `to` that is not a derived-form slug, whose last segment starts with `_`, that
- * would leave the docs folder or sit in a locale folder; for an unknown `from`; for a duplicate slug; for a pending shared draft that does not hold `to`; for a change of the English file's folder when the page or any translation holds a relative file reference.
+ * would leave the docs folder or sit in a locale folder; for a project directory whose docs folder is absent, is a
+ * symbolic link or holds no source file (nothing, the database included, is written then); for an unknown `from`; for a duplicate slug; for a pending shared draft that does not hold `to`; for a change of the English file's folder when the page or any translation holds a relative file reference.
  * @throws {ConflictError} when a move target exists with different parsed content (the message names both files).
  * @throws {LicenceError} when core's licence guard refuses the database step.
  */
@@ -324,6 +328,12 @@ export async function renamePage(ctx: Ctx, input: RenameInput): Promise<RenameRe
 
   // (2) Plan every move; refuse a conflict, a pending shared draft and a folder change before any write.
   const scan = scanDocs(root, layout, ctx.config);
+  if (scan.sources.length === 0) {
+    const why = scan.warnings.length > 0 ? ` (${scan.warnings[0]!.message})` : "";
+    throw new ValidationError(
+      `rename: no source file found under ${layout.docsDir}${why}; a wrong project directory would rename only the database`,
+    );
+  }
   const plan = planMoves(root, layout, col, ctx.config.locales.source, from, to, scan);
   const step = dbStep(doc, to);
   const draft = doc.shared.draft;
@@ -345,7 +355,7 @@ export async function renamePage(ctx: Ctx, input: RenameInput): Promise<RenameRe
     }
   }
   const actions: ExportAction[] = plan.moves.map((m) => ({ action: "move", path: m.from, to: m.to, reason: "rename" }));
-  if (dryRun) return { dryRun, actions, references: [], reminder: REMINDER };
+  if (dryRun) return { dryRun, actions, references: [], warnings: scan.warnings, reminder: REMINDER };
 
   // (3) Database first.
   if (step !== "none") await applyDb(ctx, doc, from, to, step);
@@ -367,5 +377,5 @@ export async function renamePage(ctx: Ctx, input: RenameInput): Promise<RenameRe
   if (changed) writeManifest(root, next);
 
   // (6) References to the old slug.
-  return { dryRun, actions, references: searchReferences(root, layout, from), reminder: REMINDER };
+  return { dryRun, actions, references: searchReferences(root, layout, from), warnings: scan.warnings, reminder: REMINDER };
 }

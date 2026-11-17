@@ -234,6 +234,41 @@ describe("renamePage (spec 5.6)", () => {
     });
   });
 
+  test("a project root without the docs folder (or with a symlinked one) is refused, dry run included, and the database is unchanged", async () => {
+    await setup(async (_sql, ctx) => {
+      await twoLocales(ctx);
+      const version = (await docOf(ctx, "guides/old")).shared.published!.version;
+      const wrong = project({ "README.md": "nothing here\n" });
+      for (const dryRun of [true, false]) {
+        await expect(ren(ctx, wrong, "guides/old", "guides/new", { dryRun })).rejects.toMatchObject({
+          name: "ValidationError", message: expect.stringContaining(`no source file found under ${D}`),
+        });
+      }
+      // The docs folder is a link: the warning of the scan is carried into the message.
+      const linked = project({ "real/a.md": page("A") });
+      fs.mkdirSync(path.join(linked, "src/content"), { recursive: true });
+      fs.symlinkSync(path.join(linked, "real"), path.join(linked, D));
+      await expect(ren(ctx, linked, "guides/old", "guides/new")).rejects.toMatchObject({
+        name: "ValidationError", message: expect.stringContaining("symbolic link"),
+      });
+      expect(await getDocument(ctx, { collection: "docs", slug: "guides/new" })).toBeNull();
+      const doc = await docOf(ctx, "guides/old");
+      expect(doc.shared.published!.version).toBe(version);
+      expect(doc.shared.draft).toBeNull();
+    });
+  });
+
+  test("the report carries the scan's warnings, in a dry run as well", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = await twoLocales(ctx);
+      put(root, `${D}/fr/x.md`, page("Fr"));
+      const dry = await ren(ctx, root, "guides/old", "guides/new", { dryRun: true });
+      expect(dry.warnings).toEqual([expect.objectContaining({ file: `${D}/fr` })]);
+      const r = await ren(ctx, root, "guides/old", "guides/new");
+      expect(r.warnings).toEqual(dry.warnings);
+    });
+  });
+
   test("references lists each line of astro.config and of Markdown under docsDir that holds the old slug; the reminder mentions redirects", async () => {
     await setup(async (_sql, ctx) => {
       const root = await twoLocales(ctx);
