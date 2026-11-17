@@ -70,6 +70,11 @@ export type StarlightImportDetails = {
   unsupported: string[];
 };
 
+/**
+ * What `importFolder` did (or, with `starlight.dryRun`, would do): one outcome per file, the warnings and the errors
+ * (a file with an error is left out of the run and the run goes on), and in the Starlight mode the `starlight`
+ * details.
+ */
 export type ImportReport = {
   files: FileOutcome[];
   warnings: FileMessage[];
@@ -162,6 +167,22 @@ function fieldOf(col: Collection, name: string): Field {
   return col.fields[name]!;
 }
 
+/**
+ * Imports Markdown or MDX files into documents. Without `input.starlight` it is the generic import of a
+ * `<locale>/<collection>/...` folder: the files are saved as drafts and published only with `publish`. With
+ * `input.starlight` it is the Starlight mode (spec 5.3 to 5.6): the project root's docs folder is scanned, the English
+ * pages are created, updated, published and (with `prune`) soft-deleted, and the locale files are imported as
+ * translations: a day-one translation is saved untracked and published, a later hand edit is saved as a human draft
+ * and published only with `publish`, and a translation that lacks a field English has is never published.
+ *
+ * @param ctx engine context; the licence-guarded writes check the licence and the actor.
+ * @param input `dir` is the import folder, or the Starlight project root when `starlight` is set; `publish` publishes
+ * the saved drafts; `starlight` carries the layout and the Starlight flags.
+ * @returns the per-file outcomes, warnings and errors; the Starlight mode adds the stop, pruned slugs and the like.
+ * @throws {ValidationError} when the directory is missing; in the Starlight mode also for an unknown collection,
+ * a run that found no source file, or `prune` while a source entry could not be read.
+ * @throws {LicenceError} when the evaluation has ended without a key (the run aborts at the first write).
+ */
 export async function importFolder(ctx: Ctx, input: ImportInput): Promise<ImportReport> {
   if (input.starlight !== undefined) return importStarlight(ctx, { ...input, starlight: input.starlight });
   const dir = input.dir;

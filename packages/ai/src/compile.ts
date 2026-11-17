@@ -12,7 +12,8 @@ export type CompileInput = {
 export type CompileReport = { enqueue: EnqueueReport; worker: WorkerReport; pendingJobs: number };
 
 /**
- * Spec 9.3's `compile`: queues every stale or missing translation in scope, then runs one worker pass over exactly that
+ * Spec 9.3's `compile`: queues every stale or missing translation in scope (and, with `includeUntracked`, the
+ * `untracked` ones: target values that record no source hash), then runs one worker pass over exactly that
  * scope with `budgetUsd` as the run budget. `pendingJobs` is what is still QUEUED in the scope afterwards (jobs over the
  * run budget or the monthly caps, and jobs backed off after an error). Licence-guarded; a `LicenceError` from the
  * worker rejects the call and the partial report is lost.

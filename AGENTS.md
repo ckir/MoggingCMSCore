@@ -79,7 +79,8 @@ pnpm --filter @mogging/cli dev <command> --config /abs/path/mogging.config.ts   
 - **AI pipeline (`packages/ai`; the design spec has the full implementation notes):**
   - no LLM/provider call inside a database transaction;
   - one lock order everywhere: `ai_budgets` (global first), then the `ai_jobs` row, then `documents` (through
-    `recordAiDraft`);
+    `recordAiDraft`), then the collection slug lock (a transaction-scoped advisory lock taken after the `documents`
+    rows of the same transaction, `packages/core/src/documents/slugGuard.ts`);
   - jobs are claimed with `FOR UPDATE SKIP LOCKED` and leases;
   - leases, back-off and budget months use the **database clock**, not the host's;
   - the AI SDK is called with `maxRetries: 0`, so every attempt is counted and paid once.
@@ -101,7 +102,7 @@ pnpm --filter @mogging/cli dev <command> --config /abs/path/mogging.config.ts   
 
 - `docs/superpowers/specs/2026-11-11-moggingcms-core-design.md` is the authoritative engine design. Code comments cite
   it as "spec N.N".
-- Plans live in `docs/superpowers/plans/`. The Starlight integration spec is a design only, and nothing implements it.
+- Plans live in `docs/superpowers/plans/`. The Starlight integration spec is implemented in part: plan 6a built the SDK half (the core slug guard and `untracked` saves, `includeUntracked` in `ai`, the Starlight mode of `markdown`'s import, export and `renamePage`), and plan 6b (the CLI commands, the `@mogging/starlight` package, the template and CI) is pending.
 - `TODO.md` holds tracked debt and accepted limits. Some items are deliberate decisions, not bugs. For example, aborted
   provider calls record no spend, and tests must not pin that behaviour with a spend assertion. Read the item before
   "fixing" one.

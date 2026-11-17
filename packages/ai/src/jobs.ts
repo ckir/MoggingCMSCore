@@ -115,7 +115,9 @@ type Pair = {
 };
 
 /**
- * Queues one job per (document, locale) with stale or missing translatable fields (spec 8.1, 8.2). Licence-guarded.
+ * Queues one job per (document, locale) with stale or missing translatable fields (spec 8.1, 8.2); with
+ * `includeUntracked` it also queues the fields whose target value records no source hash (`untracked`, such as
+ * day-one translations imported from files). Licence-guarded.
  * Reads (sync state, one getDocument per document, the glossary once per locale) happen first; every cancel and
  * insert then runs in one transaction. Takes no budget lock.
  */

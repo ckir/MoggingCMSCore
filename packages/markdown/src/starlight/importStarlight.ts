@@ -649,7 +649,8 @@ async function applyLocales(plan: Plan, lp: LocalePlan): Promise<void> {
 }
 
 /**
- * The Starlight mode of `importFolder` (spec 5.3 to 5.6) for the source (English) pages. It is plan-then-apply: the
+ * The Starlight mode of `importFolder` (spec 5.3 to 5.6): the source (English) pages first, then the locale files.
+ * It is plan-then-apply: the
  * plan reads the files and the collection's documents (a page of documents at a time, never per file) and computes
  * every outcome; the apply writes one transaction per page, then prunes. English is always published. A `dryRun`
  * returns the plan's report and writes nothing. The locale files follow in a second plan-then-apply pass: day-one

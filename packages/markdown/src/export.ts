@@ -172,6 +172,19 @@ function bodyMode(col: Collection, ...datas: Array<Record<string, unknown>>): "m
   return "md";
 }
 
+/**
+ * Writes the published documents as Markdown or MDX files. Without `input.starlight` it is the generic export to
+ * `<locale>/<collection>/...` files. With `input.starlight` it is the Starlight mode (spec 5.4): it writes only the
+ * target locales' files of the docs folder (never the English pages), keeps files that already follow English,
+ * leaves hand work and pending files untouched, removes only the files its manifest lists, and reports what the
+ * operator must look at under `starlight.attention`. A dry run plans the actions and writes nothing.
+ *
+ * @param ctx engine context (reads only).
+ * @param input `dir` is the output folder, or the Starlight project root when `starlight` is set; `collections` and
+ * `locales` narrow the run; `starlight` carries the layout and the flags.
+ * @returns the files written, the warnings, and in the Starlight mode the actions and the attention list.
+ * @throws {ValidationError} in the Starlight mode when the project directory is missing or the layout names an unknown collection.
+ */
 export async function exportFolder(ctx: Ctx, input: ExportInput): Promise<ExportReport> {
   if (input.starlight !== undefined) return exportStarlight(ctx, { ...input, starlight: input.starlight });
   const { config } = ctx;
