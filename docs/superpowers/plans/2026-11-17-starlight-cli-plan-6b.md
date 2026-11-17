@@ -1140,6 +1140,8 @@ bulk publish of approved drafts would help large sites).
   asserts the old files are gone. The Command Verifier found every gate filter matches exactly its task's files
   (vitest 5.1.0 `filterTestFiles` is a case-insensitive substring of `test/<name>`).
 
+- Owner ruling (2026-11-17): plan accepted after round 5 (the cap is round 6), with subagent-driven execution.
+
 ## Stand-downs
 
 - DISCARDED-BELOW-FLOOR: a `trackFields` failure on document k of n in `track --collection` leaves k-1 documents tracked
