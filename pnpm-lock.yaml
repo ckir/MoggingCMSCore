@@ -110,6 +110,9 @@ importers:
       '@types/mdast':
         specifier: 4.0.4
         version: 4.0.4
+      github-slugger:
+        specifier: 2.0.0
+        version: 2.0.0
       mdast-util-directive:
         specifier: 3.1.0
         version: 3.1.0
@@ -673,6 +676,9 @@ packages:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
+
+  github-slugger@2.0.0:
+    resolution: {integrity: sha512-IaOQ9puYtjrkq7Y0Ygl9KDZnrf/aiUJYUpVf89y8kyaxbRG7Y1SrX/jaumrv81vc61+kiMempujsM3Yw7w5qcw==}
 
   is-alphabetical@2.0.1:
     resolution: {integrity: sha512-FWyyY60MeTNyeSRpkM2Iry0G9hpr7/9kD40mD/cGQEuilcZYS4okz8SN2Q6rLCJ8gbCt6fN+rC+6tMGS99LaxQ==}
@@ -1477,6 +1483,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  github-slugger@2.0.0: {}
 
   is-alphabetical@2.0.1: {}
 

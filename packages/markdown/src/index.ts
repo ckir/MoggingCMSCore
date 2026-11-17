@@ -11,3 +11,5 @@ export { importFolder } from "./import.js";
 export type { ImportInput, FileOutcome, FileMessage, ImportReport } from "./import.js";
 export { REJECTION_ORDER, restoreDraft, sentinelize } from "./sentinel.js";
 export type { RejectionCode, SentinelOriginal, SentinelPrepared, RestoreResult } from "./sentinel.js";
+export { defineStarlightLayout } from "./starlight/layout.js";
+export type { StarlightPathEntry, StarlightLayoutInput, StarlightLayout, LayoutEntry } from "./starlight/layout.js";
