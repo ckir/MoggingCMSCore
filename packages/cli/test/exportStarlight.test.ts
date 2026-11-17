@@ -164,4 +164,18 @@ export default defineConfig({ integrations: [starlight({ title: "Docs", locales:
       expect(bad.err).toContain('unknown locale "en_US"');
     });
   });
+
+  test("run from a subfolder with --config, export writes under the config's folder, not the working directory", async () => {
+    await withDb(async (sql) => {
+      const root = starlightProject({ [`${D}/a.md`]: page("Intro"), [`${D}/de/a.md`]: page("Einleitung") });
+      expect((await go(sql, root, ["import"])).code).toBe(0);
+      rmSync(join(root, D, "de", "a.md"));
+      const cwd = join(root, D);
+      const r = await go(sql, root, ["export", "--config", join(root, "mogging.config.ts")], cwd);
+      expect(r.code).toBe(0);
+      expect(readFileSync(join(root, D, "de", "a.md"), "utf8")).toContain("Einleitung");
+      expect(existsSync(join(cwd, D))).toBe(false);
+      expect(existsSync(join(root, ".mogging", "manifest.json"))).toBe(true);
+    });
+  });
 });

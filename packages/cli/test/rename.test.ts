@@ -129,5 +129,21 @@ describe("mogging rename", () => {
     expect(await run(["help"], t)).toBe(0);
     expect(t.stdout()).toContain("rename");
   });
+
+  test("run from a subfolder with --config, rename works on the config's folder, not the working directory", async () => {
+    await withDb(async (sql) => {
+      const root = starlightProject({
+        [`${D}/guides/a.md`]: page("Intro"),
+        [`${D}/de/guides/a.md`]: page("Einleitung"),
+      });
+      expect((await go(sql, root, ["import"])).code).toBe(0);
+      const t = starlightDeps(sql, root, { cwd: join(root, "src") });
+      const code = await run(["rename", "guides/a", "guides/b", "--config", join(root, "mogging.config.ts")], t);
+      expect(code).toBe(0);
+      expect(existsSync(join(root, D, "guides/b.md"))).toBe(true);
+      expect(existsSync(join(root, D, "de/guides/b.md"))).toBe(true);
+      expect(existsSync(join(root, D, "guides/a.md"))).toBe(false);
+    });
+  });
 });
 
