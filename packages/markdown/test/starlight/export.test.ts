@@ -687,4 +687,67 @@ describe("exportFolder, Starlight mode", () => {
       expect(manifestOf(root)[0]).toEqual(stray);
     });
   });
+  test("extension change: a listed behind file is refreshed under the new extension; a listed hand-work file is left and in attention", async () => {
+    await setup(async (_sql, ctx) => {
+      const behind = docsProject({ "a.md": page("A"), "de/a.md": page("Hallo", "", "Welt") });
+      await imp(ctx, behind);
+      await run(ctx, behind);
+      await translate(ctx, "a", "de", { title: "Neu", body: md("Neuer Text") });
+      fs.renameSync(abs(behind, `${D}/a.md`), abs(behind, `${D}/a.mdx`));
+      const r = await run(ctx, behind);
+      expect(read(behind, `${D}/de/a.mdx`)).toBe("---\ntitle: Neu\n---\nNeuer Text\n");
+      expect(exists(behind, `${D}/de/a.md`)).toBe(false);
+      expect(actionFor(r, "write", `${D}/de/a.mdx`)).toMatchObject({ reason: "behind" });
+      expect(actionFor(r, "remove", `${D}/de/a.md`)).toBeDefined();
+      expect(r.warnings.some((w) => w.file === `${D}/de/a.mdx` && /behind/.test(w.message))).toBe(true);
+      expect(manifestPaths(behind)).toEqual([`${D}/de/a.mdx`]);
+      expect(r.starlight!.attention).toEqual([]);
+
+      const hand = docsProject({ "a.md": page("A"), "de/a.md": page("Hallo", "", "Welt") });
+      await imp(ctx, hand);
+      await run(ctx, hand);
+      put(hand, `${D}/de/a.md`, page("Anders", "", "Welt"));
+      fs.renameSync(abs(hand, `${D}/a.md`), abs(hand, `${D}/a.mdx`));
+      const r2 = await run(ctx, hand);
+      expect(read(hand, `${D}/de/a.md`)).toBe(page("Anders", "", "Welt"));
+      expect(exists(hand, `${D}/de/a.mdx`)).toBe(false);
+      expect(attentionFiles(r2)).toEqual([`${D}/de/a.md`]);
+      expect(manifestPaths(hand)).toEqual([]);
+    });
+  });
+
+  test("a crash after the old file was removed loses nothing: the next run writes the new file and drops the old entry", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = docsProject({ "a.md": page("A"), "de/a.md": page("Hallo", "", "Welt") });
+      await imp(ctx, root);
+      await run(ctx, root);
+      fs.renameSync(abs(root, `${D}/a.md`), abs(root, `${D}/a.mdx`));
+      // The old file is removed (unlink), then the write's rename fails.
+      vi.spyOn(fs, "renameSync").mockImplementation(() => { throw new Error("disk full"); });
+      await expect(run(ctx, root)).rejects.toThrow("disk full");
+      vi.restoreAllMocks();
+      expect(exists(root, `${D}/de/a.md`)).toBe(false);
+      expect(exists(root, `${D}/de/a.mdx`)).toBe(false);
+      expect(Object.keys(readTree(root)).filter((f) => f.endsWith(".mogging-tmp"))).toEqual([]);
+      expect(manifestPaths(root)).toEqual([`${D}/de/a.md`]); // the interrupted run wrote no manifest
+
+      const r = await run(ctx, root);
+      expect(read(root, `${D}/de/a.mdx`)).toBe("---\ntitle: Hallo\n---\nWelt\n");
+      expect(actionFor(r, "write", `${D}/de/a.mdx`)).toBeDefined();
+      expect(manifestPaths(root)).toEqual([`${D}/de/a.mdx`]);
+      expect(r.starlight!.attention).toEqual([]);
+    });
+  });
+
+  test("a dry run says a leftover would be removed", async () => {
+    await setup(async (_sql, ctx) => {
+      const root = docsProject({ "a.md": page("A"), "de/a.md": page("Hallo", "", "Welt") });
+      await imp(ctx, root);
+      put(root, `${D}/de/a.md.0a1b.mogging-tmp`, "half");
+      const dry = await run(ctx, root, { dryRun: true });
+      expect(dry.warnings.find((w) => w.file === `${D}/de/a.md.0a1b.mogging-tmp`)!.message).toMatch(/would be removed/);
+      const real = await run(ctx, root);
+      expect(real.warnings.find((w) => w.file === `${D}/de/a.md.0a1b.mogging-tmp`)!.message).toMatch(/; removed$/);
+    });
+  });
 });

@@ -91,6 +91,9 @@ type Run = {
   manifest: Map<string, ManifestEntry>;
   /** Entries that fail the layout check: ignored for every decision, carried over unchanged (spec 5.4, BS-2). */
   ignored: ManifestEntry[];
+  /** The paths the manifest listed at the start of the run, by `<locale>\0<slug>`. */
+  listedBySlot: Map<string, string[]>;
+  dryRun: boolean;
 };
 
 const act = (run: Run, action: ExportAction["action"], p: string, reason: string, to?: string): void => {
@@ -326,6 +329,25 @@ function guard(run: Run, rels: readonly string[]): string | null {
   return null;
 }
 
+/** Moves `ex` to `target` (a name that differs only by letter case) and forgets the old path's manifest entry. */
+function planCaseMove(run: Run, from: string, target: string): void {
+  run.steps.push({ t: "move", from, to: target });
+  act(run, "move", from, "the English file's name differs only by letter case", target);
+  run.manifest.delete(from);
+}
+
+/**
+ * Lists `entry` as the one entry of its (slug, locale) slot: every other entry the manifest listed for the same slug
+ * and locale was replaced or moved (or its file is gone after an interrupted replace), so it is dropped. Slots the
+ * run does not evaluate keep their entries.
+ */
+function adopt(run: Run, entry: ManifestEntry): void {
+  for (const p of run.listedBySlot.get(`${entry.locale}\0${entry.slug}`) ?? []) {
+    if (p !== entry.path) run.manifest.delete(p);
+  }
+  run.manifest.set(entry.path, entry);
+}
+
 /** Plans one slot: classification report, completeness, keep test, path reconciliation, render, self-check. */
 function decide(run: Run, slot: Slot, sourceLocale: string): void {
   const { layout } = run;
@@ -368,9 +390,13 @@ function decide(run: Run, slot: Slot, sourceLocale: string): void {
   }
   if (ex !== null && relation !== "same") {
     const listed = run.manifest.get(ex.path);
+    // Spec 5.4: a file under another extension is "the same file" when the manifest lists it and it classifies as
+    // ours: its content is in the database, so `published` and `behind` both qualify. A name that differs beyond
+    // case needs no listing when the file is `published` (day-one adoption).
+    const isListed = listed !== undefined && listed.locale === slot.locale && listed.slug === slot.slug;
     const ours = relation === "case"
       ? ex.cls === "published" || ex.cls === "behind"
-      : ex.cls === "published" && (relation === "name" || (listed !== undefined && listed.locale === slot.locale && listed.slug === slot.slug));
+      : (ex.cls === "published" && (relation === "name" || isListed)) || (ex.cls === "behind" && isListed);
     if (!ours) {
       const why = `${ex.path} is a ${ex.cls} file under another name than ${targetRel}; both are left`;
       act(run, "skip", ex.path, "kept under its own name");
@@ -395,13 +421,9 @@ function decide(run: Run, slot: Slot, sourceLocale: string): void {
       keep = false;
     }
     if (keep) {
-      if (relation === "case") {
-        run.steps.push({ t: "move", from: ex.path, to: targetRel });
-        act(run, "move", ex.path, "the English file's name differs only by letter case", targetRel);
-        run.manifest.delete(ex.path);
-      }
+      if (relation === "case") planCaseMove(run, ex.path, targetRel);
       act(run, "keep", targetRel, "published, equal to what export writes");
-      run.manifest.set(targetRel, entryFor(ex.bytes));
+      adopt(run, entryFor(ex.bytes));
       return;
     }
   }
@@ -427,17 +449,19 @@ function decide(run: Run, slot: Slot, sourceLocale: string): void {
     reason = "differs from what export writes";
   }
   if (ex !== null && relation === "case") {
-    run.steps.push({ t: "move", from: ex.path, to: targetRel });
-    act(run, "move", ex.path, "the English file's name differs only by letter case", targetRel);
-    run.manifest.delete(ex.path);
+    planCaseMove(run, ex.path, targetRel);
   } else if (ex !== null && relation !== "same") {
+    // Remove first, then write: with the write first, a crash between the two leaves a twin of one slug that the
+    // scan marks as a collision, and no run could settle it without the operator. Removing first can lose nothing,
+    // because the old file is `published` or `behind` (its content is in the database): after a crash the next run
+    // finds no file and writes the current published head again.
     run.steps.push({ t: "remove", path: ex.path });
     act(run, "remove", ex.path, `replaced by ${targetRel}`);
     run.manifest.delete(ex.path);
   }
   run.steps.push({ t: "write", path: targetRel, text: rendered.text });
   act(run, "write", targetRel, reason);
-  run.manifest.set(targetRel, entryFor(rendered.text));
+  adopt(run, entryFor(rendered.text));
 }
 
 /**
@@ -475,7 +499,7 @@ export async function exportStarlight(
 
   const run: Run = {
     root, docsAbs: path.resolve(root, ...layout.docsDir.split("/")), layout, col,
-    actions: [], attention: [], warnings: [], steps: [], manifest: new Map(), ignored: [],
+    actions: [], attention: [], warnings: [], steps: [], manifest: new Map(), ignored: [], listedBySlot: new Map(), dryRun,
   };
   const finish = (files: string[]): ExportReport => {
     files.sort(byText);
@@ -500,7 +524,11 @@ export async function exportStarlight(
   if (mf.warning !== null) warn(run, MANIFEST_PATH, mf.warning);
   for (const e of mf.entries) {
     const bad = entryProblem(layout, e);
-    if (bad === null) run.manifest.set(e.path, e);
+    if (bad === null) {
+      run.manifest.set(e.path, e);
+      const k = `${e.locale}\0${e.slug}`;
+      run.listedBySlot.set(k, [...(run.listedBySlot.get(k) ?? []), e.path]);
+    }
     else {
       run.ignored.push(e);
       warn(run, e.path, `manifest entry ignored: ${bad}`);
@@ -517,7 +545,7 @@ export async function exportStarlight(
   for (const p of leftovers) {
     run.steps.push({ t: "remove", path: p });
     act(run, "remove", p, "leftover of an interrupted run");
-    warn(run, p, "leftover temporary file of an interrupted run; removed");
+    warn(run, p, `leftover temporary file of an interrupted run; ${dryRun ? "would be removed" : "removed"}`);
   }
 
   // Locales this run evaluates.
