@@ -2,11 +2,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { getSyncState, migrate, publish, saveDraft } from "@mogging/core";
+import { createDocument, getSyncState, migrate, publish, saveDraft } from "@mogging/core";
 import type { Sql } from "postgres";
 import { run } from "../src/run.js";
 import { withTestDb } from "./db.js";
 import { config, coreCtx, publishedDoc, testDeps } from "./fixtures.js";
+import { starlightConfig, starlightDeps, starlightProject } from "./starlightFixtures.js";
 
 /** A per-test schema with the migrations applied. */
 const withDb = (fn: (sql: Sql) => Promise<void>) =>
@@ -247,6 +248,49 @@ describe("mogging track --collection", () => {
       expect(await run(["track", "--collection", "nope", "--locale", "de"], t)).toBe(2);
       expect(t.stderr()).toContain('unknown collection "nope" (declared: docs)');
       expect(connected).toBe(false);
+    });
+  });
+});
+
+describe("mogging track --collection --locale", () => {
+  test("a Starlight folder spelling (zh-cn) is normalized to the declared tag zh-CN in the lines and in --json", async () => {
+    await withDb(async (sql) => {
+      const root = starlightProject({});
+      const ctx = { sql, config: starlightConfig, actor: "test" };
+      const { id: docId } = await createDocument(ctx, { collection: "docs" });
+      await saveDraft(ctx, { docId, locale: "shared", data: { slug: "intro" } });
+      await saveDraft(ctx, { docId, locale: "en", data: { title: "Intro" } });
+      await publish(ctx, { docId, locale: "shared" });
+      await publish(ctx, { docId, locale: "en" });
+      await saveDraft(ctx, { docId, locale: "zh-CN", data: { title: "介绍" }, untracked: true });
+      await publish(ctx, { docId, locale: "zh-CN" });
+
+      const text = starlightDeps(sql, root);
+      expect(await run(["track", "--collection", "docs", "--locale", "zh-cn", "--dry-run"], text)).toBe(0);
+      expect(text.stdout()).toBe("dry run: nothing was written\nwould track docs/intro zh-CN title\n");
+
+      const json = starlightDeps(sql, root);
+      expect(await run(["track", "--collection", "docs", "--locale", "zh-cn", "--json"], json)).toBe(0);
+      const doc = JSON.parse(json.stdout()) as { data: { tracked: Array<{ locale: string; fields: string[] }> } };
+      expect(doc.data.tracked.map((d) => d.locale)).toEqual(["zh-CN"]);
+      expect(doc.data.tracked[0]!.fields).toEqual(["title"]);
+    });
+  });
+
+  test("an undeclared, a source and a malformed locale are exit 2 before connecting", async () => {
+    await withDb(async (sql) => {
+      for (const [locale, reason] of [
+        ["it", "is not declared in the config"],
+        ["en", "is the source locale"],
+        ["not a locale", ""],
+      ] as const) {
+        let connected = false;
+        const t = testDeps(sql, { connect: () => { connected = true; throw new Error("connected"); } });
+        expect(await run(["track", "--collection", "docs", "--locale", locale], t)).toBe(2);
+        expect(t.stderr()).toContain(`track: --locale ${locale}: `);
+        expect(t.stderr()).toContain(reason);
+        expect(connected).toBe(false);
+      }
     });
   });
 });

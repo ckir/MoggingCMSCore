@@ -1,4 +1,5 @@
-import { getDocuments, getSyncState, trackFields } from "@mogging/core";
+import { getDocuments, getSyncState, normalizeLocale, trackFields } from "@mogging/core";
+import type { MoggingConfig } from "@mogging/core";
 import { resolveTarget } from "../target.js";
 import { UsageError } from "../types.js";
 import type { CommandEnv, CommandResult, CommandSpec, Flags } from "../types.js";
@@ -65,6 +66,30 @@ async function trackCollection(env: CommandEnv, collection: string, locale: stri
   return { data: { tracked }, lines };
 }
 
+/**
+ * The canonical tag of a `--collection` run's `--locale`: normalized (so Starlight's folder spelling `zh-cn` becomes the
+ * declared `zh-CN`) and required to be a declared target locale.
+ *
+ * @param raw the `--locale` value as typed.
+ * @param config the loaded config.
+ * @returns the canonical tag.
+ * @throws {UsageError} `track: --locale <raw>: <reason>` when it is malformed, undeclared or the source locale.
+ */
+function targetLocale(raw: string, config: MoggingConfig): string {
+  let tag: string;
+  try {
+    tag = normalizeLocale(raw);
+  } catch (e) {
+    throw new UsageError(`track: --locale ${raw}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  const { source, chains } = config.locales;
+  if (tag === source) throw new UsageError(`track: --locale ${raw}: "${tag}" is the source locale, which has nothing to track`);
+  if (!Object.hasOwn(chains, tag)) {
+    throw new UsageError(`track: --locale ${raw}: "${tag}" is not declared in the config (declared: ${Object.keys(chains).join(", ")})`);
+  }
+  return tag;
+}
+
 export const trackSpec: CommandSpec = {
   name: "track",
   summary: "assert that translated fields are in sync with the source",
@@ -99,11 +124,14 @@ export const trackSpec: CommandSpec = {
         `unknown collection "${name}" (declared: ${loaded.config.collections.map((c) => c.name).join(", ")})`,
       );
     }
+    if (typeof name === "string" && typeof flags.locale === "string") targetLocale(flags.locale, loaded.config);
   },
   async run(env) {
     const { ctx } = env.project;
     const locale = env.flags.locale as string; // validate() guarantees it
-    if (typeof env.flags.collection === "string") return trackCollection(env, env.flags.collection, locale);
+    if (typeof env.flags.collection === "string") {
+      return trackCollection(env, env.flags.collection, targetLocale(locale, env.project.ctx.config));
+    }
     const target = await resolveTarget(ctx, env.positionals[0]!);
     const label = `${target.collection}/${target.slug ?? target.docId}`;
 
