@@ -129,3 +129,19 @@ test("json is a shared opaque kind", () => {
   expect(cfg({ meta: object({ a: json() }, { localized: true }) })).toThrow(/json cannot be localized/);
   expect(cfg({ meta: json({ body: true }) })).toThrow(/only a richText field can be the body/);
 });
+
+test("translate: false is a text option", () => {
+  expect(text({ translate: false })).toHaveProperty("translate", false);
+  expect(text()).not.toHaveProperty("translate");
+  expect(text({ translate: true })).not.toHaveProperty("translate");
+  const cfg = (fields: Record<string, Field>) => () =>
+    defineConfig({
+      collections: [defineCollection("p", { slug: slug(), body: richText({ localized: true, body: true }), ...fields })],
+      locales,
+    });
+  expect(cfg({ link: text({ localized: true, translate: false }) })).not.toThrow();
+  expect(cfg({ n: number({ translate: false }) })).toThrow(ValidationError);
+  expect(cfg({ n: number({ translate: false }) })).toThrow(/translate: false is only valid on text/);
+  expect(cfg({ n: list(number({ translate: false }), { localized: true }) })).toThrow(/translate: false is only valid on text/);
+  expect(cfg({ o: object({ a: boolean({ translate: false }) }) })).toThrow(/p\.o\.a: translate: false is only valid on text/);
+});

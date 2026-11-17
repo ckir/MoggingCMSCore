@@ -373,3 +373,37 @@ describe("U+0000 (rule 0)", () => {
     if (!v.ok) expect(v.rejections).toContain("body: contains U+0000");
   });
 });
+
+describe("translate: false leaves", () => {
+  const hero = object({
+    title: text(), actions: list(object({ text: text(), link: text({ translate: false }) })),
+  }, { localized: true });
+  const source = { title: "T", actions: [{ text: "Go", link: "/start" }] };
+
+  test("prepareField wires the projection and keeps the full source", () => {
+    expect(prepareField("hero", hero, source)).toEqual({
+      kind: "value", field: "hero", source, wire: { title: "T", actions: [{ text: "Go" }] },
+    });
+  });
+
+  test("a draft without the leaf is accepted and returned completed from the source", () => {
+    const v = check("hero", hero, source, { title: "Ü", actions: [{ text: "Los" }] });
+    expect(v).toMatchObject({ ok: true, value: { title: "Ü", actions: [{ text: "Los", link: "/start" }] } });
+  });
+
+  test("a draft that changes the leaf is rejected", () => {
+    const v = check("hero", hero, source, { title: "Ü", actions: [{ text: "Los", link: "/x" }] });
+    expect(v).toMatchObject({ ok: false, rejections: ["hero: $.actions[0].link: non-text value changed"] });
+  });
+
+  test("a draft with a different list length is rejected, not completed", () => {
+    const v = check("hero", hero, source, { title: "Ü", actions: [{ text: "a" }, { text: "b" }] });
+    expect(v).toMatchObject({ ok: false, rejections: ["hero: $.actions: list length 2 expected 1"] });
+  });
+
+  test("U+0000 in the model's text is still refused", () => {
+    const v = check("hero", hero, source, { title: "Ü\u0000", actions: [{ text: "Los" }] });
+    expect(v).toMatchObject({ ok: false });
+    if (!v.ok) expect(v.rejections).toContain("hero: contains U+0000");
+  });
+});

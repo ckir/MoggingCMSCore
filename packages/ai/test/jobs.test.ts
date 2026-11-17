@@ -2,7 +2,8 @@ import { expect, test } from "vitest";
 import type { Sql } from "postgres";
 import type { LanguageModel } from "ai";
 import {
-  LicenceError, ValidationError, approve, createDocument, getDocument, publish, recordAiDraft, saveDraft,
+  LicenceError, ValidationError, approve, createDocument, defineCollection, defineConfig, getDocument, list, object, publish,
+  recordAiDraft, richText, saveDraft, text,
 } from "@mogging/core";
 import { markdownToTree } from "@mogging/markdown";
 import { cancelJobs, enqueueStale, listJobs, retryJobs } from "../src/jobs.js";
@@ -460,5 +461,45 @@ test("listJobs afterId returns the next page with no overlap", async () => {
     expect(second).toEqual(all.slice(2));
     expect((await listJobs(ctx, { afterId: all.at(-1)! })).jobs).toEqual([]);
     await expect(listJobs(ctx, { afterId: -1 })).rejects.toBeInstanceOf(ValidationError);
+  });
+});
+
+test("the enqueue estimate counts what is sent", async () => {
+  await withTestDb(async (sql) => {
+    await migrateAndSeed(sql);
+    const pages = defineCollection("pages", {
+      body: richText({ body: true }),
+      hero: object({
+        title: text(), actions: list(object({ text: text(), link: text({ translate: false }) })),
+      }, { localized: true }),
+      prev: object({ label: text(), link: text({ translate: false }) }, { localized: true }),
+    });
+    const base = ctxFor(sql, model);
+    const ctx: AiCtx = {
+      ...base, config: defineConfig({ collections: [pages], locales: { source: "en", chains: { de: ["en"] } } }),
+    };
+    const publishPage = async (link: string, prev?: unknown): Promise<string> => {
+      const { id } = await createDocument(ctx, { collection: "pages" });
+      await saveDraft(ctx, {
+        docId: id, locale: "en",
+        data: { hero: { title: "Welcome", actions: [{ text: "Go", link }] }, ...(prev === undefined ? {} : { prev }) },
+      });
+      await publish(ctx, { docId: id, locale: "en" });
+      return id;
+    };
+    const short = await publishPage("/a");
+    const long = await publishPage(`/${"very-long-link-".repeat(40)}`);
+    const withPrev = await publishPage("/a", { link: "/prev-only-a-link" });
+
+    const estimate = async (docId: string): Promise<number> => {
+      const r = await enqueueStale(ctx, { locales: ["de"], collection: "pages", docIds: [docId] });
+      expect(r.enqueued).toBe(1);
+      return r.estimateMicros;
+    };
+    const a = await estimate(short);
+    expect(a).toBeGreaterThan(0);
+    expect(await estimate(long)).toBe(a);
+    // `prev` holds no string leaf to translate, so it is not sent and adds nothing.
+    expect(await estimate(withPrev)).toBe(a);
   });
 });

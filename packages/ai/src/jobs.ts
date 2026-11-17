@@ -7,7 +7,7 @@ import { assertActor } from "./actor.js";
 import { priceFor, type AiCtx } from "./config.js";
 import { jobContext } from "./context.js";
 import { estimateRequest, planRequests } from "./estimate.js";
-import { isTranslatable } from "./fields.js";
+import { isTranslatable, stringLeaves, wireValue } from "./fields.js";
 import { listGlossary } from "./glossary.js";
 import { maxTemplateTokens } from "./prompt.js";
 import { getBudgets, scopesFor, type BudgetRow } from "./budget.js";
@@ -76,7 +76,15 @@ function estimateJob(
   const { contextChars, glossaryChars } = jobContext(ctx.ai, collection, doc, locale, fields, glossary);
   const templateTokens = maxTemplateTokens();
 
-  let candidates = fields.map((name) => ({ name, wire: source.data[name] }));
+  // What is sent: the wire projection of each value, and nothing for a value field with no string leaf to translate.
+  let candidates: Array<{ name: string; wire: unknown }> = [];
+  for (const name of fields) {
+    const field = Object.hasOwn(collection.fields, name) ? collection.fields[name] : undefined;
+    const wire = field && field.kind !== "richText" ? wireValue(field, source.data[name]) : source.data[name];
+    if (field && field.kind !== "richText" && stringLeaves(wire).length === 0) continue;
+    candidates.push({ name, wire });
+  }
+  const wireOf = new Map(candidates.map((c) => [c.name, c.wire]));
   for (;;) {
     const plan = planRequests({
       ai: ctx.ai, price, sourceLocale, targetLocale: locale, fields: candidates, contextChars, glossaryChars, templateTokens,
@@ -87,7 +95,7 @@ function estimateJob(
     }
     let micros = 0;
     for (const r of plan.requests) {
-      const translateChars = r.fields.reduce((n, f) => n + (JSON.stringify(source.data[f]) ?? "").length, 0);
+      const translateChars = r.fields.reduce((n, f) => n + (JSON.stringify(wireOf.get(f)) ?? "").length, 0);
       micros += estimateRequest({
         sourceLocale, targetLocale: locale, translateChars, contextChars: r.noContext ? glossaryChars : contextChars,
         templateTokens, price,

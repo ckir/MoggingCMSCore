@@ -3,11 +3,15 @@ export type FieldOptions = {
   fallback?: string[] | "none";
   body?: boolean;
   required?: boolean;
+  /** `false` on a `text` field keeps it out of AI translation: the leaf is copied from the source and never sent to the model. */
+  translate?: boolean;
 };
 
 type Base = {
   localized: boolean;
   fallback?: string[] | "none";
+  /** Present only when `false` (a text leaf the AI pipeline copies from the source instead of translating). */
+  translate?: false;
   body: boolean;
   required: boolean;
 };
@@ -31,6 +35,7 @@ function base(o: FieldOptions = {}): Base {
     required: o.required ?? false,
   };
   if (o.fallback !== undefined) b.fallback = o.fallback;
+  if (o.translate === false) b.translate = false;
   return b;
 }
 

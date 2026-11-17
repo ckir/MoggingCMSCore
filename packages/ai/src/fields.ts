@@ -6,7 +6,7 @@ type LeafKind = "text" | "richText" | "json" | "other";
 
 function leafKinds(field: Field, into: Set<LeafKind>): void {
   switch (field.kind) {
-    case "text": into.add("text"); return;
+    case "text": into.add(field.translate === false ? "other" : "text"); return;
     case "richText": into.add("richText"); return;
     case "json": into.add("json"); return;
     case "list": leafKinds(field.item, into); return;
@@ -25,11 +25,95 @@ function leafKinds(field: Field, into: Set<LeafKind>): void {
  */
 export function isTranslatable(field: Field): boolean {
   if (!field.localized) return false;
-  if (field.kind === "text" || field.kind === "richText") return true;
+  if (field.kind === "text") return field.translate !== false;
+  if (field.kind === "richText") return true;
   if (field.kind !== "list" && field.kind !== "object") return false;
   const kinds = new Set<LeafKind>();
   leafKinds(field, kinds);
   return kinds.has("text") && !kinds.has("richText") && !kinds.has("json");
+}
+
+/**
+ * The field as the model sees it: every `translate: false` text leaf removed, and every object or list left without a
+ * field removed with it. Null when no leaf remains. Non-text leaves (numbers, references, ...) stay, as before.
+ */
+export function wireField(field: Field): Field | null {
+  switch (field.kind) {
+    case "text": return field.translate === false ? null : field;
+    case "list": {
+      const item = wireField(field.item);
+      return item === null ? null : { ...field, item };
+    }
+    case "object": {
+      const fields: Record<string, Field> = {};
+      for (const [k, f] of Object.entries(field.fields)) {
+        const w = wireField(f);
+        if (w !== null) fields[k] = w;
+      }
+      return Object.keys(fields).length === 0 ? null : { ...field, fields };
+    }
+    default: return field;
+  }
+}
+
+/**
+ * The value projected onto `wireField(field)`. List items are never dropped (an item that projects to nothing becomes
+ * `{}`, a null item stays null), so list lengths match the source; only object keys are dropped: a key of a
+ * `translate: false` leaf, and a key whose non-empty object value projects to an empty one. Undefined when
+ * `wireField(field)` is null.
+ */
+export function wireValue(field: Field, value: unknown): unknown {
+  if (wireField(field) === null) return undefined;
+  if (value === null || value === undefined) return value;
+  switch (field.kind) {
+    case "list":
+      if (!Array.isArray(value)) return value;
+      return value.map((v) => (v === null ? null : wireValue(field.item, v)));
+    case "object": {
+      if (!isRecord(value)) return value;
+      const entries: Array<[string, unknown]> = [];
+      for (const [k, v] of Object.entries(value)) {
+        const sub = Object.hasOwn(field.fields, k) ? field.fields[k] : undefined;
+        if (sub === undefined) { entries.push([k, v]); continue; }
+        if (wireField(sub) === null) continue;
+        const projected = wireValue(sub, v);
+        if (isRecord(v) && Object.keys(v).length > 0 && isRecord(projected) && Object.keys(projected).length === 0) continue;
+        entries.push([k, projected]);
+      }
+      return Object.fromEntries(entries);
+    }
+    default: return value;
+  }
+}
+
+/**
+ * The model's draft completed from the source: the draft is compared with `wireValue(field, source)`, and where its
+ * list lengths and object keys agree, every `translate: false` leaf (and every subtree absent from the wire) is copied
+ * from the source at the same path, list items aligned by index. A null element stays null. Where they disagree the
+ * draft is returned unchanged, so `checkShape` rejects it.
+ */
+export function withFixedLeaves(field: Field, source: unknown, draft: unknown): unknown {
+  if (field.kind === "text" && field.translate === false) return source;
+  if (source === null || source === undefined || draft === null || draft === undefined) return draft;
+  switch (field.kind) {
+    case "list": {
+      if (!Array.isArray(source) || !Array.isArray(draft) || source.length !== draft.length) return draft;
+      return draft.map((d, i) => withFixedLeaves(field.item, source[i], d));
+    }
+    case "object": {
+      if (!isRecord(source) || !isRecord(draft)) return draft;
+      const wire = wireValue(field, source) as Record<string, unknown>;
+      if (!sameKeys(wire, draft)) return draft;
+      const entries: Array<[string, unknown]> = [];
+      for (const [k, s] of Object.entries(source)) {
+        if (!Object.hasOwn(wire, k)) { entries.push([k, s]); continue; }
+        const sub = Object.hasOwn(field.fields, k) ? field.fields[k] : undefined;
+        entries.push([k, sub === undefined ? draft[k] : withFixedLeaves(sub, s, draft[k])]);
+      }
+      return Object.fromEntries(entries);
+    }
+    default: return draft;
+  }
 }
 
 function fieldSchema(field: Field): z.ZodType {
@@ -100,6 +184,10 @@ function walk(field: Field, source: unknown, draft: unknown, path: string, out: 
   }
   switch (field.kind) {
     case "text":
+      if (field.translate === false) {
+        if (!isDeepStrictEqual(source, draft)) out.push(`${path}: non-text value changed`);
+        return;
+      }
       if (typeof draft !== "string") out.push(`${path}: expected text`);
       return;
     case "list": {

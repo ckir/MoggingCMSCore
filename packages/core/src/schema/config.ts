@@ -20,6 +20,22 @@ function containsJson(f: Field): boolean {
   return false;
 }
 
+/** The path (relative to `f`) of the first non-text field that declares `translate: false`, or null. */
+function badTranslateFalse(f: Field): string | null {
+  if (f.translate === false && f.kind !== "text") return "";
+  if (f.kind === "list") {
+    const inner = badTranslateFalse(f.item);
+    return inner === null ? null : `[]${inner}`;
+  }
+  if (f.kind === "object") {
+    for (const [k, sub] of Object.entries(f.fields)) {
+      const inner = badTranslateFalse(sub);
+      if (inner !== null) return `.${k}${inner}`;
+    }
+  }
+  return null;
+}
+
 export function defineConfig(c: {
   collections: Collection[];
   locales: { source: string; chains: Record<string, string[]> };
@@ -39,6 +55,10 @@ export function defineConfig(c: {
     for (const [fname, f] of Object.entries(col.fields)) {
       if (f.localized && containsJson(f)) {
         throw new ValidationError(`${col.name}.${fname}: json cannot be localized`);
+      }
+      const bad = badTranslateFalse(f);
+      if (bad !== null) {
+        throw new ValidationError(`${col.name}.${fname}${bad}: translate: false is only valid on text`);
       }
       if (f.kind === "slug" && f.localized) {
         throw new ValidationError(`${col.name}.${fname}: slug cannot be localized`);

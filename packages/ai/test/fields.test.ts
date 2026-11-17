@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vitest";
+import { z } from "zod";
 import {
-  boolean, dateTime, json, list, number, object, reference, richText, slug, text,
+  boolean, dateTime, json, list, number, object, reference, richText, slug, text, type Field,
 } from "@mogging/core";
 import { contextValues } from "../src/prompt.js";
-import { checkShape, isTranslatable, outputSchema, stringLeaves } from "../src/fields.js";
+import {
+  checkShape, isTranslatable, outputSchema, stringLeaves, withFixedLeaves, wireField, wireValue,
+} from "../src/fields.js";
 
 // Mirrors the posts fixture at packages/core/test/fixtures.ts:8-15.
 const posts = {
@@ -213,5 +216,89 @@ describe("json", () => {
     expect(isTranslatable(object({ t: text(), j: json() }, { localized: true }))).toBe(false);
     expect(checkShape(json(), { a: 1 }, { a: 1 })).toEqual([]);
     expect(checkShape(json(), { a: 1 }, { a: 2 })).toEqual(["$: non-text value changed"]);
+  });
+});
+
+describe("translate: false leaves", () => {
+  const hero = object({
+    title: text(),
+    actions: list(object({ text: text(), link: text({ translate: false }) })),
+  }, { localized: true });
+  const source = { title: "T", actions: [{ text: "Go", link: "/start" }] };
+
+  test("isTranslatable ignores a translate: false leaf", () => {
+    expect(isTranslatable(hero)).toBe(true);
+    expect(isTranslatable(text({ localized: true, translate: false }))).toBe(false);
+    expect(isTranslatable(list(text({ translate: false }), { localized: true }))).toBe(false);
+    expect(isTranslatable(object({ a: text({ translate: false }), n: number() }, { localized: true }))).toBe(false);
+  });
+
+  test("wireField removes the leaf and every emptied object or list", () => {
+    expect(wireField(text({ translate: false }))).toBeNull();
+    expect(wireField(object({ a: text({ translate: false }) }))).toBeNull();
+    expect(wireField(list(object({ a: text({ translate: false }) })))).toBeNull();
+    const w = wireField(hero) as Extract<Field, { kind: "object" }>;
+    expect(Object.keys(w.fields)).toEqual(["title", "actions"]);
+    const item = (w.fields.actions as Extract<Field, { kind: "list" }>).item as Extract<Field, { kind: "object" }>;
+    expect(Object.keys(item.fields)).toEqual(["text"]);
+  });
+
+  test("wireValue projects the value onto the wire field", () => {
+    expect(wireValue(hero, source)).toEqual({ title: "T", actions: [{ text: "Go" }] });
+  });
+
+  test("list items are never dropped: an item with nothing to translate becomes {}, a null stays null", () => {
+    expect(wireValue(hero, { title: "T", actions: [{ text: "a", link: "/b" }, { link: "/c" }] }))
+      .toEqual({ title: "T", actions: [{ text: "a" }, {}] });
+    expect(wireValue(hero, { title: "T", actions: [null, { text: "a", link: "/b" }] }))
+      .toEqual({ title: "T", actions: [null, { text: "a" }] });
+    expect(wireValue(list(object({ text: text(), link: text({ translate: false }) })), [{ text: "a", link: "/b" }, { link: "/c" }]))
+      .toEqual([{ text: "a" }, {}]);
+  });
+
+  test("withFixedLeaves copies the leaf back from the source", () => {
+    expect(withFixedLeaves(hero, source, { title: "Ü", actions: [{ text: "Los" }] }))
+      .toEqual({ title: "Ü", actions: [{ text: "Los", link: "/start" }] });
+  });
+
+  test("a null list element stays null and the next item is completed", () => {
+    const src = { title: "T", actions: [null, { text: "a", link: "/b" }] };
+    expect(withFixedLeaves(hero, src, { title: "x", actions: [null, { text: "b" }] }))
+      .toEqual({ title: "x", actions: [null, { text: "b", link: "/b" }] });
+  });
+
+  test("an object made only of fixed leaves is absent from the wire and comes back from the source", () => {
+    const card = object({
+      title: text(), image: object({ alt: text(), file: text({ translate: false }) }),
+    }, { localized: true });
+    const src = { title: "T", image: { file: "a.png" } };
+    expect(wireValue(card, src)).toEqual({ title: "T" });
+    expect(withFixedLeaves(card, src, { title: "Ü" })).toEqual({ title: "Ü", image: { file: "a.png" } });
+    const both = { title: "T", image: { alt: "A", file: "a.png" } };
+    expect(wireValue(card, both)).toEqual({ title: "T", image: { alt: "A" } });
+    expect(withFixedLeaves(card, both, { title: "Ü", image: { alt: "B" } }))
+      .toEqual({ title: "Ü", image: { alt: "B", file: "a.png" } });
+  });
+
+  test("where the draft disagrees with the wire value it is returned unchanged", () => {
+    const wrongLength = { title: "x", actions: [{ text: "a" }, { text: "b" }] };
+    expect(withFixedLeaves(hero, source, wrongLength)).toEqual(wrongLength);
+    const extraKey = { title: "x", actions: [{ text: "a" }], more: "m" };
+    expect(withFixedLeaves(hero, source, extraKey)).toEqual(extraKey);
+    expect(checkShape(hero, source, withFixedLeaves(hero, source, wrongLength))).toEqual([
+      "$.actions: list length 2 expected 1",
+    ]);
+  });
+
+  test("checkShape rejects a changed translate: false leaf", () => {
+    expect(checkShape(hero, source, { title: "Ü", actions: [{ text: "Los", link: "/x" }] }))
+      .toContain("$.actions[0].link: non-text value changed");
+    expect(checkShape(hero, source, { title: "Ü", actions: [{ text: "Los", link: "/start" }] })).toEqual([]);
+  });
+
+  test("outputSchema over the wire field has no translate: false key", () => {
+    const schema = outputSchema({ hero: wireField(hero)! });
+    expect(schema.safeParse({ fields: { hero: { title: "a", actions: [{ text: "b" }] } }, glossaryTermsUsed: [] }).success).toBe(true);
+    expect(JSON.stringify(z.toJSONSchema(schema))).not.toContain("link");
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { list, number, richText, text } from "@mogging/core";
+import { list, number, object, richText, text } from "@mogging/core";
 import { markdownToTree } from "@mogging/markdown";
 import {
   PROMPT_VERSION, buildPrompt, contextValues, maxTemplateTokens, templateTokens, type PromptRequest,
@@ -122,4 +122,15 @@ describe("contextValues", () => {
     const prefix = String(text1["title"]).slice(0, -" […]".length);
     expect(JSON.stringify({ title: `${prefix}y […]` }).length).toBeGreaterThan(40);
   });
+});
+
+test("context never carries translate: false leaves", () => {
+  const hero = object({ title: text(), link: text({ translate: false }) }, { localized: true });
+  const sharedHero = object({ label: text(), link: text({ translate: false }) });
+  const data = { hero: { title: "Welcome", link: "/start" }, only: "/x" };
+  const out = contextValues({ hero, only: text({ localized: true, translate: false }) }, data, 10_000);
+  expect(out).toEqual({ hero: { title: "Welcome" } });
+  expect(JSON.stringify(out)).not.toContain("/start");
+  const shared = contextValues({ hero: sharedHero }, { hero: { label: "L", link: "/start" } }, 10_000);
+  expect(shared).toEqual({ hero: { label: "L" } });
 });

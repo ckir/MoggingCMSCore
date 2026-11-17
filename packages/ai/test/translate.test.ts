@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { APICallError } from "ai";
 import type { MockLanguageModelV3 } from "ai/test";
 import type { Sql } from "postgres";
-import { ValidationError, defineCollection, text, type Collection, type DocumentRecord, type Snapshot } from "@mogging/core";
+import { ValidationError, defineCollection, list, object, text, type Collection, type DocumentRecord, type Snapshot } from "@mogging/core";
 import { markdownToTree } from "@mogging/markdown";
 import { defineAiConfig, type AiConfigInput, type AiCtx } from "../src/config.js";
 import { actualCostMicros, charsPerToken, fieldTokens } from "../src/estimate.js";
@@ -474,5 +474,78 @@ describe("resolveModel", () => {
     expect(r.modelId).toBe("vendor/model");
     expect(r.price).toEqual(PRICE);
     expect((r.model as { modelId: string }).modelId).toBe("vendor/model");
+  });
+});
+
+describe("translate: false leaves", () => {
+  const pages = defineCollection("pages", {
+    title: text({ localized: true }),
+    hero: object({
+      title: text(), actions: list(object({ text: text(), link: text({ translate: false }) })),
+    }, { localized: true }),
+    prev: object({ label: text(), link: text({ translate: false }) }, { localized: true }),
+  });
+  const pageDoc = (data: Record<string, unknown>): DocumentRecord => ({
+    ...docFixture({ locales: { en: { published: head(data), draft: null } } }), collection: "pages",
+  });
+  const runPage = async (fieldPaths: string[], data: Record<string, unknown>, outputs: MockOutput[]) => {
+    const model = mockModel(outputs);
+    const ctx = ctxFor(noSql, model);
+    const outcome = await translateJob(ctx, {
+      job: jobFixture({ collection: "pages", fieldPaths }), collection: pages, doc: pageDoc(data), glossary: [],
+      model: resolveModel(ctx.ai, "posts"), signalFor: () => new AbortController().signal,
+    });
+    return { outcome, model };
+  };
+  const heroSource = { title: "T", actions: [{ text: "Go", link: "/start" }] };
+
+  test("translate: false leaves never reach the model and come back from the source", async () => {
+    const { outcome, model } = await runPage(["hero"], { hero: heroSource }, [
+      { fields: { hero: { title: "Ü", actions: [{ text: "Los" }] } }, glossaryTermsUsed: [] },
+    ]);
+    expectOk(outcome);
+    expect(model.doGenerateCalls).toHaveLength(1);
+    const call = model.doGenerateCalls[0]!;
+    expect(JSON.stringify(call.responseFormat)).toContain("actions"); // control: the schema is really there
+    expect(messagesOf(call).user).toContain("Go"); // control: the message is really there
+    expect(JSON.stringify(call.responseFormat)).not.toContain("link");
+    expect(messagesOf(call).user).not.toContain("link");
+    expect(messagesOf(call).user).not.toContain("/start");
+    expect(outcome.fields).toEqual({ hero: { title: "Ü", actions: [{ text: "Los", link: "/start" }] } });
+    expect(outcome.perField.map((p) => p.fieldPath)).toEqual(["hero"]);
+  });
+
+  test("a model answer that adds the leaf back cannot change it: the source value wins", async () => {
+    const answer = { fields: { hero: { title: "Ü", actions: [{ text: "Los", link: "/x" }] } }, glossaryTermsUsed: [] };
+    const { outcome } = await runPage(["hero"], { hero: heroSource }, [answer]);
+    expectOk(outcome);
+    expect(outcome.fields).toEqual({ hero: { title: "Ü", actions: [{ text: "Los", link: "/start" }] } });
+  });
+
+  test("a field with nothing to translate is not sent", async () => {
+    const data = { title: "Hello", prev: { link: "/a" } };
+    const { outcome, model } = await runPage(["title", "prev"], data, [
+      { fields: { title: "Hallo" }, glossaryTermsUsed: [] },
+    ]);
+    expectOk(outcome);
+    expect(model.doGenerateCalls).toHaveLength(1);
+    const call = model.doGenerateCalls[0]!;
+    expect(JSON.stringify(call.responseFormat)).toContain("title"); // control: the schema is really there
+    expect(messagesOf(call).user).toContain("Hello"); // control: the message is really there
+    expect(JSON.stringify(call.responseFormat)).not.toContain("prev");
+    expect(messagesOf(call).user).not.toContain("prev");
+    expect(messagesOf(call).user).not.toContain("/a");
+    expect(outcome.fields).toEqual({ title: "Hallo", prev: { link: "/a" } });
+    expect(outcome.perField.map((p) => p.fieldPath)).toEqual(["title"]);
+    expect(outcome.calls).toHaveLength(1);
+  });
+
+  test("a job of only such fields makes no call", async () => {
+    const { outcome, model } = await runPage(["prev"], { prev: { link: "/a" } }, []);
+    expectOk(outcome);
+    expect(model.doGenerateCalls).toHaveLength(0);
+    expect(outcome.fields).toEqual({ prev: { link: "/a" } });
+    expect(outcome.calls).toEqual([]);
+    expect(outcome.perField).toEqual([]);
   });
 });
