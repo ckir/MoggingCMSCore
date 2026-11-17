@@ -69,9 +69,10 @@ async function writeTemplate(deps: Deps, flags: Flags): Promise<{ path: string; 
 type StarlightReport = Pick<StarlightAnswers, "source" | "targets" | "sourceDir" | "docsDir" | "pasteBlock">;
 
 /**
- * Loads the config this run just wrote, once, and validates its `starlight` export. When either fails (most often
- * `@mogging/starlight` or `@mogging/core` is not installed where the config can import it) the file is deleted again
- * and the failure is a usage error.
+ * Loads the config this run just wrote, once, and validates its `starlight` export. When either fails the file is
+ * deleted again and the failure is a usage error: an invalid layout (a `ValidationError`, e.g. a locale folder that is
+ * not its own slug) says so; anything else is most often `@mogging/starlight` or `@mogging/core` not installed where
+ * the config can import it.
  */
 async function checkWrittenConfig(deps: Deps, path: string): Promise<void> {
   try {
@@ -84,6 +85,13 @@ async function checkWrittenConfig(deps: Deps, path: string): Promise<void> {
       // a failed delete never replaces the usage error
     }
     const message = e instanceof Error ? e.message : String(e);
+    // By name, not instanceof: a user config may load a second copy of core (run.ts).
+    if ((e as { name?: unknown } | null)?.name === "ValidationError") {
+      throw new UsageError(
+        `init --starlight: the written config is not a valid Starlight layout (${message}); fix astro.config and run ` +
+          "init --starlight again",
+      );
+    }
     throw new UsageError(
       `init --starlight: the written config does not load (${message}); install @mogging/starlight and ` +
         "@mogging/core next to it (npm install -D @mogging/starlight @mogging/core) and run init --starlight again",
@@ -103,10 +111,15 @@ async function writeStarlightConfig(
   const target = configTarget(deps, flags);
   if (target.exists || present(target.path)) return { path: target.path, created: false, report: null, stderr: [] };
   const root = dirname(target.path);
-  const answers = starlightAnswers(readAstroConfig(root), {
+  const read = readAstroConfig(root);
+  const answers = starlightAnswers(read, {
     locales: typeof flags.locales === "string" ? flags.locales : undefined,
     sourceLocale: typeof flags["source-locale"] === "string" ? flags["source-locale"] : undefined,
   });
+  // No astro.config at all is most often the wrong folder: say so plainly instead of the generic unreadable text.
+  if (!read.ok && read.file === null) {
+    answers.warnings = [`no astro.config.* found in ${root}; is this the site's root folder?`];
+  }
   if (!(await createFile(target.path, starlightConfigText(answers)))) {
     return { path: target.path, created: false, report: null, stderr: [] }; // lost a race with another writer
   }

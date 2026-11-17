@@ -294,7 +294,26 @@ describe("mogging init --starlight", () => {
       });
       const t = testDeps(sql, { cwd: dir, loadModule });
       expect(await run(["init", "--starlight"], t)).toBe(2);
-      expect(t.stderr()).toContain("the written config does not load (");
+      // A ValidationError from the layout check: the not-a-valid-layout message of fix wave item B7, not the install advice.
+      expect(t.stderr()).toContain("the written config is not a valid Starlight layout (");
+      expect(existsSync(join(dir, "mogging.config.ts"))).toBe(false);
+    });
+  });
+
+  test("an invalid layout (a locale key that is not its own slug) is reported as such, not as missing packages", async () => {
+    await withTestDb(async (sql) => {
+      const dir = tempDir();
+      write(dir, "astro.config.mjs", astro(`locales: {
+        root: { label: "English", lang: "en" },
+        "pt-BR": { label: "Portugues", lang: "pt-BR" },
+      },`));
+      const t = realLoader(sql, dir);
+      expect(await run(["init", "--starlight"], t.deps)).toBe(2);
+      const err = t.base.stderr();
+      expect(err).toMatch(
+        /init --starlight: the written config is not a valid Starlight layout \(.+\); fix astro\.config and run init --starlight again/,
+      );
+      expect(err).not.toContain("install @mogging/starlight");
       expect(existsSync(join(dir, "mogging.config.ts"))).toBe(false);
     });
   });
@@ -351,12 +370,13 @@ describe("mogging init --starlight", () => {
     });
   });
 
-  test("a project with no astro.config is read as unreadable", async () => {
+  test("a project with no astro.config at all writes the config with a warning naming the case", async () => {
     await withTestDb(async (sql) => {
       const dir = tempDir();
       const t = realLoader(sql, dir);
       expect(await run(["init", "--starlight", "--locales", "de"], t.deps)).toBe(0);
-      expect(t.base.stderr()).toContain("warning: astro.config could not be read statically (no astro.config file)");
+      expect(t.base.stderr()).toContain(`warning: no astro.config.* found in ${dir}; is this the site's root folder?`);
+      expect(t.base.stderr()).not.toContain("could not be read statically");
     });
   });
 
