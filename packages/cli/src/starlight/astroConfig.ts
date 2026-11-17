@@ -103,15 +103,19 @@ function stringValue(node: Node | null | undefined): string | undefined {
   return undefined;
 }
 
-/** The name of a plain `key: value` property whose key is an identifier or a string/number literal, else `undefined`. */
+/** The name of a plain `key: value` property whose key is an identifier or a string/number literal, else `undefined`
+ * (also for a `__proto__: x` property, which sets the prototype instead of defining a key). */
 function keyName(p: Property): string | undefined {
   if (p.computed || p.kind !== "init") return undefined;
-  if (p.key.type === "Identifier") return (p.key as { name: string }).name;
-  if (p.key.type === "Literal") {
+  let name: string | undefined;
+  if (p.key.type === "Identifier") name = (p.key as unknown as { name: string }).name;
+  else if (p.key.type === "Literal") {
     const v = (p.key as { value?: unknown }).value;
-    return typeof v === "string" || typeof v === "number" ? String(v) : undefined;
+    name = typeof v === "string" || typeof v === "number" ? String(v) : undefined;
   }
-  return undefined;
+  // `__proto__: x` (not shorthand, not computed) sets the prototype at runtime: keys may be inherited, so it is no key.
+  if (name === "__proto__" && !p.shorthand) return undefined;
+  return name;
 }
 
 /**

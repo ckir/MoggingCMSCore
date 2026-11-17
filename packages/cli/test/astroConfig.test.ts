@@ -122,6 +122,10 @@ const r = readAstroConfig(${JSON.stringify(root)}); process.stdout.write(JSON.st
       ["a spread in the starlight options", config("...shared"), "starlight options holds a spread, computed or duplicate key"],
       ["a spread in the config", `import { defineConfig } from "astro/config";\nimport starlight from "@astrojs/starlight";\nexport default defineConfig({ ...base, integrations: [starlight({})] });\n`, "config holds a spread, computed or duplicate key"],
       ["a spread in one locale", config("locales: { de: { ...l } }"), "locale de holds a spread, computed or duplicate key"],
+      ["a __proto__ key in the config", `import { defineConfig } from "astro/config";\nimport starlight from "@astrojs/starlight";\nexport default defineConfig({ __proto__: base, integrations: [starlight({})] });\n`, "config holds a spread, computed or duplicate key"],
+      ["a __proto__ key in the starlight options", config(`__proto__: shared`), "starlight options holds a spread, computed or duplicate key"],
+      ["a string-literal __proto__ key in the starlight options", config(`"__proto__": shared`), "starlight options holds a spread, computed or duplicate key"],
+      ["a __proto__ key in one locale", config(`locales: { de: { __proto__: l, lang: "de" } }`), "locale de holds a spread, computed or duplicate key"],
       ["duplicate starlight options keys", config("locales: {}, locales: {}"), "starlight options holds a spread, computed or duplicate key"],
       ["a root locale without lang", config(`locales: { root: { label: "English" } }`), "the root locale has no lang"],
     ];
