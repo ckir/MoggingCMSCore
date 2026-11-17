@@ -708,8 +708,12 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   `path` is the project-relative POSIX path; `rel` the path inside the locale (`guides/Getting-Started.md`). In
   `symlinks` and `unsupported`, `slug` is relative to the locale folder (never including `en/` in own-folder mode):
   a file's slug is `deriveSlug(rel)`, a FOLDER's is its segments slugified with no extension stripping (`v1.2/` ->
-  `v12`, the prefix its pages carry; panel round 5 FR5-1). Only symlinks to a folder or to a file with a Starlight
-  extension are listed; any other symlink (an image under `assets/`) is a warning only (FR5-2). Files
+  `v12`, the prefix its pages carry; panel round 5 FR5-1). A symlink is classified by its NAME, never by following
+  it (a dangling link, for example into an absent submodule, has no type; panel round 6 FR6-1): a name with a
+  Starlight extension is a `file`, a name with no extension is a `folder`, and both are listed; any other symlink (an
+  image under `assets/`) is a warning only (FR5-2). Tests (FR6-2): `v1.2/` symlinked gives folder slug `v12`; a
+  dangling `guides` link is a listed folder; `assets/logo.png` linked is a warning only; under `layoutOwn` a
+  symlinked `en/guides` has slug `guides`. Files
   whose NAME starts with `_` are skipped silently (folders starting with `_` are walked, spec 5.2); dot entries are
   skipped; a symbolic link anywhere under `<docsDir>` (file or folder), or `<docsDir>` or one of its components
   below the project root being one, is a warning and not followed. A top-level folder is matched to a locale by
@@ -777,6 +781,10 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   export type FileOutcome = { file: string; docId: string | null; outcome: "created" | "updated" | "unchanged" | "error" | "skipped"; published: boolean };
   export type SafetyStop = { gone: Array<{ slug: string; title: string | null }>; added: Array<{ file: string; slug: string; title: string | null }>; command: string | null };
   export type StarlightImportDetails = { dryRun: boolean; stop: SafetyStop | null; pruned: string[]; behind: string[]; unsupported: string[] };
+  // pruned: slugs; behind and unsupported: project-relative POSIX paths. SafetyStop titles: a gone document's
+  // source-locale published `title` (null when none); an added file's front-matter `title` (null when none). Every
+  // warning about a key starts with "<key>: " (for example "template: export will write the English value ...");
+  // the one warning listing unsupported files has `file` set to the layout's docsDir (panel round 6 ED6-8, agy ED-1/2).
   export type ImportReport = { files: FileOutcome[]; warnings: FileMessage[]; errors: FileMessage[]; starlight?: StarlightImportDetails };
   // starlight/importStarlight.ts (internal; importFolder dispatches to it when input.starlight is set):
   async function importStarlight(ctx: Ctx, input: ImportInput & { starlight: StarlightImportOptions }): Promise<ImportReport>;
@@ -790,7 +798,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 - [ ] **Step 1: Failing tests** (database, fixture layout):
   - "no source file at all": `ValidationError(/no source file/)`; with `prune: true` the same, and nothing deleted.
   - "English is always published": a new page is created and its shared and `en` scopes published without
-    `publish`; a changed page is saved and published; an unchanged page is `unchanged` with no new row.
+    `publish`; a changed page is saved and published; an unchanged page (its PUBLISHED head equals the file) is
+    `unchanged` with no new row; a page whose draft head equals the file but is not published is published.
   - "a new draft: true page is skipped; an existing one is imported": outcome `skipped`, no document; an existing
     page that turns `draft: true` is updated and published (`draft` is a shared field).
   - "the canonical form is stored": English body image `img.png` stores `./img.png`; the English file is unchanged on
@@ -814,9 +823,10 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     `ValidationError(/could not be read/)` naming them while any source entry is unreadable, deleting nothing. A new
     `draft: true` page does not block prune; a page whose English file is now `a.markdown` is not gone (FR5-3); a
     symlinked English FILE `b.md` keeps document `b` found; a symlink under `de/` does not block prune.
-  - "first run": a fresh database with English, `de/` and `zh-cn/` files of new pages imports all of them in one
-    call (German and Chinese as day-one, published, untracked); the dry run of the same tree reports the same
-    outcomes (panel round 2 TO-5).
+  - "first run, English only": a fresh database with English files of new pages imports them in one call; the dry
+    run reports the same outcomes (the locale half is Task 13's "first run"; panel round 6 ED6-1).
+  - "a crash between save and publish is completed" (panel round 6 ED6-4): an English draft head equal to its file
+    but never published (simulated with `saveDraft` alone) is published by the next import (outcome `updated`).
   - "heads are read per page of documents": the run issues no per-file `getDocument` (assert with the counting sql:
     the query count for 10 and for 40 unchanged pages is equal).
 - [ ] **Step 2: Run, see FAIL.**
@@ -867,6 +877,11 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   - Union toggles: English `prev: false` and a German file with `prev: "Zurück"` store the German label and report
     `prev` once ("export will write the English value ..."); English `prev: "Back"` and German `prev: false` report it
     the same way.
+  - "first run" (moved from Task 12, panel round 2 TO-5 / round 6 ED6-1): a fresh database with English, `de/` and
+    `zh-cn/` files of new pages imports all of them in one call (German and Chinese as day-one, published,
+    untracked); the dry run of the same tree reports the same outcomes.
+  - Day one under the locale-draft rule: a German `draft: true` file with no German row is saved `untracked` and NOT
+    published (panel round 6 ED6-5).
   - Orphans: a German file whose slug has no live document is a warning, not an error.
   - `restore: ["src/content/docs/de/a.md"]` saves that `behind` file as a human draft; on a `published` file it
     reports "already current" and writes nothing.
@@ -878,13 +893,18 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 - [ ] **Step 3: Implement**, per locale file, in this order: (1) skip with a warning when its slug has no live
   document, where live includes documents this run creates (or, in a dry run, would create) (outcome `skipped`); (2) read and split it, un-rebase `fileRefs` and the body to canonical; (3) classify
   against the heads (from Task 12's page reads) and, only for files matching neither, the earlier versions
-  (`listPublishedVersions` per locale, ids in chunks of 1000); (4) `--restore` overrides `behind`/`published`
+  (`listPublishedVersions` per locale, ids in chunks of 1000). The English path used to un-rebase (step 2) is the
+  scanned source file with the same derived slug in this run; when there is none (the English file is missing or
+  unreadable), it is the path the English file would have (the locale file's `rel` under the source location), so
+  canonical values stay relative to the English page's place (panel round 6 ED6-3); (4) `--restore` overrides `behind`/`published`
   (save as a human draft; "already current" when `published`); (5) the follows-English report (union toggles and
   `draft` included); (6) the locale-draft rule (file `draft: true`, English not); (7) for `hand work`, carry a
   suppressed union value forward from the current head, then save: `untracked` and published when the locale has no
   row of any state (`listLocaleRows`, one call per page of documents; day one) unless rule 6 applies; otherwise a human draft, published only with `publish` and never
-  under rule 6. Outcomes: no row written -> `unchanged`; a row written -> `updated`; skipped -> `skipped`; read or
-  save failure -> `error`.
+  under rule 6 (a day-one file under rule 6 is saved `untracked` and left unpublished; ED6-5); (8) with `publish`, a
+  `pending` file whose draft head is a `DRAFT_HUMAN` equal to it, and which rule 6 does not hold back, is published
+  (`import.ts:373-379` behaviour; panel round 6 ED6-2). Outcomes: no row written and nothing published ->
+  `unchanged`; a row written or a draft published -> `updated`; skipped -> `skipped`; read or save failure -> `error`.
 - [ ] **Step 4: Tests, typecheck, suite.** Add one own-folder test (`layoutOwn`): day one and a hand edit.
 - [ ] **Step 5: Commit** `feat(markdown): Starlight import of locale files (day one, classes, draft rule)`.
 
@@ -983,6 +1003,9 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   - Kept files are listed: after a day-one import, an export that keeps the German file lists it in the manifest
     with the SHA-256 of its unchanged bytes (panel round 1 F3/PP-2); a second unchanged export leaves the manifest
     byte for byte.
+  - Toggle `true` (panel round 6 FR6-3): English `prev: true` and a German file without `prev` -> kept byte for byte on
+    every export; a symlinked leftover `de/a.md.0a1b.mogging-tmp -> ../../secret.txt` is unlinked and `secret.txt`
+    still exists.
   - Keep rule edges: English changes `lastUpdated` from plain to quoted -> the German file is rewritten; a German
     file whose stored ESM block does not parse but which is kept is not re-parsed and is not in `attention`.
   - Case-only rename: English `Foo.md` -> `foo.md` with `de/Foo.md` -> one rename to `de/foo.md`, then written.
@@ -1054,6 +1077,10 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   export type RenameReport = { dryRun: boolean; actions: ExportAction[]; references: Array<{ file: string; line: number; text: string }>; reminder: string };
   export async function renamePage(ctx: Ctx, input: RenameInput): Promise<RenameReport>;
   ```
+- Consumes (panel round 6 ED6-7, agy ED-3): Task 4 `getDocuments`; Task 5's guard through core `saveDraft`/`publish`;
+  Task 6 `deriveSlug`; Task 7 `readStarlightFile`, `splitPage`; Task 10 `scanDocs`; Task 11 `sameLocalized`; Task 14
+  `readManifest`, `writeManifest`, `moveFile`, `assertNoSymlink` (`./manifest.js`, `./fsSafe.js`); core
+  `getDocument`, `saveDraft`, `publish`. Every `ExportAction` it returns has `action: "move"` and `reason: "rename"`.
   Errors: `ValidationError` for a `to` that is not a derived-form slug (`deriveSlug` of itself plus an extension
   must equal itself), whose last segment starts with `_` (the scan would skip it; agy round 2 F2), or that leaves
   `<docsDir>`, a depth change when the page or any translation holds a relative file
@@ -1069,7 +1096,23 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   refused; a case-only rename on the English file moves in one rename; `to: "guides/_old"` is refused; one own-folder
   rename (`layoutOwn`). API test
   adds `renamePage`.
-- [ ] **Steps 2-4.** **Step 5: Commit** `feat(markdown): renamePage keeps a document and its translations`.
+- [ ] **Step 0: State check**: `getDocument` by slug (`resolve.ts:156-170`) still returns a deleted document only
+  after live ones. STOP on mismatch.
+- [ ] **Step 2: Run, see FAIL.**
+- [ ] **Step 3: Implement** in this order (panel round 6 ED6-6): (1) validate `to`; find the document live by `from`,
+  else live by `to` (a re-run); unknown -> `ValidationError`; (2) scan, and plan every move: the English file (from
+  the path whose derived slug is `from`, unless a file with slug `to` already exists, as after a `git mv`) and each
+  locale file under the old path; a target that exists is acceptable only when it is the same file or has the same
+  parsed content (`sameLocalized` of both files' localized fields, both bodies included), otherwise
+  `ConflictError` BEFORE any database write; refuse the depth change rule here too; (3) database: when the shared
+  published head's slug is not `to`, save the whole shared head with only the slug changed and publish it; when a
+  shared draft head already holds `to` but is not published (an interrupted run), publish it; (4) move the files
+  with `moveFile`; (5) manifest: every entry whose slug is `from` gets slug `to` and the path it now has (also for a
+  file the user moved with `git mv`); (6) search `astro.config.*` and Markdown under `<docsDir>` for `from`; build
+  the report. A dry run stops after (2) and reports the planned moves, with uniqueness checked by a read.
+- [ ] **Step 4: Tests, typecheck, suite.** Add: an interrupted run whose shared draft holds `to` unpublished is
+  completed; a `git mv`-ed English file leaves the manifest entries renamed.
+- [ ] **Step 5: Commit** `feat(markdown): renamePage keeps a document and its translations`.
 
 ### Task 17: query bound and the 2,000-page measurement
 
@@ -1191,6 +1234,17 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   - agy F1 `importStarlight`/`exportStarlight` signatures and Task 14's Consumes; F2 toggles saved in `shared`; F3
     union fields come from `layout.entries` (Tasks 7, 11, 12, 14).
   - Notes: `jobs.ts:79,90`, `normalize.ts:11-32`, the richText `__proto__` test moved into Task 1 Step 1.
+
+- Panel round 6, the cap (2026-11-17, narrow; owner asked for it; seats Fold Regression on the round-5 folds and
+  Executor Dry Run of Tasks 12, 13, 16; Sonnet solo 11 findings; agy 3 findings, 2 overlapping). All FOLDED:
+  - FR6-1 dangling folder symlinks counted as found (by name); FR6-2/FR6-3 tests for the round-5 folds (Tasks 10, 14).
+  - ED6-1 the first-run test moved to Task 13; ED6-2 `publish` publishes a pending human draft; ED6-3 the English path
+    used to un-rebase; ED6-4 an unpublished English draft equal to its file is published; ED6-5 day one under the
+    locale-draft rule stays unpublished (Tasks 12, 13).
+  - ED6-6/ED6-7, agy ED-3 Task 16 Consumes, Step 0, ordered Step 3 (conflicts before the database, resume, manifest
+    after `git mv`); ED6-8, agy ED-1/ED-2 report value formats and key-prefixed warnings (Task 12).
+  Findings per round: 30, 18, 7, 10, 12, 14 (no high after round 2; rounds 4-6 were cross-task gaps and unstated
+  formats).
 
 ## Stand-downs
 
