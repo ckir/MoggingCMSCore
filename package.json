@@ -7,6 +7,7 @@
     "test": "vitest run",
     "build": "tsc -p packages/core/tsconfig.build.json && tsc -p packages/markdown/tsconfig.build.json && tsc -p packages/ai/tsconfig.build.json && tsc -p packages/cli/tsconfig.build.json && tsc -p packages/starlight/tsconfig.build.json",
     "smoke:pack": "node scripts/pack-smoke.mjs",
+    "accept:starlight": "node scripts/starlight-accept.mjs",
     "typecheck": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/markdown && tsc --noEmit -p packages/ai && tsc --noEmit -p packages/cli && tsc --noEmit -p packages/starlight"
   },
   "devDependencies": {
