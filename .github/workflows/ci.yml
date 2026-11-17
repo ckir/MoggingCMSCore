@@ -1,0 +1,80 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: mogging
+          POSTGRES_PASSWORD: mogging
+          POSTGRES_DB: mogging_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mogging -d mogging_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://mogging:mogging@localhost:5432/mogging_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.8.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Node version
+        run: node -v
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm smoke:pack
+
+  starlight:
+    needs: check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: mogging
+          POSTGRES_PASSWORD: mogging
+          POSTGRES_DB: mogging_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mogging -d mogging_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://mogging:mogging@localhost:5432/mogging_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.8.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Node version
+        run: node -v
+      - uses: actions/cache@v6
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('templates/starlight/package.json', 'scripts/fixtures/starlight-adopter/package.json') }}
+          restore-keys: |
+            npm-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm accept:starlight
+      - run: pnpm accept:adopter
