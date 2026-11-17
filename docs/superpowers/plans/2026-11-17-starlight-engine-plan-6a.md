@@ -7,7 +7,7 @@
 mode of `importFolder`/`exportFolder` (plus `renamePage`) in `@mogging/markdown` that implements design sections 5.2
 to 5.9 and 8.
 
-**Architecture:** Core gains an opaque `json` field kind, a `translate: false` leaf option, an untracked save, two
+**Architecture:** Core gains an opaque `json` field kind, a `translate: false` leaf option, an untracked save, three
 bulk reads and a slug-uniqueness guard under a per-collection advisory lock; ai honours `translate: false` and
 gains `includeUntracked`. `@mogging/markdown` gets a `starlight/` module set: a validated layout, a safe front-matter
 reader with a path map, relative-reference rebasing, a docs-folder scan, a four-class file classifier, a manifest, a
@@ -140,7 +140,7 @@ Core (`packages/core/src`):
 - `documents/slugGuard.ts` (create, internal): the per-collection lock and the uniqueness check.
 - `documents/publishCore.ts`, `releases/releases.ts` (modify): slug guard on shared publishes.
 - `read/resolve.ts` (modify): `getDocuments`.
-- `read/versions.ts` (create): `listPublishedVersions`.
+- `read/versions.ts` (create): `listPublishedVersions`, `listLocaleRows`.
 - `index.ts` (modify): exports.
 
 AI (`packages/ai/src`): `fields.ts` (json, translate leaves, wire projection, fixed-leaf merge), `validate.ts`
@@ -275,10 +275,12 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   `pnpm --filter @mogging/ai test fields`, `pnpm --filter @mogging/markdown test import`. Expected: FAIL (`json` is
   not exported).
 - [ ] **Step 3: Implement.** `json = (o?: FieldOptions): Field => ({ kind: "json", ...base(o) })`. `normalizeAt`
-  case `"json"`: `return nfcDeep(value, path)`. `nfcDeep` (`normalize.ts:22-29`, shared by `json` and `richText`)
+  case `"json"`: `return nfcDeep(value, path)`. `nfcDeep` (`normalize.ts:11-32`, object branch 22-30, shared by `json` and `richText`)
   refuses an object key `__proto__` at any depth with `ValidationError(\`${path}.__proto__: forbidden key\`)`
   (assignment would drop it and set the prototype, measured; panel rounds 2 AX-1 and 3, which found `richText`
-  affected too); add the same assertion for a `richText` object value. `defineConfig`: refuse `json` with `localized: true`, and walk each
+  affected too). This one check in `nfcDeep` covers both kinds; Step 1 adds the test
+  `normalizeValue(richText(), JSON.parse('{"type":"root","children":[],"__proto__":{"x":1}}'))` throws
+  `ValidationError(/__proto__/)` (panel round 4 FR4-2). `defineConfig`: refuse `json` with `localized: true`, and walk each
   localized field's `item`/`fields` refusing a nested `json` (message
   `` `${col.name}.${fname}: json cannot be localized` ``). ai `leafKinds`: `case "json": into.add("json")`, with
   `LeafKind` gaining `"json"`, and `isTranslatable` returns false when `kinds.has("json")`; `fieldSchema` `case
@@ -301,7 +303,9 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   `toEqual` assertions on field objects are unchanged, as `fallback` already does at `fields.ts:32`).
 - Produces (ai, internal): `wireField(field: Field): Field | null` (the field with every `translate: false` leaf and
   every emptied object/list removed; null when no translatable leaf remains), `wireValue(field: Field, value:
-  unknown): unknown` (the value projected onto `wireField`), `withFixedLeaves(field: Field, source: unknown, draft:
+  unknown): unknown` (the value projected onto `wireField`; list items are never dropped: an item that projects to
+  nothing becomes `{}` and a null item stays null, so list lengths always match the source; only object keys are
+  dropped; panel round 4 FR4-4), `withFixedLeaves(field: Field, source: unknown, draft:
   unknown): unknown` (the draft completed from the source: the draft is compared with `wireValue(field, source)`,
   not with the source; where their list lengths or object keys agree, each `translate: false` leaf, and each subtree
   made only of such leaves (absent from the wire), is copied from the source at the same path, list items aligned by
@@ -332,7 +336,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     the model answers without `link`, and the outcome's field value has `link: "/start"`.
 - [ ] **Step 2: Run, see FAIL.**
 - [ ] **Step 3: Implement.** `isTranslatable` line 27: a `text` with `translate === false` returns false.
-  `leafKinds`: a `text` with `translate === false` adds `"other"`. `estimateJob` (`jobs.ts:79,92`) uses
+  `leafKinds`: a `text` with `translate === false` adds `"other"`. `estimateJob` (`jobs.ts:79,92`) leaves out a field whose wire value has no string leaf (it is
+  not sent; panel round 4 FR4-5) and uses
   `wireValue(field, value)` for the candidate wire value and the character count. `prepareField` (value
   branch) sets `wire: wireValue(field, value)` and keeps `source: value`. `validateField` (value branch) computes
   `const merged = withFixedLeaves(field, prepared.source, draft)` first and uses `merged` for the U+0000 scan,
@@ -352,7 +357,7 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 **Files:**
 - Modify: `packages/core/src/documents/saveDraft.ts:11-16,115-135`, `packages/ai/src/jobs.ts:18,140`,
   `packages/ai/src/compile.ts:24` (and `CompileInput`)
-- Test: `packages/core/test/saveDraft.test.ts`, `packages/ai/test/jobs.test.ts`
+- Test: `packages/core/test/saveDraft.test.ts`, `packages/ai/test/jobs.test.ts`, `packages/ai/test/compile.test.ts`
 
 **Interfaces:**
 - Produces: `SaveDraftInput.untracked?: boolean`; `EnqueueInput.includeUntracked?: boolean`;
@@ -528,7 +533,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 **Interfaces:**
 - Produces (internal):
   ```ts
-  type StarlightFile = { doc: YAML.Document | null; data: Record<string, unknown>; body: string };
+  type StarlightFile = { frontMatter: string | null; doc: YAML.Document | null; data: Record<string, unknown>; body: string };
+  function readAstroFrontMatter(frontMatter: string | null): Record<string, unknown>;   // Astro's options, toJS
   function readStarlightFile(text: string): StarlightFile;      // throws ValidationError per D6 / unsafe YAML
   type SplitPage = {
     localized: Record<string, unknown>;   // localized fields, normalized, references NOT yet rebased
@@ -541,7 +547,9 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   ```
   `readStarlightFile` strips a BOM, converts CRLF to LF, NFC-normalizes (as `splitFrontMatter`,
   `contentFile.ts:21-41`), and parses with `YAML.parseDocument(fm, { schema: "core", merge: true, uniqueKeys: true })`;
-  `doc` is kept (Task 9 copies its nodes).
+  `frontMatter` is the raw text between the fences (null when there is none); `readAstroFrontMatter` parses it with
+  Astro's options (F-YAML) and returns `toJS()` (Dates kept), used by Task 9 (which re-parses `frontMatter`, it does
+  not copy `doc`) and by Task 14's keep test (panel round 4 IC4-2).
 
 - [ ] **Step 1: Failing tests.**
   - Safety: `__proto__`, `constructor` or `prototype` as a key at any depth (found by visiting the YAML pairs before
@@ -683,6 +691,7 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     sources: ScannedFile[];                    // source-locale files, by slug
     locales: ScannedFile[];                    // locale files (locale = BCP 47 tag)
     unsupported: string[];                     // files with another Starlight extension (F-GLOB)
+    symlinks: Array<{ path: string; slug: string; kind: "file" | "folder" }>;  // not followed; slug from the path
     warnings: FileMessage[];                   // skipped other-locale folders, non-regular files
   };
   function scanDocs(root: string, layout: StarlightLayout, config: MoggingConfig): Scan;
@@ -718,20 +727,21 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   ```ts
   type FileClass = "published" | "pending" | "behind" | "hand work";
   function sameLocalized(layout: StarlightLayout, file: Record<string, unknown>, version: Record<string, unknown>): boolean;
-  function classify(args: {
-    layout: StarlightLayout; file: Record<string, unknown>;
-    published: Record<string, unknown> | null; draft: Record<string, unknown> | null;
-    earlier: () => Record<string, unknown>[];   // called only when neither head matched
-  }): FileClass;
+  function classifyHeads(layout: StarlightLayout, file: Record<string, unknown>,
+    heads: { published: Record<string, unknown> | null; draft: Record<string, unknown> | null }): "published" | "pending" | null;
+  function classifyEarlier(layout: StarlightLayout, file: Record<string, unknown>,
+    earlier: Record<string, unknown>[]): "behind" | "hand work";
   ```
   `sameLocalized`: for each union `value` field, when the file lacks it or holds `{}`, drop it from both sides; set
   the root `mode` of every richText value on both sides to `"md"` (the mode follows the file extension, not the
   content; panel round 3 FR-3); then compare `hashValue` of the two records (all values already normalized, file
   side un-rebased to canonical). Test: the same body stored as an `md` tree and read from an `.mdx` file is
-  `published`.
+  `published`. Two passes (panel round 4 IC4-3): callers run `classifyHeads` on every file, collect the ids of files
+  that returned null, read their earlier versions in one batched `listPublishedVersions` call per locale, then run
+  `classifyEarlier`.
 
 - [ ] **Step 1: Failing tests.** published / pending / behind / hand work in that precedence (a file equal to both
-  the draft head and an earlier version is `pending`); `earlier` is not called when a head matched (spy); a file
+  the draft head and an earlier version is `pending`, because `classifyHeads` returns it first); a file
   without `prev` vs a head with `prev: { label }` is `published`, and after English re-enables the link the same file
   is still `published` (R9-1/R10-1); a file with `prev: {}` equals absent; a file whose `prev` differs from the head is
   `hand work`; CRLF/BOM/formatting differences never change the class (they are gone after Task 7's read).
@@ -741,7 +751,9 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 
 **Files:**
 - Create: `packages/markdown/src/starlight/importStarlight.ts`, `packages/markdown/test/starlight/importSource.test.ts`
-- Modify: `packages/markdown/src/import.ts:13-21,107` (types; dispatch when `input.starlight` is set)
+- Modify: `packages/markdown/src/import.ts:13-21,107` (types; dispatch when `input.starlight` is set),
+  `packages/markdown/src/index.ts` (export types `StarlightImportOptions`, `SafetyStop`, `StarlightImportDetails`;
+  panel round 4 IC4-4)
 
 **Interfaces:**
 - Produces:
@@ -796,7 +808,9 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   gone, new, stop, prune) and phase 2 (one transaction per page as `import.ts:277-283` does, then publish; prune with
   `deleteDocument`; a `NotFoundError` there means a concurrent prune already deleted it and is not an error). A
   source document is "found" when the scan saw a source file with its derived slug in ANY state (read, per-file
-  error, collision, or a symlink to a file, whose slug is derived from its path without following it), and every
+  error, collision, a file with another Starlight extension (`unsupported`; panel round 4 FR4-6), or a symlink to a
+  file, whose slug is derived from its path without following it; all read from `Scan.symlinks` and
+  `Scan.unsupported`, panel round 4 IC4-1), and every
   document whose slug lies under a symlinked FOLDER (its derived slug is a prefix of the document's slug at a `/`
   boundary) counts as found (panel round 3 FR-1). Prune refuses while any source entry is UNREADABLE: a per-file
   error, a collision, or a symlink; a skipped new `draft: true` page is not unreadable (FR-2). A
@@ -862,7 +876,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 - Create: `packages/markdown/src/starlight/exportStarlight.ts`, `packages/markdown/src/starlight/manifest.ts`,
   `packages/markdown/src/starlight/fsSafe.ts`, `packages/markdown/test/starlight/export.test.ts`,
   `packages/markdown/test/starlight/manifest.test.ts`
-- Modify: `packages/markdown/src/export.ts:10-11,133` (types; dispatch)
+- Modify: `packages/markdown/src/export.ts:10-11,133` (types; dispatch), `packages/markdown/src/index.ts` (export
+  types `StarlightExportOptions`, `ExportAction`, `StarlightExportDetails`)
 
 **Interfaces:**
 - Produces:
@@ -873,11 +888,21 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   export type StarlightExportDetails = { dryRun: boolean; actions: ExportAction[]; attention: FileMessage[] };
   export type ExportReport = { files: string[]; warnings: FileMessage[]; starlight?: StarlightExportDetails };
   type ManifestEntry = { path: string; slug: string; locale: string; version: number; sha256: string };  // internal
+  // manifest.ts (internal; Tasks 15 and 16 use these):
+  function readManifest(root: string): { entries: ManifestEntry[]; warning: string | null };
+  function writeManifest(root: string, entries: ManifestEntry[]): void;
+  // fsSafe.ts (internal; Tasks 15 and 16 use these; every path is project-relative POSIX):
+  function assertNoSymlink(root: string, rel: string): void;            // throws on a symlinked component below root
+  function writeFileAtomic(root: string, rel: string, text: string): void;
+  function moveFile(root: string, from: string, to: string): void;     // one rename; parents created
+  function removeFile(root: string, rel: string): void;
   ```
   `attention` holds exactly the exit-4 causes of spec 5.4 (a `pending` or `hand work` file left, except a pending
   locale `draft: true` file; a symlink refusal; a live document whose English file is missing or cannot be read
   (Task 7 per-file error; panel round 1 CA-4); a locale whose folder is not in `starlightLocaleDirs` when that list
-  is given; a page skipped because a stored MDX block does not parse).
+  is given; a page skipped because a stored MDX block does not parse; a page skipped because its body does not
+  survive a change of extension (`.md` <-> `.mdx`, below; an addition to spec 5.4's list, recorded in its erratum,
+  panel round 4 FR4-3)).
   The keep test ("same parsed content", spec 5.4), without rendering (panel round 2 FR-1): a file is kept when it
   classifies `published` (so its localized content, body included, already equals the head in canonical space) AND
   its follows-English front matter equals what export would copy: both the file and the English file are read with
@@ -897,7 +922,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   `input.collections` is ignored in Starlight mode (one collection); `input.locales` restricts the locales evaluated.
   At the start of a run, files named `*.<hex>.mogging-tmp` under `<docsDir>` and `.mogging/` (found with `lstat`, not
   followed) are leftovers of an interrupted run: they are removed and each is reported in `warnings` (panel round 2
-  BS-6); a dry run reports them as `remove` actions and removes nothing (panel round 3 FR-5). A self-check failure throws `Error("internal: export self-check failed for <path>: <field>")`.
+  BS-6); a real run AND a dry run list them as `remove` actions (so the two runs' actions stay equal), and a dry run removes
+  nothing (panel rounds 3 FR-5 and 4 FR4-1). A self-check failure throws `Error("internal: export self-check failed for <path>: <field>")`.
   Manifest file: `{"version":1,"files":[` newline, one compact JSON entry per line sorted by `path`, `]}` newline;
   written to a temporary file in `.mogging/` and renamed.
 
@@ -1023,8 +1049,10 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 - Create: `packages/markdown/test/starlight/queries.test.ts`, `packages/markdown/test/starlight/perf.test.ts`
 
 - [ ] **Step 1: Failing test** "an unchanged re-export issues a query count independent of the page count":
-  fixtures of 50 and of 150 pages x 2 locales, imported and exported once, then a second export counted with a
-  postgres.js `debug` callback: equal counts; the same for an unchanged re-import.
+  fixtures of 50, 150, 250 and 450 pages x 2 locales, imported and exported once, then a second export counted with a
+  postgres.js `debug` callback: 50 and 150 (one page of 200 documents) give equal counts, and the count grows by the
+  same amount from 250 to 450 as from 50 to 250 (per page of documents, never per file; panel round 4); the same for
+  an unchanged re-import.
 - [ ] **Step 2-4.** Fix any per-file read the test exposes.
 - [ ] **Step 5: Measurement (CONTROLLER ONLY, never a subagent; owner's timing discipline).** `perf.test.ts` is
   skipped unless `MOGGING_PERF=1` (as `packages/ai/test/live.test.ts` is gated); it generates 2,000 pages x 6
@@ -1113,6 +1141,19 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     context values carried `translate: false` leaves: they go through `wireValue` (Task 2). Anomaly: no index on the
     shared slug: logged in `.clavity/local-anomalies.md` (a migration change is outside this step, spec 3).
 
+- Panel round 4 (2026-11-17, narrow; seats Fold Regression on the round-3 folds and Interface Consistency Auditor;
+  agy CLEAN with a per-fold census, citations spot-checked; Sonnet solo 10 findings + 5 notes). All FOLDED except
+  one note stood down below:
+  - IC4-1 `Scan.symlinks`; IC4-2 `StarlightFile.frontMatter` and `readAstroFrontMatter`; IC4-3 two-pass
+    classification; IC4-4 public types and the manifest/fsSafe signatures (Tasks 7, 10, 11, 12, 14).
+  - FR4-1 temp-file actions equal in real and dry runs; FR4-2 richText `__proto__` test; FR4-3 the extension-change
+    skip is an `attention` cause (spec 5.4 erratum); FR4-4 list items never dropped by `wireValue`; FR4-5 the
+    estimate skips unsent fields; FR4-6 files with another Starlight extension count as found (Tasks 1, 2, 12, 14).
+  - Notes: "three bulk reads", `read/versions.ts`, `normalize.ts:11-32`, `compile.test.ts`, and the Task 17 test
+    now crosses page boundaries.
+
 ## Stand-downs
 
-None in rounds 1 to 3: no finding was discarded below the floor or accepted unverified.
+- DISCARDED-BELOW-FLOOR (round 4 note): `packages/core/src/read/resolve.ts:185` keys `locales` by locale on a plain
+  object; unreachable because every stored locale passed `normalizeLocale`, whose language subtag must match
+  `/^[A-Za-z]{2,3}$/` (`packages/core/src/schema/locale.ts:9`), so `__proto__` or `constructor` never occur.

@@ -257,6 +257,8 @@ covers text Mogging generates. Day-one files are recorded as human and visibly `
   `--json` carries the same list, and it exits as the real run would, except that a conflict only the real run's lock
   can see (a concurrent rename) is not predicted; a day-one `import --dry-run` simulates the creating pass in memory.
   `--json` keeps the CLI contract (`ok` is true for exit `0` and `4`, `packages/cli/src/output.ts:86-87`).
+  Erratum 2026-11-17 (plan 6a panel round 4): a page skipped because its body does not survive a change of the
+  English file's extension (`.md` <-> `.mdx`) is also an exit `4` cause.
 - An exported page that later goes stale keeps its last approved file until a new translation is approved and
   exported; Starlight serves that older translation in the meantime.
 
