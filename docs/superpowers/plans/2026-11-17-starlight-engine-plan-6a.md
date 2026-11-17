@@ -275,8 +275,10 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   `pnpm --filter @mogging/ai test fields`, `pnpm --filter @mogging/markdown test import`. Expected: FAIL (`json` is
   not exported).
 - [ ] **Step 3: Implement.** `json = (o?: FieldOptions): Field => ({ kind: "json", ...base(o) })`. `normalizeAt`
-  case `"json"`: refuse a `__proto__` key at any depth (`ValidationError`; assignment would drop it and set the
-  prototype, measured, panel round 2 AX-1), then `return nfcDeep(value, path)`. `defineConfig`: refuse `json` with `localized: true`, and walk each
+  case `"json"`: `return nfcDeep(value, path)`. `nfcDeep` (`normalize.ts:22-29`, shared by `json` and `richText`)
+  refuses an object key `__proto__` at any depth with `ValidationError(\`${path}.__proto__: forbidden key\`)`
+  (assignment would drop it and set the prototype, measured; panel rounds 2 AX-1 and 3, which found `richText`
+  affected too); add the same assertion for a `richText` object value. `defineConfig`: refuse `json` with `localized: true`, and walk each
   localized field's `item`/`fields` refusing a nested `json` (message
   `` `${col.name}.${fname}: json cannot be localized` ``). ai `leafKinds`: `case "json": into.add("json")`, with
   `LeafKind` gaining `"json"`, and `isTranslatable` returns false when `kinds.has("json")`; `fieldSchema` `case
@@ -320,6 +322,11 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     merged draft has the source's `image`; a source list `[null, { text: "a", link: "/b" }]` keeps the null.
   - "the enqueue estimate counts what is sent" (`estimateJob` is private, `jobs.ts:70`): two documents whose `hero`
     values differ only in the length of a `translate: false` link get equal `estimateMicros` from `enqueueStale`.
+  - ai `translate.test.ts` "a field with nothing to translate is not sent": a job of `title` and `prev` where `prev`
+    is `{ link: "/a" }` makes one call whose schema and message have no `prev`, and the outcome's `prev` is
+    `{ link: "/a" }`; a job of only such fields makes no call.
+  - ai `prompt.test.ts` "context never carries translate: false leaves": a sibling `hero` with `link: "/start"`
+    yields context without `/start`.
   - ai `translate.test.ts` "translate: false leaves never reach the model and come back from the source": with a
     mock model that records its call, the request's JSON schema and user message contain no `link` and no `/start`,
     the model answers without `link`, and the outcome's field value has `link: "/start"`.
@@ -330,7 +337,12 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   branch) sets `wire: wireValue(field, value)` and keeps `source: value`. `validateField` (value branch) computes
   `const merged = withFixedLeaves(field, prepared.source, draft)` first and uses `merged` for the U+0000 scan,
   `checkShape`, the text comparisons and the returned `value`. `translate.ts:98` maps each field through
-  `wireField(field)!` (the planner already excluded untranslatable fields). `walk`'s `text` case: when
+  `wireField(field)!` (the planner already excluded untranslatable fields). A job field whose `wireValue` holds no
+  string leaf for this source (for example `prev: { link: "/a" }`) is not sent to the model at all: its draft value is
+  the source value, and its provenance records no call (panel round 3 AW-1: sent, the model could add a key and fail
+  the whole request). Context values (`prompt.ts:33-41` `contextValue`, used for siblings and shared fields,
+  `context.ts:35-36`) go through `wireValue` too, so a `translate: false` leaf never reaches the model in any role
+  (panel round 3). `walk`'s `text` case: when
   `field.translate === false`, compare with `isDeepStrictEqual` like a non-text kind.
 - [ ] **Step 4: Tests, typecheck, suite.** PASS.
 - [ ] **Step 5: Commit** `feat(core,ai): translate: false text leaves are copied from the source, never sent`.
@@ -338,11 +350,14 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 ### Task 3: untracked saves and `includeUntracked`
 
 **Files:**
-- Modify: `packages/core/src/documents/saveDraft.ts:11-16,115-135`, `packages/ai/src/jobs.ts:18,140`
+- Modify: `packages/core/src/documents/saveDraft.ts:11-16,115-135`, `packages/ai/src/jobs.ts:18,140`,
+  `packages/ai/src/compile.ts:24` (and `CompileInput`)
 - Test: `packages/core/test/saveDraft.test.ts`, `packages/ai/test/jobs.test.ts`
 
 **Interfaces:**
-- Produces: `SaveDraftInput.untracked?: boolean`; `EnqueueInput.includeUntracked?: boolean`.
+- Produces: `SaveDraftInput.untracked?: boolean`; `EnqueueInput.includeUntracked?: boolean`;
+  `CompileInput.includeUntracked?: boolean`, passed through to `enqueueStale` (`compile.ts:24` builds its own enqueue
+  input; plan 6b's `compile --include-untracked` needs it; panel round 3 AW-2).
 
 - [ ] **Step 0: State check** of `saveDraft.ts:115-135` (the hash vector) and `jobs.ts:140`. STOP on mismatch.
 - [ ] **Step 1: Failing tests.**
@@ -359,7 +374,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 - [ ] **Step 3: Implement.** In `saveDraft`, validate before any query (after the locale checks): `untracked` with
   `isShared` or the source locale throws `ValidationError("untracked applies to a target locale only")`. When true,
   skip the hash vector entirely (`sourceHashes = {}`). In `enqueueStale`, the state filter becomes
-  `stale | missing | (untracked when input.includeUntracked === true)`.
+  `stale | missing | (untracked when input.includeUntracked === true)`; `compile` forwards `includeUntracked`. Test:
+  "compile with includeUntracked drafts untracked fields" (mock model).
 - [ ] **Step 4: Tests, typecheck, suite.** PASS.
 - [ ] **Step 5: Commit** `feat(core,ai): untracked target saves and enqueueStale includeUntracked`.
 
@@ -708,8 +724,11 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     earlier: () => Record<string, unknown>[];   // called only when neither head matched
   }): FileClass;
   ```
-  `sameLocalized`: for each union `value` field, when the file lacks it or holds `{}`, drop it from both sides; then
-  compare `hashValue` of the two records (all values already normalized, file side un-rebased to canonical).
+  `sameLocalized`: for each union `value` field, when the file lacks it or holds `{}`, drop it from both sides; set
+  the root `mode` of every richText value on both sides to `"md"` (the mode follows the file extension, not the
+  content; panel round 3 FR-3); then compare `hashValue` of the two records (all values already normalized, file
+  side un-rebased to canonical). Test: the same body stored as an `md` tree and read from an `.mdx` file is
+  `published`.
 
 - [ ] **Step 1: Failing tests.** published / pending / behind / hand work in that precedence (a file equal to both
   the draft head and an earlier version is `pending`); `earlier` is not called when a head matched (spy); a file
@@ -762,9 +781,10 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   - "other Starlight extensions are listed once": `a.markdown` and `b.mdoc` give one warning naming both and appear in
     `starlight.unsupported`; nothing is imported from them.
   - "a source file that cannot be read is never gone" (panel round 2 BS-1): a page whose English file has a
-    front-matter error, a page in a slug collision, and a page under a symlinked folder are not gone: no prune, no
-    safety stop pairing; and `prune: true` refuses with `ValidationError(/could not be read/)` naming the files
-    while any source file of the run is unreadable or skipped, deleting nothing.
+    front-matter error, a page in a slug collision, and pages `guides/a` and `guides/b` under a symlinked folder
+    `guides` are not gone: no prune, no safety stop pairing, no rename suggestion; and `prune: true` refuses with
+    `ValidationError(/could not be read/)` naming them while any source entry is unreadable, deleting nothing. A new
+    `draft: true` page does not block prune.
   - "first run": a fresh database with English, `de/` and `zh-cn/` files of new pages imports all of them in one
     call (German and Chinese as day-one, published, untracked); the dry run of the same tree reports the same
     outcomes (panel round 2 TO-5).
@@ -776,8 +796,10 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   gone, new, stop, prune) and phase 2 (one transaction per page as `import.ts:277-283` does, then publish; prune with
   `deleteDocument`; a `NotFoundError` there means a concurrent prune already deleted it and is not an error). A
   source document is "found" when the scan saw a source file with its derived slug in ANY state (read, per-file
-  error, collision, or a symlink entry, whose slug is derived from its path without following it); prune refuses
-  while any source entry is unreadable or skipped. A
+  error, collision, or a symlink to a file, whose slug is derived from its path without following it), and every
+  document whose slug lies under a symlinked FOLDER (its derived slug is a prefix of the document's slug at a `/`
+  boundary) counts as found (panel round 3 FR-1). Prune refuses while any source entry is UNREADABLE: a per-file
+  error, a collision, or a symlink; a skipped new `draft: true` page is not unreadable (FR-2). A
   `LicenceError` aborts the run as in `import.ts:264`. Add one own-folder test (`layoutOwn`): a new page and a changed
   page.
 - [ ] **Step 4: Tests, typecheck, suite.** PASS, and every existing `import.test.ts` test passes unchanged.
@@ -863,8 +885,11 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   are removed from both, the file's top-level keys that English lacks and the layout does not map are removed, and the
   rest is deeply equal (a `Date` compared by time) with each union toggle equal. A kept file is never rendered and so
   never re-parsed. Comparisons of body trees (classification and self-check) ignore the root's `mode`; export stamps
-  the stored tree with the mode of the extension it writes, and a body that does not parse in that mode (an English
-  `.md` -> `.mdx` change with `{` or `<` in the German text) skips the page into `attention` (panel round 2 CA-1).
+  the stored tree with the mode of the extension it writes, and when that mode differs from the stored tree's (an
+  English `.md` <-> `.mdx` change) a rendered body that does not re-parse to the same tree in the new mode (`{` or
+  `<` in an md body written as mdx; an ESM or JSX block in an mdx body written as md) skips the page into
+  `attention` instead of failing the self-check (panel rounds 2 CA-1 and 3 FR-4); the self-check's internal error
+  stays for a mismatch with an unchanged mode.
   The manifest lists every file export wrote AND every file it kept as `published` (spec 5.4), with the SHA-256 of
   the bytes on disk; entries for files this run did not evaluate (a locale skipped or filtered out, a page whose
   English file is missing or unreadable, a refused symlink, an MDX skip) are carried over unchanged; entries are
@@ -872,7 +897,7 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   `input.collections` is ignored in Starlight mode (one collection); `input.locales` restricts the locales evaluated.
   At the start of a run, files named `*.<hex>.mogging-tmp` under `<docsDir>` and `.mogging/` (found with `lstat`, not
   followed) are leftovers of an interrupted run: they are removed and each is reported in `warnings` (panel round 2
-  BS-6). A self-check failure throws `Error("internal: export self-check failed for <path>: <field>")`.
+  BS-6); a dry run reports them as `remove` actions and removes nothing (panel round 3 FR-5). A self-check failure throws `Error("internal: export self-check failed for <path>: <field>")`.
   Manifest file: `{"version":1,"files":[` newline, one compact JSON entry per line sorted by `path`, `]}` newline;
   written to a temporary file in `.mogging/` and renamed.
 
@@ -917,10 +942,13 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     skipped, its existing file and manifest entry unchanged, in `attention`, the rest exported; the same under
     `layoutOwn` (D11; panel round 2 FR-2 / agy F1).
   - Mode: English `a.md` -> `a.mdx` with a German body that is valid Markdown and valid MDX -> `de/a.mdx` written,
-    self-check passes; with a German body holding `{x}` -> skipped into `attention`, `de/a.md` untouched.
+    self-check passes; with a German body holding `{x}` -> skipped into `attention`, `de/a.md` untouched; English
+    `b.mdx` -> `b.md` with a German body holding `import X from "./x.astro"` -> skipped into `attention`, no internal
+    error.
   - Manifest carry-over: an export with `locales: ["de"]` keeps every `zh-CN` entry; a page whose English file was
     deleted keeps its locale entries.
-  - Leftovers: a `de/a.md.0a1b.mogging-tmp` file is removed and reported at the next run.
+  - Leftovers: a `de/a.md.0a1b.mogging-tmp` file is removed and reported at the next run; a dry run lists it and
+    leaves it.
   - Crash (Review Focus 5): after writing one file, a thrown error from the second `fs.renameSync` (spy) leaves the
     first file whole and the second's old content whole; the next run classifies the first `published` and keeps it.
   - Dry run: `actions` equal to the real run's, no file or manifest written.
@@ -1074,6 +1102,17 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   - AX-1 `__proto__` in json values (Task 1); CA-1 body `mode` after an extension change (Task 14).
   - agy F2 rename to a `_` name refused; agy F3 implicit entries exclude slug, body and passthrough (Tasks 16, 6).
 
+- Panel round 3 (2026-11-17, narrow; seats Fold Regression on the round-2 folds and Adopter Walkthrough of design
+  section 1; agy CLEAN; Sonnet solo 7 findings + 3 anomalies). Verified (`compile.ts:24`, `context.ts:35-36`,
+  `normalize.ts:44-49`, `0001_engine.sql:33`); all FOLDED:
+  - FR-1 pages under a symlinked folder counted as gone; FR-2 "skipped" ambiguity in the prune guard (Task 12).
+  - FR-3 body `mode` ignored in classification (Task 11); FR-4 `.mdx` -> `.md` change skips into `attention`; FR-5 a
+    dry run never removes leftover temp files (Task 14).
+  - AW-1 a field with nothing to translate is not sent (Task 2); AW-2 `compile` forwards `includeUntracked` (Task 3).
+  - Anomaly: `nfcDeep` drops `__proto__` for `richText` too: the refusal moves into `nfcDeep` (Task 1). Anomaly:
+    context values carried `translate: false` leaves: they go through `wireValue` (Task 2). Anomaly: no index on the
+    shared slug: logged in `.clavity/local-anomalies.md` (a migration change is outside this step, spec 3).
+
 ## Stand-downs
 
-None in rounds 1 and 2: no finding was discarded below the floor or accepted unverified.
+None in rounds 1 to 3: no finding was discarded below the floor or accepted unverified.
