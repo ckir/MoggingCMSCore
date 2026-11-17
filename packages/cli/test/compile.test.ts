@@ -3,13 +3,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { cancelJobs } from "@mogging/ai";
-import { migrate } from "@mogging/core";
+import { migrate, publish, saveDraft } from "@mogging/core";
 import type { Sql } from "postgres";
 import { run } from "../src/run.js";
 import type { Deps } from "../src/types.js";
 import { withTestDb } from "./db.js";
-import { aiConfigFor, config, ctxFor, testDeps } from "./fixtures.js";
-import { asyncMockModel, identity, mockModel } from "./mockModel.js";
+import { aiConfigFor, config, coreCtx, ctxFor, testDeps } from "./fixtures.js";
+import { asyncMockModel, dataOf, identity, mockModel } from "./mockModel.js";
 import type { MockCallOptions } from "./mockModel.js";
 
 type Model = Parameters<typeof aiConfigFor>[0];
@@ -255,6 +255,29 @@ describe("mogging compile", () => {
       const t = testDeps(sql, { loadModule: async () => ({ config }) });
       expect(await run(["compile", "--locales", "de", "--budget", "1"], t)).toBe(2);
       expect(t.stderr()).toContain("needs an `ai` export");
+    });
+  });
+});
+
+describe("mogging compile --include-untracked", () => {
+  test("untracked fields are queued only with --include-untracked", async () => {
+    await withDb(async (sql) => {
+      await seed(sql, { "en/docs/intro.md": EN("Intro") });
+      const [{ doc_id: docId }] = (await sql`select doc_id from document_localized where locale = 'en'`) as unknown as [{ doc_id: string }];
+      // BOTH fields are present in de, so none is `missing` (a missing field is queued without the flag).
+      await saveDraft(coreCtx(sql), { docId, locale: "de", data: { title: "Einleitung", body: "Hallo" }, untracked: true });
+      await publish(coreCtx(sql), { docId, locale: "de" });
+
+      const without = await compileCmd(sql, mockModel([]), ["--locales", "de", "--budget", "1", "--json"]);
+      expect(without.code).toBe(0);
+      expect((JSON.parse(without.out) as { data: { enqueue: { enqueued: number } } }).data.enqueue.enqueued).toBe(0);
+
+      const model = mockModel([identity]);
+      const withFlag = await compileCmd(sql, model, ["--locales", "de", "--budget", "1", "--include-untracked", "--json"]);
+      expect(withFlag.code).toBe(0);
+      expect((JSON.parse(withFlag.out) as { data: { enqueue: { enqueued: number } } }).data.enqueue.enqueued).toBe(1);
+      expect(model.doGenerateCalls).toHaveLength(1);
+      expect(Object.keys(dataOf(model.doGenerateCalls[0]!).translate)).toContain("title");
     });
   });
 });

@@ -12,11 +12,12 @@ export const compileSpec: CommandSpec = {
   name: "compile",
   summary: "queue and run every stale or missing translation within a budget",
   usage:
-    "mogging compile --locales de,fr --budget <usd> [--collection <c>] [<collection>/<slug> ...] [--json] [--config <path>] [--database-url <url>]",
+    "mogging compile --locales de,fr --budget <usd> [--collection <c>] [<collection>/<slug> ...] [--include-untracked] [--json] [--config <path>] [--database-url <url>]",
   options: {
     locales: { type: "string" },
     budget: { type: "string" },
     collection: { type: "string" },
+    "include-untracked": { type: "boolean" },
   },
   project: "full",
   needsAi: true,
@@ -53,6 +54,7 @@ export const compileSpec: CommandSpec = {
       budgetUsd,
       ...(collection === undefined ? {} : { collection }),
       ...(docIds === undefined ? {} : { docIds }),
+      ...(flags["include-untracked"] === true ? { includeUntracked: true } : {}),
       log: (line) => write(`${line}\n`),
     });
     const { enqueue } = report;

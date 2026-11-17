@@ -2,11 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { getSyncState, migrate } from "@mogging/core";
+import { getSyncState, migrate, publish, saveDraft } from "@mogging/core";
 import type { Sql } from "postgres";
 import { run } from "../src/run.js";
 import { withTestDb } from "./db.js";
-import { config, testDeps } from "./fixtures.js";
+import { config, coreCtx, publishedDoc, testDeps } from "./fixtures.js";
 
 /** A per-test schema with the migrations applied. */
 const withDb = (fn: (sql: Sql) => Promise<void>) =>
@@ -123,6 +123,130 @@ describe("mogging track", () => {
       expect(await run(["track", "docs/nope", "--locale", "de"], missing)).toBe(1);
       expect(missing.stderr()).toContain("not found");
       expect(await run(["track", "docs/intro", "--locale", "en"], testDeps(sql))).toBe(1);
+    });
+  });
+});
+
+/** A published `docs/<slug>` whose `de` head (title and body) is published with `untracked: true`. */
+async function untrackedDoc(sql: Sql, slug: string): Promise<string> {
+  const docId = await publishedDoc(sql, slug);
+  await saveDraft(coreCtx(sql), { docId, locale: "de", data: { title: `T ${slug}`, body: `B ${slug}` }, untracked: true });
+  await publish(coreCtx(sql), { docId, locale: "de" });
+  return docId;
+}
+
+/** A published `docs/<slug>` whose `de` head records the source hashes, so every field is `current`. */
+async function currentDoc(sql: Sql, slug: string): Promise<string> {
+  const docId = await publishedDoc(sql, slug);
+  await saveDraft(coreCtx(sql), { docId, locale: "de", data: { title: `T ${slug}`, body: `B ${slug}` } });
+  await publish(coreCtx(sql), { docId, locale: "de" });
+  return docId;
+}
+
+const deStates = async (sql: Sql) =>
+  (await getSyncState(coreCtx(sql), { collection: "docs", locale: "de" })).map((r) => `${r.docId}:${r.field}:${r.state}`);
+
+const trackedDocIds = async (sql: Sql) =>
+  (await sql`select distinct doc_id from content_provenance where model_id = 'human:track' order by doc_id`).map(
+    (r) => r.doc_id as string,
+  );
+
+describe("mogging track --collection", () => {
+  test("--collection tracks every untracked field of every live document", async () => {
+    await withDb(async (sql) => {
+      // Created in this order so that slug order (alpha, beta) differs from creation order.
+      const beta = await untrackedDoc(sql, "beta");
+      const alpha = await untrackedDoc(sql, "alpha");
+      const gamma = await currentDoc(sql, "gamma");
+      expect((await deStates(sql)).filter((s) => s.endsWith(":untracked"))).toHaveLength(4);
+
+      const t = testDeps(sql);
+      expect(await run(["track", "--collection", "docs", "--locale", "de"], t)).toBe(0);
+      expect(t.stdout()).toBe(
+        [
+          "tracked docs/alpha de body", "tracked docs/alpha de title",
+          "tracked docs/beta de body", "tracked docs/beta de title", "",
+        ].join("\n"),
+      );
+      expect((await deStates(sql)).some((s) => s.endsWith(":untracked"))).toBe(false);
+      expect(await trackedDocIds(sql)).toEqual([alpha, beta].sort());
+      expect(await trackedDocIds(sql)).not.toContain(gamma);
+    });
+  });
+
+  test("--json data lists the tracked documents in slug order", async () => {
+    await withDb(async (sql) => {
+      const beta = await untrackedDoc(sql, "beta");
+      const alpha = await untrackedDoc(sql, "alpha");
+      const t = testDeps(sql);
+      expect(await run(["track", "--collection", "docs", "--locale", "de", "--json"], t)).toBe(0);
+      const doc = JSON.parse(t.stdout()) as { ok: boolean; data: unknown };
+      expect(doc.ok).toBe(true);
+      expect(doc.data).toEqual({
+        tracked: [
+          { docId: alpha, slug: "alpha", locale: "de", fields: ["body", "title"] },
+          { docId: beta, slug: "beta", locale: "de", fields: ["body", "title"] },
+        ],
+      });
+    });
+  });
+
+  test("--dry-run tracks nothing", async () => {
+    await withDb(async (sql) => {
+      await untrackedDoc(sql, "alpha");
+      const before = await deStates(sql);
+      const t = testDeps(sql);
+      expect(await run(["track", "--collection", "docs", "--locale", "de", "--dry-run"], t)).toBe(0);
+      expect(t.stdout()).toBe(
+        "dry run: nothing was written\nwould track docs/alpha de body\nwould track docs/alpha de title\n",
+      );
+      expect(await deStates(sql)).toEqual(before);
+      expect(await trackedDocIds(sql)).toEqual([]);
+    });
+  });
+
+  test("nothing untracked prints the one line", async () => {
+    await withDb(async (sql) => {
+      await currentDoc(sql, "gamma");
+      const t = testDeps(sql);
+      expect(await run(["track", "--collection", "docs", "--locale", "de"], t)).toBe(0);
+      expect(t.stdout()).toBe("nothing untracked in docs (de)\n");
+      const json = testDeps(sql);
+      expect(await run(["track", "--collection", "docs", "--locale", "de", "--json"], json)).toBe(0);
+      expect((JSON.parse(json.stdout()) as { data: unknown }).data).toEqual({ tracked: [] });
+    });
+  });
+
+  test("--collection with a positional, and neither, are exit 2", async () => {
+    await withDb(async (sql) => {
+      const both = testDeps(sql);
+      expect(await run(["track", "docs/intro", "--collection", "docs", "--locale", "de"], both)).toBe(2);
+      expect(both.stderr()).toContain("track: give <collection>/<slug> or --collection <c>, not both");
+      const neither = testDeps(sql);
+      expect(await run(["track", "--locale", "de"], neither)).toBe(2);
+      expect(neither.stderr()).toContain("track: give <collection>/<slug> or --collection <c>");
+      expect(neither.stderr()).not.toContain("not both");
+    });
+  });
+
+  test("--fields with --collection and --dry-run with a positional are exit 2", async () => {
+    await withDb(async (sql) => {
+      const fields = testDeps(sql);
+      expect(await run(["track", "--collection", "docs", "--locale", "de", "--fields", "title"], fields)).toBe(2);
+      expect(fields.stderr()).toContain("track: --fields needs <collection>/<slug>");
+      const dry = testDeps(sql);
+      expect(await run(["track", "docs/intro", "--locale", "de", "--dry-run"], dry)).toBe(2);
+      expect(dry.stderr()).toContain("track: --dry-run needs --collection");
+    });
+  });
+
+  test("an undeclared collection is exit 2, naming the declared ones, before connecting", async () => {
+    await withDb(async (sql) => {
+      let connected = false;
+      const t = testDeps(sql, { connect: () => { connected = true; throw new Error("connected"); } });
+      expect(await run(["track", "--collection", "nope", "--locale", "de"], t)).toBe(2);
+      expect(t.stderr()).toContain('unknown collection "nope" (declared: docs)');
+      expect(connected).toBe(false);
     });
   });
 });
