@@ -1,0 +1,16 @@
+# A local Postgres for MoggingCMS. Start it with `docker compose up -d`.
+# The credentials match DATABASE_URL in .env.example.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: mogging
+      POSTGRES_PASSWORD: mogging
+      POSTGRES_DB: mogging
+    ports:
+      - "5432:5432"
+    volumes:
+      - mogging-data:/var/lib/postgresql/data
+
+volumes:
+  mogging-data:
