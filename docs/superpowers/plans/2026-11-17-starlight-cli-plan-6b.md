@@ -290,7 +290,7 @@ Every other `astro.config` a test needs is this text with the one change the tes
     `deps.commands`) exits 2 and the `connect` spy was never called; one whose hook passes runs normally.
 - [ ] **Step 2: Run them to see them fail.** `pnpm --filter @mogging/cli test project` - FAIL.
 - [ ] **Step 3: Implement.** In `loadProject`, after the `config` check (`project.ts:83-87`) and before `deps.connect`
-  (`:88`): when `mod.starlight !== undefined`, a non-object is a `UsageError`; otherwise call
+  (`:88`): when `mod.starlight !== undefined`, a non-object or `null` is a `UsageError`; otherwise call
   `defineStarlightLayout(mod.starlight as StarlightLayoutInput, mod.config)` and turn its `ValidationError` into
   `UsageError(\`${configPath} must export \`starlight\` as a valid Starlight layout: ${message}\`)`. Return `starlight`
   and `root: dirname(configPath)` on the project.
@@ -304,7 +304,8 @@ Every other `astro.config` a test needs is this text with the one change the tes
 - Modify: `packages/cli/package.json` (dependency `"acorn": "8.19.0"`; run `pnpm install`)
 
 **Interfaces:** Produces `readAstroConfig`, `starlightLocaleDirs`, `localeDrift`, `astroConfigWarnings`,
-`AstroConfigRead`, `AstroLocale` (block above). Consumes `StarlightLayout`, `normalizeLocale` (`@mogging/core`).
+`AstroConfigRead`, `AstroLocale` (block above). Consumes the type `StarlightLayout` (`@mogging/markdown`,
+`packages/markdown/src/index.ts:30`).
 
 The read, in order (spec 5.2 "best effort: a config they cannot read statically is reported once, not guessed"); the
 first failing step gives the reason, so a test with two problems expects the earlier step's reason. Reasons, by step:
@@ -358,8 +359,10 @@ read when it is a string literal and is `null` otherwise (it is never a reason).
 
 - [ ] **Step 1: Write the failing tests** (each writes files into a fresh temp folder; no database):
   - "reads locales, defaultLocale and the docs folder from a plain astro.config.mjs": `ASTRO_ROOT_DE_ZH` gives
-    `{ ok: true, docsDir: "src/content/docs", defaultLocale: null, locales: [{ key: "root", lang: "en" }, { key: "de",
-    lang: "de" }, { key: "zh-cn", lang: "zh-CN" }] }`.
+    exactly `{ ok: true, file: <dir>/astro.config.mjs, docsDir: "src/content/docs", defaultLocale: null, locales: [{
+    key: "root", lang: "en", label: "English" }, { key: "de", lang: "de", label: "Deutsch" }, { key: "zh-cn", lang:
+    "zh-CN", label: "简体中文" }] }` (`toEqual`; the other tests of this task use `toMatchObject` on the fields they
+    name).
   - "lang defaults to the key": `de: { label: "Deutsch" }` gives `{ key: "de", lang: "de" }`.
   - "srcDir moves the docs folder": `srcDir: "./site/"` gives `"site/content/docs"`; `srcDir: "src"` gives
     `"src/content/docs"`.
@@ -367,8 +370,9 @@ read when it is a string literal and is `null` otherwise (it is never a reason).
   - "a TypeScript config with annotations is read and prints nothing": `astro.config.ts` holding `const title: string
     = "Docs";` and the `ASTRO_ROOT_DE_ZH` locales gives ok; because Node prints an experimental warning only once per
     process, the no-output half runs in a fresh child process: `execFileSync(process.execPath, ["--import", "tsx",
-    "-e", <import readAstroConfig from the source file and call it on the folder>])` (`tsx` is a CLI devDependency)
-    and its stderr is empty; in-process, `process.emitWarning` is the original function after the call.
+    "-e", <import readAstroConfig from the source file and call it on the folder>], { cwd: <packages/cli> })` (`tsx`
+    resolves only from `packages/cli`, a CLI devDependency: measured, `node --import tsx` from the repository root
+    fails with `ERR_MODULE_NOT_FOUND`) and its stderr is empty; in-process, `process.emitWarning` is the original function after the call.
   - "Astro's file order: .mjs wins over .ts": both present with different locales; the `.mjs` ones are returned.
   - "a single-language site has locales null": `starlight({ title: "Docs" })`.
   - one test per not-readable input, each asserting `ok: false` and the exact reason: no file (`file: null`); a
@@ -438,14 +442,18 @@ Behaviour (spec 5.2, 5.4 exit codes, 5.5, 5.6):
     `astro.config.mjs` = `ASTRO_ROOT_DE_ZH`; exit 0; stdout lines include `created src/content/docs/a.md` and no
     `warning:` line.
   - "a directory argument in a Starlight project is exit 2": stderr contains `imports from its docs folder`.
-  - "Starlight flags in a generic project are exit 2 naming the export": `--prune`, `--dry-run`,
-    `--accept-new-and-gone`, `--restore x` each exit 2 with stderr containing `needs a Starlight project` (every
+  - "Starlight flags in a generic project are exit 2 naming the export": `import <dir> --prune`, `import <dir>
+    --dry-run`, `import <dir> --accept-new-and-gone`, `import <dir> --restore x` (a directory is given, so only the
+    flag is wrong; `checkLoaded` checks the Starlight-only flags first, then the directory) each exit 2 with stderr
+    containing `needs a Starlight project` (every
     exit-2 test in this plan asserts its message, so it cannot pass on an unrelated usage error).
   - "a plain --prune deletes a gone page": import `a.md` and `b.md`, delete `b.md`, `import --prune`; exit 0; stdout
     has `pruned b`; `getDocument(ctx, { collection: "docs", slug: "b" })` is null.
   - "an ambiguous stop lists both sides without a command": import `a.md`, `c.md`; delete both, add `b.md`; exit 1;
     stdout has `pair them with mogging rename <old> <new>, or pass --accept-new-and-gone` and no `run:` line.
-  - "a dry run predicts the stop's exit": the first stop case with `--dry-run` exits 4 and changes nothing.
+  - "a dry run predicts the stop's exit": the case "the safety stop with other files imported" (`c.md` edited, so
+    `updated`) with `--dry-run` exits 4, and the ambiguous case with `--dry-run` exits 1 (its new page is `skipped`,
+    `importStarlight.ts:299-300`); neither changes the database.
   - "--dry-run writes nothing and says so": exit 0, first stdout line `dry run: nothing was written`, `select count(*)
     from documents` is 0.
   - "the safety stop with other files imported exits 4 and prints the command": import `a.md` and `c.md`, rename
@@ -490,7 +498,9 @@ Behaviour:
 - Usage: `mogging export [<dir>] [--collection <c>]... [--locale <l>]... [--dry-run] [--json] [--config <path>]
   [--database-url <url>]`. Options gain `"dry-run"`. Arity `[0, 1]`.
 - Both modes: each `--locale` is normalized with `normalizeLocale` (`@mogging/core`) before the declared check
-  (`export.ts:30-33`) and passed normalized; an invalid tag stays a usage error with today's message.
+  (`export.ts:30-33`) and passed normalized; `normalizeLocale` throws a `ValidationError` (exit 1) for a malformed
+  tag, so that throw is caught and turned into today's `unknown locale "<raw>" (declared: ...)` usage error. Test:
+  `--locale en_US` exits 2 with `unknown locale "en_US"`.
 - Generic project: the directory is required; `--dry-run` is `UsageError("export: --dry-run needs a Starlight project
   ...")` in the same form as Task 4. Otherwise unchanged.
 - Starlight project: a directory argument and `--collection` are usage errors (`export: a Starlight project exports
@@ -519,7 +529,8 @@ Behaviour:
   - "an unreadable astro.config writes as configured with one warning": `locales: L`; the `zh-cn` file is written;
     exactly one `could not be read statically` line.
   - "a directory argument and --collection are exit 2 in a Starlight project", each asserting its message.
-  - "--dry-run in a generic project is exit 2" with `needs a Starlight project` (Review Focus 4).
+  - "--dry-run in a generic project is exit 2": `export <dir> --dry-run` with `needs a Starlight project` (Review
+    Focus 4).
   - In `export.test.ts`: "--locale is normalized": `--locale DE` (generic project) exports the `de` tree, exit 0.
   - In `exportStarlight.test.ts`: "--locale zh-cn selects zh-CN".
 - [ ] **Step 2: Run them to see them fail.** `pnpm --filter @mogging/cli test export` - FAIL.
@@ -841,7 +852,7 @@ printing `OK <step>` and failing the script with a message on a wrong exit or ou
    and contain `Übersetzt: `; `.mogging/manifest.json` exists. A second `export --json` exits 0 with every action
    `keep` (nothing rewritten); `status --json` `data.rows` holds at least one `current` row for each of `de` and `zh-CN` and no row of those
    locales whose `state` is `stale` or `missing` (`packages/cli/src/commands/status.ts:80`).
-8. `npx astro build` exits 0; `dist/de/guides/getting-started/index.html` and
+8. `node_modules/.bin/astro build` (in `<site>`, with `siteEnv({})`) exits 0; `dist/de/guides/getting-started/index.html` and
    `dist/zh-cn/guides/getting-started/index.html` each contain `Übersetzt: `; `dist/index.html` exists and does not contain `Übersetzt: `.
 9. `finally`: drop the schema, remove the temporary folder and the copied `LICENSE.md` files (as
    `pack-smoke.mjs:115-121`); exit 1 on any failure, else print `accept:starlight passed`.
@@ -889,7 +900,7 @@ The run (spec 7: "init --starlight, the day-one import, a rename and an export, 
    from '../../../../components/Note.astro';` and `import { Card } from '@astrojs/starlight/components';`; both now
    carry `order: 5`.
 5. `mogging rename guides/setup guides/installation` exits 0; stdout lists `reference astro.config.mjs:`; the script
-   then replaces `slug: "guides/setup"` in `astro.config.mjs` (the operator's edit the reference asks for).
+   then replaces the sidebar entry's slug (matching `/slug:\s*['"]guides\/setup['"]/`) in `astro.config.mjs` (the operator's edit the reference asks for).
    `de/guides/installation.md` exists and `de/guides/setup.md` does not.
 6. `mogging export` exits 0.
 7. No hand-written text changed: for every German file of step 1 (at its renamed path for `setup.md`), the body with
@@ -897,7 +908,7 @@ The run (spec 7: "init --starlight, the day-one import, a rename and an export, 
    `sidebar.label`, `sidebar.badge`, `hero.title`, `hero.tagline`, the action `text`) parsed with `yaml` are unchanged
    (formatting and copied shared keys may differ, spec 5.4); `de/reference/levels.md` still has `difficulty:
    beginner`; `de/guides/wip.md` is byte-identical.
-8. `npx astro build` exits 0; `dist/de/guides/installation/index.html` has `Einrichtung` inside its `<h1`
+8. `node_modules/.bin/astro build` exits 0; `dist/de/guides/installation/index.html` has `Einrichtung` inside its `<h1`
    element (the page title; the sidebar label comes from `astro.config`'s explicit entry, Starlight
    `navigation.ts:165-169`);
    `dist/de/guides/images/index.html` contains `<img`; `dist/de/guides/wip/index.html` is Starlight's fallback to the
@@ -1100,6 +1111,15 @@ bulk publish of approved drafts would help large sites).
     warning test runs in a child process (Node warns once per process); `status` must show `current` rows (agy).
   - Ruling: Task 8 is not split (a seat's Q2 suggestion). Its pure functions and the `init` wiring share one test
     file and one reviewer gate, and renumbering every later task costs more than the split saves.
+
+- Panel round 4 (2026-11-17; Sonnet seats Cold Executor for Tasks 1-7 (bespoke) and Axiom Breaker: 6 findings; agy
+  seats Cold Executor for Tasks 8-13 and Fold Verifier for round 3: CLEAN, two below-floor notes; brief
+  `.clavity/seams/plan6b-panel-r4.md`). All FOLDED: the dry-run stop test named the wrong case (the ambiguous stop is
+  exit 1, `importStarlight.ts:299-300`); the TS child process needs `cwd` `packages/cli` (measured
+  `ERR_MODULE_NOT_FOUND` from the root); the generic-flag tests pass a directory and the check order is stated; a
+  malformed `--locale` becomes the usage error instead of `normalizeLocale`'s exit 1; the first reader test is a full
+  literal with `file` and `label`; Task 3 consumes `StarlightLayout` from markdown, not core; a `null` starlight export
+  is a usage error; the acceptance runs call `node_modules/.bin/astro`; the script's sidebar edit matches either quote.
 
 ## Stand-downs
 
