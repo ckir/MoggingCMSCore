@@ -15,8 +15,8 @@ export default defineConfig({
         "zh-cn": { label: "简体中文", lang: "zh-CN" },
       },
       sidebar: [
-        { label: "Guides", autogenerate: { directory: "guides" } },
-        { label: "Reference", autogenerate: { directory: "reference" } },
+        { label: "Guides", items: [{ autogenerate: { directory: "guides" } }] },
+        { label: "Reference", items: [{ autogenerate: { directory: "reference" } }] },
       ],
     }),
     // A no-op integration: it reads nothing and prints nothing. It keeps the package installed where the site builds.

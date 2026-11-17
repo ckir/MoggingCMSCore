@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse } from "acorn";
 import { createJiti } from "jiti";
 import { describe, expect, test } from "vitest";
 import { defineStarlightLayout } from "@mogging/markdown";
@@ -37,6 +38,30 @@ describe("the starlight template", () => {
     };
     const layout = defineStarlightLayout(mod.starlight as never, mod.config as never);
     expect(localeDrift(read, layout)).toEqual([]);
+  });
+
+  test("no sidebar group carries both label and autogenerate", () => {
+    // Starlight 0.43.0 rejects `{ label, autogenerate }` (schemas/sidebar.ts: removed in 0.39.0); the group form is
+    // `{ label, items: [{ autogenerate }] }`.
+    const ast = parse(text("astro.config.mjs"), { ecmaVersion: "latest", sourceType: "module" });
+    const keyName = (k: { type: string; name?: string; value?: unknown }): unknown =>
+      k.type === "Identifier" ? k.name : k.value;
+    let withAutogenerate = 0;
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      if (node === null || typeof node !== "object") return;
+      const n = node as { type?: string; properties?: Array<{ type: string; key: never }> } & Record<string, unknown>;
+      if (n.type === "ObjectExpression") {
+        const keys = (n.properties ?? []).filter((p) => p.type === "Property").map((p) => keyName(p.key));
+        if (keys.includes("autogenerate")) {
+          withAutogenerate += 1;
+          expect(keys, "an object holding `autogenerate` must not also hold `label`").not.toContain("label");
+        }
+      }
+      for (const v of Object.values(n)) walk(v);
+    };
+    walk(ast);
+    expect(withAutogenerate).toBe(2);
   });
 
   test("mogging.config.ts is what init --starlight writes", () => {
