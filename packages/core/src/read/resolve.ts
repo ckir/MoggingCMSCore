@@ -5,7 +5,8 @@ import type { Collection } from "../schema/collection.js";
 import { normalizeLocale } from "../schema/locale.js";
 import { planResolve, runResolve } from "./query.js";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Canonical document-id shape; anything else is malformed. */
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type ResolveInput = { collection: string; locale: string; ids?: string[]; limit?: number; asOf?: Date };
 export type ResolvedDocument = {
@@ -15,13 +16,15 @@ export type ResolvedDocument = {
   missing: string[];
 };
 
-function collectionOf(ctx: Ctx, name: string): Collection {
+/** Looks up a declared collection by name. @throws {NotFoundError} when it is not declared. */
+export function collectionOf(ctx: Ctx, name: string): Collection {
   const col = ctx.config.collections.find((c) => c.name === name);
   if (!col) throw new NotFoundError(`Unknown collection "${String(name)}"`);
   return col;
 }
 
-function declaredLocale(ctx: Ctx, input: string): string {
+/** Normalizes a locale and requires it to be declared in the config. @throws {ValidationError} otherwise. */
+export function declaredLocale(ctx: Ctx, input: string): string {
   const locale = normalizeLocale(input);
   const { config } = ctx;
   const declared = new Set([config.locales.source, ...Object.keys(config.locales.chains)]);
@@ -143,6 +146,28 @@ function toSnapshot(r: Record<string, unknown>): Snapshot {
   };
 }
 
+/** Reduces one scope's head rows to its published and draft heads. */
+function pairOf(rows: Array<Record<string, unknown>>): HeadPair {
+  const pub = rows.find((r) => r.is_head_published);
+  const draft = rows.find((r) => r.is_head_draft);
+  return { published: pub ? toSnapshot(pub) : null, draft: draft ? toSnapshot(draft) : null };
+}
+
+/** The most ids one bulk read accepts; callers with more call in chunks of this size. */
+export const BULK_ID_LIMIT = 1000;
+
+/**
+ * Validates a bulk-read id list and returns its well-formed ids, lower-cased (the database's canonical uuid text) and
+ * deduplicated, first occurrence first.
+ * Malformed ids are dropped (they name no document).
+ * @throws {ValidationError} when `docIds` is not an array or holds more than {@link BULK_ID_LIMIT} entries.
+ */
+export function bulkIds(docIds: string[]): string[] {
+  if (!Array.isArray(docIds)) throw new ValidationError("docIds must be an array");
+  if (docIds.length > BULK_ID_LIMIT) throw new ValidationError(`docIds holds ${docIds.length} ids; the limit is ${BULK_ID_LIMIT}`);
+  return [...new Set(docIds.filter((i) => typeof i === "string" && UUID.test(i)).map((i) => i.toLowerCase()))];
+}
+
 /** Raw heads (published and draft) for the shared snapshot and every locale, no fallback applied. */
 export async function getDocument(
   ctx: Ctx, input: { collection: string; docId?: string; slug?: string },
@@ -171,11 +196,6 @@ export async function getDocument(
   const sharedRows = await sql`select * from document_shared where doc_id = ${id} and (is_head_published or is_head_draft)`;
   const locRows = await sql`select * from document_localized where doc_id = ${id} and (is_head_published or is_head_draft) order by locale`;
 
-  const pairOf = (rows: Array<Record<string, unknown>>): HeadPair => {
-    const pub = rows.find((r) => r.is_head_published);
-    const draft = rows.find((r) => r.is_head_draft);
-    return { published: pub ? toSnapshot(pub) : null, draft: draft ? toSnapshot(draft) : null };
-  };
   const byLocale = new Map<string, Array<Record<string, unknown>>>();
   for (const r of locRows as unknown as Array<Record<string, unknown>>) {
     const list = byLocale.get(r.locale as string) ?? [];
@@ -192,6 +212,70 @@ export async function getDocument(
     shared: pairOf(sharedRows as unknown as Array<Record<string, unknown>>),
     locales,
   };
+}
+
+/**
+ * Raw heads for many documents of one collection, exactly as {@link getDocument} returns them per id, in three
+ * queries whatever the number of ids. Records follow `docIds` order (a repeated id yields one record, at its
+ * first position); unknown ids, malformed ids and ids of another collection are omitted; deleted documents are
+ * included with `deletedAt` set.
+ *
+ * @param ctx engine context (read; the actor is not used).
+ * @param input the collection and at most 1000 document ids (callers with more call in chunks).
+ * @returns one {@link DocumentRecord} per existing document.
+ * @throws {NotFoundError} for an undeclared collection.
+ * @throws {ValidationError} when `docIds` holds more than 1000 ids.
+ */
+export async function getDocuments(
+  ctx: Ctx, input: { collection: string; docIds: string[] },
+): Promise<DocumentRecord[]> {
+  const col = collectionOf(ctx, input.collection);
+  const ids = bulkIds(input.docIds);
+  if (ids.length === 0) return [];
+  const { sql } = ctx;
+  const idList = sql.json(ids as never);
+  const docs = await sql`select id, collection, created_at, deleted_at from documents
+    where collection = ${col.name} and id in (select jsonb_array_elements_text(${idList}::jsonb)::uuid)`;
+  const sharedRows = await sql`select * from document_shared
+    where doc_id in (select jsonb_array_elements_text(${idList}::jsonb)::uuid) and (is_head_published or is_head_draft)`;
+  const locRows = await sql`select * from document_localized
+    where doc_id in (select jsonb_array_elements_text(${idList}::jsonb)::uuid) and (is_head_published or is_head_draft)
+    order by locale`;
+
+  const sharedBy = new Map<string, Array<Record<string, unknown>>>();
+  for (const r of sharedRows as unknown as Array<Record<string, unknown>>) {
+    const list = sharedBy.get(r.doc_id as string) ?? [];
+    list.push(r);
+    sharedBy.set(r.doc_id as string, list);
+  }
+  const locBy = new Map<string, Map<string, Array<Record<string, unknown>>>>();
+  for (const r of locRows as unknown as Array<Record<string, unknown>>) {
+    const perDoc = locBy.get(r.doc_id as string) ?? new Map<string, Array<Record<string, unknown>>>();
+    const list = perDoc.get(r.locale as string) ?? [];
+    list.push(r);
+    perDoc.set(r.locale as string, list);
+    locBy.set(r.doc_id as string, perDoc);
+  }
+  const docBy = new Map<string, Record<string, unknown>>();
+  for (const d of docs as unknown as Array<Record<string, unknown>>) docBy.set(d.id as string, d);
+
+  const out: DocumentRecord[] = [];
+  for (const requested of ids) {
+    const doc = docBy.get(requested);
+    if (!doc) continue;
+    const id = doc.id as string;
+    const locales: Record<string, HeadPair> = {};
+    for (const [loc, rows] of locBy.get(id) ?? []) locales[loc] = pairOf(rows);
+    out.push({
+      id,
+      collection: doc.collection as string,
+      createdAt: doc.created_at as Date,
+      deletedAt: (doc.deleted_at ?? null) as Date | null,
+      shared: pairOf(sharedBy.get(id) ?? []),
+      locales,
+    });
+  }
+  return out;
 }
 
 /** Keyset pagination by (created_at, id); `after` is the last id seen, `next` is null when exhausted. */

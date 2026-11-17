@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import * as api from "../src/index.js";
 import * as pkg from "@mogging/core";
-import type { Ctx, DocumentRecord, DraftHead, DraftReview, Field, ReviewField, LicencePayload, MoggingConfig, ReleaseSummary, Snapshot } from "../src/index.js";
+import type { Ctx, DocumentRecord, DraftHead, DraftReview, Field, ReviewField, LicencePayload, MoggingConfig, ReleaseSummary, Snapshot, PublishedVersion } from "../src/index.js";
 
 // THE CONTRACT: this is the complete runtime surface of @mogging/core (spec 9.3). Adding or removing an
 // export must be a deliberate edit here; a leaked internal (encodeKey, stripTopLevelNulls, isEmptyValue,
@@ -10,7 +10,7 @@ const FUNCTIONS = [
   "defineConfig", "defineCollection",
   "text", "richText", "number", "boolean", "dateTime", "slug", "json", "reference", "list", "object",
   "normalizeLocale", "chainFor", "migrate",
-  "createDocument", "deleteDocument", "getDocument", "listDocuments",
+  "createDocument", "deleteDocument", "getDocument", "getDocuments", "listDocuments", "listPublishedVersions", "listLocaleRows",
   "saveDraft", "publish", "unpublish", "recordAiDraft", "approve", "approveClean",
   "resolve", "resolveReference", "getSyncState", "trackFields",
   "createRelease", "addToRelease", "removeFromRelease", "publishRelease",
@@ -52,11 +52,12 @@ test("the listed types are importable and usable", () => {
   const snap: Pick<Snapshot, "version"> = { version: 1 };
   const rec: Pick<DocumentRecord, "collection"> = { collection: "pages" };
   const ctxShape: Pick<Ctx, "actor"> = { actor: "a" };
+  const pv: Pick<PublishedVersion, "version"> = { version: 3 };
   const head: Pick<DraftHead, "warningCount"> = { warningCount: 0 };
   const review: Pick<DraftReview, "fields"> = { fields: [] };
   const reviewField: Pick<ReviewField, "path"> = { path: "title" };
-  expect([config.collections.length, field.kind, payload, snap.version, rec.collection, ctxShape.actor])
-    .toEqual([1, "text", undefined, 1, "pages", "a"]);
+  expect([config.collections.length, field.kind, payload, snap.version, rec.collection, ctxShape.actor, pv.version])
+    .toEqual([1, "text", undefined, 1, "pages", "a", 3]);
   const release: Pick<ReleaseSummary, "name" | "itemCount" | "publishedAt"> = { name: "r", itemCount: 0, publishedAt: null };
   expect([head.warningCount, review.fields.length, reviewField.path]).toEqual([0, 0, "title"]);
   expect([release.name, release.itemCount, release.publishedAt]).toEqual(["r", 0, null]);

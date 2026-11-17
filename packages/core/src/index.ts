@@ -30,8 +30,10 @@ export { rejectDraft } from "./documents/rejectDraft.js";
 export { approve, approveClean } from "./documents/approve.js";
 export type { ApproveInput, ApproveCleanInput, ApproveCleanResult } from "./documents/approve.js";
 
-export { resolve, resolveReference, getDocument, listDocuments } from "./read/resolve.js";
+export { resolve, resolveReference, getDocument, getDocuments, listDocuments } from "./read/resolve.js";
 export type { ResolveInput, ResolvedDocument, Snapshot, HeadPair, DocumentRecord } from "./read/resolve.js";
+export { listPublishedVersions, listLocaleRows } from "./read/versions.js";
+export type { PublishedVersion } from "./read/versions.js";
 export { listDraftHeads, getDraftReview } from "./read/review.js";
 export type { DraftHead, DraftReview, ReviewField } from "./read/review.js";
 
