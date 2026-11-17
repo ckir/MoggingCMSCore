@@ -1,6 +1,6 @@
 # Starlight integration: drop-in package and starter template (v0.1 ship step 2)
 
-Date: 2026-11-13. Status: DRAFT, awaiting owner approval. Size: a project. Step 2 of
+Date: 2026-11-13. Status: APPROVED by the owner on 2026-11-17. Size: a project. Step 2 of
 `docs/superpowers/specs/2026-11-13-v01-ship-sequencing-design.md`. Agy-first consults: seams
 `.clavity/seams/starlight-source-first.md`, `starlight-shape-first.md`, `starlight-negotiate-first.md` (replies in
 `.clavity/scratch/starlight-source`, `starlight-shape`, `starlight-negotiate`), all [VERDICT: ALIGNED] after

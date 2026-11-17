@@ -1,6 +1,6 @@
 # v0.1 ship sequencing: the open TODO.md items versus the remaining ship path
 
-Date: 2026-11-13. Status: DRAFT, awaiting owner approval. Size: a small change (a sequencing decision, no new
+Date: 2026-11-13. Status: APPROVED by the owner on 2026-11-17. Size: a small change (a sequencing decision, no new
 feature). Companion to the roadmap (section 5, v0.1) and TODO.md.
 
 ## Intent and why
