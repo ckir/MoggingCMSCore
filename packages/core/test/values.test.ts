@@ -5,6 +5,9 @@ import {
 import { hashValue } from "../src/values/hash.js";
 import { isEmptyValue, normalizeValue, stripTopLevelNulls } from "../src/values/normalize.js";
 
+/** A valid v1 rich-text root holding `children`. */
+const root = (...children: unknown[]) => ({ type: "root", version: 1, mode: "md", children });
+
 test("dateTime normalizes to UTC with milliseconds", () => {
   expect(normalizeValue(dateTime(), "2026-11-11T08:00:00Z")).toBe("2026-11-11T08:00:00.000Z");
   expect(normalizeValue(dateTime(), "2026-11-11T10:00:00+02:00")).toBe("2026-11-11T08:00:00.000Z");
@@ -62,8 +65,30 @@ test("boolean, reference, dateTime kind checks", () => {
   expect(() => normalizeValue(dateTime(), "not a date")).toThrow(ValidationError);
   expect(normalizeValue(dateTime(), new Date("2026-11-11T08:00:00Z"))).toBe("2026-11-11T08:00:00.000Z");
 });
+test("richText refuses a string and names markdownToTree", () => {
+  expect(() => normalizeValue(richText(), "# Hi", "body")).toThrow(ValidationError);
+  expect(() => normalizeValue(richText(), "# Hi", "body")).toThrow(/markdownToTree/);
+});
+test("richText refuses a value that is not a v1 root", () => {
+  const bad: unknown[] = [
+    [], {},
+    { type: "doc", version: 1, mode: "md", children: [] },
+    { type: "root", version: 2, mode: "md", children: [] },
+    { type: "root", version: 1, mode: "x", children: [] },
+    { type: "root", version: 1, mode: "md" },
+    { type: "root", version: 1, mode: "md", children: [], extra: 1 },
+  ];
+  for (const v of bad) {
+    expect(() => normalizeValue(richText(), v), JSON.stringify(v)).toThrow(ValidationError);
+    expect(() => normalizeValue(richText(), v), JSON.stringify(v)).toThrow(/expected richText as a rich-text tree/);
+  }
+});
+test("a richText inside a list is checked", () => {
+  expect(() => normalizeValue(list(richText()), ["x"], "notes")).toThrow(ValidationError);
+  expect(() => normalizeValue(list(richText()), ["x"], "notes")).toThrow(/notes\[0\]/);
+});
 test("richText NFC-normalizes strings recursively", () => {
-  expect(normalizeValue(richText(), { children: [{ t: "é" }] })).toEqual({ children: [{ t: "é" }] });
+  expect(normalizeValue(richText(), root({ children: [{ t: "é" }] }))).toEqual(root({ children: [{ t: "é" }] }));
 });
 
 test("nested object rejects prototype-named undeclared keys", () => {
@@ -84,17 +109,17 @@ test("hashValue matches pinned SHA-256 vectors over RFC 8785 canonical JSON", ()
   expect(hashValue("Hello")).not.toBe("185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969");
 });
 test("richText rejects NaN and Infinity nested inside the document, naming the path", () => {
-  expect(() => normalizeValue(richText(), { children: [{ value: NaN }] }, "body")).toThrow(/body\.children\[0\]\.value.*non-finite/);
-  expect(() => normalizeValue(richText(), { children: [{ value: Infinity }] }, "body")).toThrow(ValidationError);
-  expect(normalizeValue(richText(), { children: [{ value: 2 }] }, "body")).toEqual({ children: [{ value: 2 }] });
+  expect(() => normalizeValue(richText(), root({ children: [{ value: NaN }] }), "body")).toThrow(/body\.children\[0\]\.children\[0\]\.value.*non-finite/);
+  expect(() => normalizeValue(richText(), root({ children: [{ value: Infinity }] }), "body")).toThrow(ValidationError);
+  expect(normalizeValue(richText(), root({ children: [{ value: 2 }] }), "body")).toEqual(root({ children: [{ value: 2 }] }));
 });
 test("U+0000 is rejected in text, slug, reference and every richText string and key", () => {
   expect(() => normalizeValue(text(), "a\u0000b")).toThrow(/contains U\+0000/);
   expect(() => normalizeValue(slug(), "a\u0000b")).toThrow(/contains U\+0000/);
   expect(() => normalizeValue(reference("posts"), "a\u0000b")).toThrow(/contains U\+0000/);
-  expect(() => normalizeValue(richText(), "a\u0000b")).toThrow(/contains U\+0000/);
-  expect(() => normalizeValue(richText(), { children: [{ text: "a\u0000b" }] })).toThrow(/contains U\+0000/);
-  expect(() => normalizeValue(richText(), { "k\u0000": 1 })).toThrow(/contains U\+0000/);
+  expect(() => normalizeValue(richText(), root("a\u0000b"))).toThrow(/contains U\+0000/);
+  expect(() => normalizeValue(richText(), root({ children: [{ text: "a\u0000b" }] }))).toThrow(/contains U\+0000/);
+  expect(() => normalizeValue(richText(), root({ "k\u0000": 1 }))).toThrow(/contains U\+0000/);
 });
 test("other control characters stay legal", () => {
   expect(normalizeValue(text(), "a\u0001b\tc")).toBe("a\u0001b\tc");
@@ -102,8 +127,8 @@ test("other control characters stay legal", () => {
 
 test("a __proto__ key is refused in json and richText", () => {
   expect(() => normalizeValue(json(), JSON.parse('{"a":{"__proto__":{"x":1}}}'))).toThrow(/__proto__/);
-  expect(() => normalizeValue(richText(), JSON.parse('{"type":"root","children":[],"__proto__":{"x":1}}'))).toThrow(ValidationError);
-  expect(() => normalizeValue(richText(), JSON.parse('{"type":"root","children":[],"__proto__":{"x":1}}'))).toThrow(/__proto__/);
+  expect(() => normalizeValue(richText(), JSON.parse('{"type":"root","version":1,"mode":"md","children":[{"__proto__":{"x":1}}]}'))).toThrow(ValidationError);
+  expect(() => normalizeValue(richText(), JSON.parse('{"type":"root","version":1,"mode":"md","children":[{"__proto__":{"x":1}}]}'))).toThrow(/__proto__/);
   expect(({} as Record<string, unknown>)["x"]).toBeUndefined();
 });
 test("json normalizes any JSON value", () => {
