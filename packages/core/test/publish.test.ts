@@ -315,3 +315,33 @@ test("a required field named like an Object.prototype member is enforced", async
     `Cannot publish version 1 of ${docId}/en: missing required field valueOf`,
   );
 }));
+
+test("publish names every missing required field of the scope, in declaration order", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const config = defineConfig({
+    collections: [defineCollection("notes", {
+      slug: slug(),
+      title: text({ localized: true, required: true }),
+      summary: text({ localized: true, required: true }),
+      body: richText({ localized: true, body: true }),
+    })],
+    locales: { source: "en", chains: { de: ["en"] } },
+  });
+  const ctx = { ...ctxFor(sql, "publisher"), config };
+  const { id: docId } = await createDocument(ctx, { collection: "notes" });
+  await saveDraft(ctx, { docId, locale: "en", data: { body: md("x") } });
+  await expect(publish(ctx, { docId, locale: "en" })).rejects.toThrow(
+    `Cannot publish version 1 of ${docId}/en: missing required fields title, summary`,
+  );
+}));
+
+test("a document whose collection is no longer in the config publishes without the required check", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await setupNotes(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { body: md("x") } });
+  // The default fixture config declares only `posts`: `notes` has been dropped from it.
+  const retired = ctxFor(sql, "publisher");
+  expect(retired.config.collections.some((c) => c.name === "notes")).toBe(false);
+  await publish(retired, { docId, locale: "en" });
+  const rows = await sql`select is_head_published from document_localized where doc_id = ${docId} and locale = 'en'`;
+  expect(rows.map((r) => r.is_head_published)).toEqual([true]);
+}));

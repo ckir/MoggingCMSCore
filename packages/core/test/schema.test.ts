@@ -104,6 +104,12 @@ test("defineConfig refuses required below the top level", () => {
   );
 });
 
+test("defineConfig refuses required directly on a list item", () => {
+  expect(slugCfg({ tags: list(text({ required: true })) })).toThrow(
+    "posts.tags[]: required is only valid on a top-level field",
+  );
+});
+
 test("defineConfig accepts required on a top-level field", () => {
   expect(slugCfg({ title: text({ localized: true, required: true }) })).not.toThrow();
 });
