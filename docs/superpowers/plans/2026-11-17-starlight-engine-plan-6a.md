@@ -111,6 +111,17 @@ attaches `data.estree` to an `mdxjsEsm` node; each `ImportDeclaration`/`Export*D
   read of 5.4.
 - D9. A corrupt `.mogging/manifest.json` is treated as empty with a warning (nothing becomes removable) and is
   rewritten by the next export.
+- D10. Starlight mode requires the collection's `slug`-kind field to be named `slug`: core's slug readers use that
+  key (`packages/core/src/read/resolve.ts:165,212`, `read/review.ts:85`; logged in `.clavity/local-anomalies.md`).
+- D11 (spec erratum, panel round 1 AB-1). Rebasing follows 5.9's exact rule (resolve against the file it was read
+  from, re-express relative to the file it is written to) for every locale file. Spec 5.2's "the rebasing of 5.9 is a
+  no-op" in the own-folder layout, and 5.9's "only when the depth difference is not zero", hold only for references
+  that leave both locale folders: measured, a colocated `./img.png` of `en/guides/a.md` is `../../en/guides/img.png`
+  from `de/guides/a.md`, and of root-mode `guides/a.mdx` it is `../../guides/img.png` from `de/guides/a.mdx`. So the
+  MDX re-parse runs for every `mdxjsEsm` block of a file export decides to write (never for a file it keeps or
+  refuses). Erratum lines added to spec 5.2 and 5.9.
+- D12. Every lookup keyed by a name from the repository or the manifest (folder names, locales, slugs, paths) uses a
+  `Map` or `Object.hasOwn`, never a plain-object index (`constructor/`, `__proto__` folders and manifest locales).
 
 ## File Structure
 
@@ -156,8 +167,9 @@ the owning task (named).
 1. A file named with upper case, spaces or dots (`Getting Started.md`, `v1.2.md`) beside a locale file that uses the
    slugified name: one document, the locale file written under the English name, never a second document (Tasks 10,
    13, 14).
-2. A follows-English value that is a plain date, a quoted date, a comment or a flow sequence in English: byte-equal
-   in every exported locale file and read by Astro's parser with the same types (Task 9).
+2. A follows-English value that is a plain date, a quoted date, a comment or a flow sequence in English: read by
+   Astro's parser with the same values and types in every exported locale file, comments and key order kept (yaml may
+   re-space a flow sequence and writes a full timestamp in ISO form; panel round 1 AB-3) (Task 9).
 3. A hand-edited locale file that drops `prev` while English has `prev: false`: classified `published`, never `hand
    work`, and a later hand edit of its title keeps the stored `prev` (Tasks 11, 13).
 4. A docs folder reached through a symbolic link, or a manifest entry pointing outside `<docsDir>` (`../../etc/x`):
@@ -211,8 +223,12 @@ export const layoutInput: StarlightLayoutInput = {
 export const layout = defineStarlightLayout(layoutInput, config);   // docsDir "src/content/docs", root-locale mode
 ```
 
-Plus `ctxFor(sql)`, `writeTree` (as `packages/markdown/test/fixtures.ts`), `project(files)` (a temp project root
-with files under it), `readTree(root)` (every file under root as POSIX path -> text), and `countingSql(sql)` (Task 17).
+Plus, all created in Task 6: `layoutOwn` (the same input with `sourceDir: "en"`, the own-folder mode; Tasks 12 to 16
+each run at least one test against it), `ctxFor(sql)`, `writeTree` (as `packages/markdown/test/fixtures.ts`),
+`project(files)` (a temp project root with files under it), `readTree(root)` (every file under root as POSIX path ->
+text), `extraConnection(sql)` (a second connection on the same per-test schema, as `core/test/fixtures.ts:28`), and
+`countingSql(sql)` (an `extraConnection` with a postgres.js `debug` callback that counts queries, returning
+`{ sql, count(): number, reset(): void }`).
 
 ---
 
@@ -240,9 +256,10 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
     form with the nested null kept; `normalizeValue(json(), "x\u0000")` throws `ValidationError`; a `Date`, `NaN`,
     and `{ k: undefined }` -> `{}` (dropped) behave as `nfcDeep` does (`normalize.ts:11-32`); a key `"a\u0000"` throws.
   - `api.test.ts`: add `"json"` to `FUNCTIONS`.
-  - `ai/test/fields.test.ts` "a json leaf makes a field untranslatable and is compared by value": `isTranslatable`
-    of `object({ t: text(), j: json() }, { localized: true })` is `false`; `checkShape(json(), {a:1}, {a:1})` is
-    `[]` and `checkShape(json(), {a:1}, {a:2})` is `["$: non-text value changed"]`.
+  - `ai/test/fields.test.ts` "a json leaf is never sent and is compared by value": `prompt.ts` `contextValues`
+    leaves out a SHARED field `object({ t: text(), j: json() })` (a json leaf anywhere makes `isTranslatable` false,
+    and `contextValue` uses it, `prompt.ts:41`); `checkShape(json(), {a:1}, {a:1})` is `[]` and
+    `checkShape(json(), {a:1}, {a:2})` is `["$: non-text value changed"]`.
   - `markdown/test/import.test.ts` "a shared json field round-trips through the generic layout": a source file with
     front matter `meta: { a: [1, null], b: "x" }` on a collection with `meta: json()` imports, publishes, exports,
     and the exported front matter parses back to the same object.
@@ -263,7 +280,8 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
 
 **Files:**
 - Modify: `packages/core/src/schema/fields.ts` (FieldOptions, Base, `base()`), `packages/core/src/schema/config.ts`,
-  `packages/ai/src/fields.ts`, `packages/ai/src/validate.ts:22-29,95-100`, `packages/ai/src/translate.ts:98`
+  `packages/ai/src/fields.ts:25-32` and the switches, `packages/ai/src/validate.ts:22-29,95-100`,
+  `packages/ai/src/translate.ts:98`, `packages/ai/src/jobs.ts:79,92` (the enqueue estimate)
 - Test: `packages/core/test/schema.test.ts`, `packages/ai/test/fields.test.ts`, `packages/ai/test/validate.test.ts`,
   `packages/ai/test/translate.test.ts`
 
@@ -273,8 +291,10 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
 - Produces (ai, internal): `wireField(field: Field): Field | null` (the field with every `translate: false` leaf and
   every emptied object/list removed; null when no translatable leaf remains), `wireValue(field: Field, value:
   unknown): unknown` (the value projected onto `wireField`), `withFixedLeaves(field: Field, source: unknown, draft:
-  unknown): unknown` (the draft with each `translate: false` leaf copied from the source at the same path; list
-  items aligned by index; a draft whose list lengths or keys differ is returned unchanged so `checkShape` rejects it).
+  unknown): unknown` (the draft completed from the source: the draft is compared with `wireValue(field, source)`,
+  not with the source; where their list lengths or object keys agree, each `translate: false` leaf, and each subtree
+  made only of such leaves (absent from the wire), is copied from the source at the same path, list items aligned by
+  index, a null element kept null; where they disagree the draft is returned unchanged so `checkShape` rejects it).
 
 - [ ] **Step 0: State check** as in Task 1, for `ai/src/validate.ts:22-29` (`prepareField`) and
   `ai/src/translate.ts:98` (`schemaFields`). STOP on mismatch.
@@ -286,12 +306,18 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
     `wireValue(hero, { title: "T", actions: [{ text: "Go", link: "/start" }] })` equals
     `{ title: "T", actions: [{ text: "Go" }] }`; `withFixedLeaves(hero, source, { title: "Ü", actions: [{ text: "Los" }] })`
     equals `{ title: "Ü", actions: [{ text: "Los", link: "/start" }] }`; `checkShape(hero, source, { ..., link: "/x" })`
-    contains `"$.actions[0].link: non-text value changed"`.
+    contains `"$.actions[0].link: non-text value changed"`. With the fixture-shaped `image: object({ alt: text(),
+    file: text({ translate: false }) })` and a source image holding only `file`, the wire value has no `image` and the
+    merged draft has the source's `image`; a source list `[null, { text: "a", link: "/b" }]` keeps the null.
+  - "the enqueue estimate counts what is sent": `estimateJob`'s request characters for the `hero` value above equal
+    `JSON.stringify(wireValue(hero, value)).length`, not the full value's.
   - ai `translate.test.ts` "translate: false leaves never reach the model and come back from the source": with a
     mock model that records its call, the request's JSON schema and user message contain no `link` and no `/start`,
     the model answers without `link`, and the outcome's field value has `link: "/start"`.
 - [ ] **Step 2: Run, see FAIL.**
-- [ ] **Step 3: Implement.** `leafKinds`: a `text` with `translate === false` adds `"other"`. `prepareField` (value
+- [ ] **Step 3: Implement.** `isTranslatable` line 27: a `text` with `translate === false` returns false.
+  `leafKinds`: a `text` with `translate === false` adds `"other"`. `estimateJob` (`jobs.ts:79,92`) uses
+  `wireValue(field, value)` for the candidate wire value and the character count. `prepareField` (value
   branch) sets `wire: wireValue(field, value)` and keeps `source: value`. `validateField` (value branch) computes
   `const merged = withFixedLeaves(field, prepared.source, draft)` first and uses `merged` for the U+0000 scan,
   `checkShape`, the text comparisons and the returned `value`. `translate.ts:98` maps each field through
@@ -354,7 +380,9 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
   `[3, 2, 1]` with their data; a draft-only row is absent; `locale: "shared"` throws. API test adds both functions.
 - [ ] **Step 2: Run, see FAIL.**
 - [ ] **Step 3: Implement** with `docIds` bound as one JSONB array (`jsonb_array_elements_text`), never interpolated;
-  reuse `pairOf`/`toSnapshot`. Export `PublishedVersion` as a type.
+  hoist `pairOf` (today a closure inside `getDocument`, `resolve.ts:174`) to module scope beside `toSnapshot`
+  (`resolve.ts:133`) and use both. Export `PublishedVersion` as a type. Callers with more than 1000 ids call in
+  chunks of 1000 (Tasks 12 to 15 do; panel round 1 CA-1).
 - [ ] **Step 4: Tests, typecheck, suite.** PASS.
 - [ ] **Step 5: Commit** `feat(core): getDocuments and listPublishedVersions bulk reads`.
 
@@ -383,11 +411,15 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
   SQL). "republishing an old shared version is checked too". "publishRelease checks shared items". "two concurrent
   saves of the same slug on different documents: exactly one succeeds" (two `extraConnection`s, repeated 10 times,
   as `saveDraft.test.ts:139`). "a collection with no slug field is never checked" (ai fixtures' `docs`).
-  "two releases spanning two collections in opposite order both complete" (lock order).
+  "two releases spanning two collections in opposite order both complete": the documents are inserted with raw SQL
+  and chosen ids so that each release's item order (`order by doc_id`, `releases.ts:195`) visits the collections in
+  the opposite order from the other; the two releases run concurrently on two `extraConnection`s, 10 times; and a
+  `pg_locks` read inside the release transaction shows both collection locks held before the first item publishes.
 - [ ] **Step 2: Run, see FAIL.**
 - [ ] **Step 3: Implement.** In `saveDraft`, shared scope only, after the `documents` row lock: `lockSlugs` then
-  `assertSlugFree` with the normalized `data`. In `publishWithinTx`, shared scope: read the target row's data,
-  `lockSlugs` (re-entrant inside the transaction) and `assertSlugFree` before the flip or copy. In `publishRelease`,
+  `assertSlugFree` with the normalized `data`. In `publishWithinTx` (whose input has no collection,
+  `publishCore.ts:44`), shared scope: read `collection` from `documents` by `docId` and the target row's data,
+  then `lockSlugs` (re-entrant inside the transaction) and `assertSlugFree` before the flip or copy. In `publishRelease`,
   after the document locks, `lockSlugs` once with the sorted collections of all shared items, so two releases never
   take collection locks in opposite orders.
 - [ ] **Step 4: Tests, typecheck, WHOLE suite.** An existing test that now fails because it saved one slug on two live
@@ -435,7 +467,8 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
   `guides/index`, `index.md` -> `index`, `a_b/c.d.md` -> `a_b/cd`, `Über/naïve.mdx` -> `über/naïve`, `!!.md` throws
   `ValidationError(/empty slug segment/)`. `defineStarlightLayout(layoutInput, config)` yields `docsDir
   "src/content/docs"`, `sourceDir null`, `localeDirs { de: "de", "zh-CN": "zh-cn" }`, implicit entries for `title`,
-  `hero`, `extra` is NOT an entry (it is the passthrough). Each of these is a `ValidationError` naming the problem:
+  `hero`, `extra` is NOT an entry (it is the passthrough); an NFD file name (`U\u0308ber.md`) derives the NFC slug
+  `über`. Each of these is a `ValidationError` naming the problem: a slug-kind field not named `slug` (D10);
   unknown collection; passthrough not a shared `json` field; a field mapped twice; a path mapped twice; a path that
   is a prefix of another (`sidebar` and `sidebar.order`); a union whose toggle is not a shared boolean or whose value
   is not a localized object with a text `stringAs` key; `stringAs` naming a non-text sub-field; a path segment
@@ -445,9 +478,11 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
   not a localized field or whose leaf is not `text`, or that crosses a list; `requiredWhenSource` naming a shared
   field. API test adds `defineStarlightLayout`.
 - [ ] **Step 2: Run, see FAIL** (`pnpm --filter @mogging/markdown test layout`).
-- [ ] **Step 3: Implement.** `deriveSlug`: split on `/`, strip the last extension from the last segment, map each
-  segment through `slug` from `github-slugger`, refuse an empty segment, join with `/`; then require
-  `isSafeSlug` (`src/slug.ts:2`). The layout is frozen (`Object.freeze`, deep for arrays).
+- [ ] **Step 3: Implement.** `deriveSlug`: split on `/`, strip the last extension from the last segment,
+  NFC-normalize each segment, map it through `slug` from `github-slugger`, refuse an empty segment, join with `/`;
+  then require `isSafeSlug` (`src/slug.ts:2`). The layout is frozen (`Object.freeze`, deep for arrays); its
+  folder/locale maps are `Map`s or are read with `Object.hasOwn` (D12). Create every fixture helper listed under
+  "Test fixture" in this task.
 - [ ] **Step 4: Tests, typecheck, suite.** PASS.
 - [ ] **Step 5: Commit** `feat(markdown): Starlight layout definition and slug derivation`.
 
@@ -477,13 +512,15 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
 - [ ] **Step 1: Failing tests.**
   - Safety: `__proto__`, `constructor` or `prototype` as a key at any depth (found by visiting the YAML pairs before
     `toJS`) is `ValidationError(/forbidden key/)` and `Object.prototype` gains nothing; an unknown tag `!x 1` and any
-    `doc.errors`/`doc.warnings` entry is a `ValidationError`; an alias and a `<<` merge resolve before mapping; a file
+    `doc.errors`/`doc.warnings` entry is a `ValidationError`; an alias and a `<<` merge resolve before mapping; a
+    nested alias bomb (`maxAliasCount` exceeded in `toJS`) is a `ValidationError`, not a thrown `ReferenceError`; a file
     starting `+++` and one with blank lines before `---` are `ValidationError(/front matter/)` naming the limit; a
     `slug:` key is `ValidationError(/slug override/)`; a body field name in front matter keeps the existing error.
   - Mapping (fixture layout): `sidebar: { order: 2, label: "Intro", badge: "New", attrs: { class: "x" } }` gives
     shared `sidebarOrder: 2`, `sidebarAttrs: { class: "x" }`, localized `sidebarLabel: "Intro"`,
     `sidebarBadge: { text: "New" }` and no `sidebar` in `remainder`; `prev: false` gives `toggles.prevToggle =
-    false`, no localized `prev`; `prev: "Back"` gives localized `prev: { label: "Back" }`; `prev: { link: "/a" }`
+    false`, no localized `prev`; `prev: true` gives `toggles.prevToggle = true`; `prev: "Back"` gives localized
+    `prev: { label: "Back" }`; `prev: { link: "/a" }`
     gives `prev: { link: "/a" }`; `prev: {}` and `prev: null` give neither; `prev: 3` is a per-file error; an
     unmapped `owner: "team-a"` and `seo: { noindex: true }` give shared `extra: { owner: "team-a", seo: { noindex: true } }`
     and the same in `remainder`; `hero.actions[0].attrs` is dropped with the warning
@@ -491,7 +528,9 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
     2024-01-01` and `lastUpdated: "2024-01-01"` both give the string `"2024-01-01"`; an empty body gives no body
     field; a body gives the richText tree in the file's mode.
 - [ ] **Step 2: Run, see FAIL.**
-- [ ] **Step 3: Implement** with null-prototype objects or `Object.hasOwn` throughout. Each entry is extracted from a
+- [ ] **Step 3: Implement** with null-prototype objects or `Object.hasOwn` throughout; the whole read (parse, key
+  visit, `toJS`) sits in one try/catch that rethrows as `ValidationError` (as `contentFile.ts:32-36` does). Each entry
+  is extracted from a
   structured clone of `data` and deleted; a parent emptied by an extraction is deleted; a path whose parent is not a
   mapping stays in the remainder. Values are normalized with `normalizeValue` (core) after the D5 pruning.
 - [ ] **Step 4: Tests, typecheck, suite.** PASS.
@@ -521,16 +560,19 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
   reported in `errors` (the caller decides, Task 14).
 
 - [ ] **Step 1: Failing tests.** Exact strings, both directions, English `src/content/docs/guides/a.mdx` to German
-  `src/content/docs/de/guides/a.mdx`: `../../assets/h.webp` -> `../../../assets/h.webp`; `./img.png` -> `../img.png`;
-  bare `img.png` canonical on the English side -> `./img.png`, then -> `../img.png`; `./a/../b.png?x=1#y` ->
-  `../b.png?x=1#y`; `/abs.png`, `https://x/y.png`, `#top`, `~/x`, `@assets/x`, `data:image/png;base64,AA` unchanged;
-  ESM `import A from '../../components/A.astro'` -> `'../../../components/A.astro'` with every other byte of the
-  block identical; `export { b } from "./b.js"` -> `"../b.js"`; `import 'react'` and `import x from "astro-embed"`
-  untouched; a `[x](../guide/)` link and an image inside a code block unchanged. In the layout where English has its
-  own folder (`en/guides/a.md` -> `de/guides/a.md`) every value is unchanged (depth difference zero, spec 5.2).
+  `src/content/docs/de/guides/a.mdx` (values measured with `path.posix`, D11): `../../assets/h.webp` ->
+  `../../../assets/h.webp`; `./img.png` -> `../../guides/img.png`; bare `img.png` canonical on the English side ->
+  `./img.png`, then -> `../../guides/img.png`; `./a/../b.png?x=1#y` -> `../../guides/b.png?x=1#y`; `/abs.png`,
+  `https://x/y.png`, `#top`, `~/x`, `@assets/x`, `data:image/png;base64,AA` unchanged; ESM `import A from
+  '../../components/A.astro'` -> `'../../../components/A.astro'` with every other byte of the block identical;
+  `export { b } from "./b.js"` -> `"../../guides/b.js"`; `import 'react'` and `import x from "astro-embed"`
+  untouched; a `[x](../guide/)` link and an image inside a code block unchanged. Own-folder layout
+  (`src/content/docs/en/guides/a.md` -> `src/content/docs/de/guides/a.md`): `./img.png` -> `../../en/guides/img.png`,
+  and `../../../assets/h.webp` (leaving both locale folders) unchanged.
   Property test (300 generated relative paths, depth 0 to 4, with `?`/`#` suffixes): `rebase(rebase(v, E, L), L, E)
   === canonical(v)` and canonical is idempotent. A rebase that returns its input unchanged must fail the first block
-  of exact-string assertions (the plan's oracle: spec 5.9 "a rebase that does nothing must fail a test").
+  of exact-string assertions (the plan's oracle: spec 5.9 "a rebase that does nothing must fail a test"), and a
+  "prepend one `../`" implementation must fail the colocated rows.
 - [ ] **Step 2: Run, see FAIL.**
 - [ ] **Step 3: Implement** per the interface; no regular expression touches an ESM block.
 - [ ] **Step 4: Tests, typecheck, suite.** PASS.
@@ -551,22 +593,28 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
     localized: Record<string, unknown>;  // the locale's published values, canonical (relative to the English file)
   }): { text: string; errors: string[] };
   ```
-  Algorithm: clone `english.doc` (or an empty document); delete every localized `plain` entry path and every union
-  path; for each union, read English's value at its path: `false` -> write `false`; otherwise the locale's value
-  field when present, in the shortest form (an object whose only key is `stringAs` becomes that string), else
-  omit; set every other localized value present at its path (in place when English had the path, else appended to
-  its parent mapping, creating parents); rebase `fileRefs` leaves and the body tree from `englishPath` to
-  `localePath`; new nodes are created with `doc.createNode(value)` on a document whose schema options are
-  `{ schema: "core", customTags: ["timestamp"] }`; the body is `treeToMarkdown(tree)` (empty tree -> empty body);
-  the output is `---\n<doc>---\n<body>` (no front matter block when the document is empty).
+  Algorithm: re-parse the English front matter text with Astro's options
+  `YAML.parseDocument(fm, { schema: "core", customTags: ["timestamp"], merge: true })` (F-YAML; a clone of Task 7's
+  core-schema document would write a created date-like string unquoted, measured) and clone it; when that document
+  holds any alias or merge key, use `new YAML.Document(doc.toJS(), sameOptions)` instead (values and types kept,
+  comments lost; one warning per file; panel round 1 AB-2). Then, for each localized `plain` entry: when the locale
+  has a value, `setIn(path, createNode(value))` (in place when English had the path, so key order and the pair's
+  comment stay; else appended to its parent mapping, creating parents); when it has none, `deleteIn(path)`. For each
+  union, read English's value at its path: `false` -> keep `false`; otherwise the locale's value field when present,
+  in the shortest form (an object whose only key is `stringAs` becomes that string), else delete the key. Rebase
+  `fileRefs` leaves and the body tree from `englishPath` to `localePath`. Stringify with `{ lineWidth: 0 }`; the body
+  is `treeToMarkdown(tree)` (empty tree -> empty body); the output is `---\n<doc>---\n<body>` (no front matter block
+  when the document is empty).
 
 - [ ] **Step 1: Failing tests.**
   - "follows-English keys are English's bytes": English front matter with `lastUpdated: 2024-01-01`,
     `publishedAt: "2024-02-02"` (unmapped), a comment line, `tags: [a, b]`, `sidebar: { order: 3, label: Intro }`
-    and German values `title: Hallo`, `sidebarLabel: Einführung`: the rendered German front matter equals English's
-    with only `title` and `sidebar.label` changed (asserted as exact text), and Astro's
-    `parseFrontmatter` (`@astrojs/internal-helpers/frontmatter`) reads `lastUpdated` as a `Date` and `publishedAt` as
-    the string `"2024-02-02"` in BOTH files.
+    and German values `title: Hallo`, `sidebarLabel: Einführung`: Astro's `parseFrontmatter`
+    (`@astrojs/internal-helpers/frontmatter`) reads every key of the German file except `title` and `sidebar.label`
+    with the same value and type as English's (`lastUpdated` a `Date`, `publishedAt` the string `"2024-02-02"`), the
+    comment line and the English key order are present, and `title`/`sidebar.label` hold the German values.
+  - "merged keys never leak": English with `base: &b { description: English }` and `<<: *b` at the top level, German
+    without `description`: the German file has no `description` value under Astro's parser.
   - "a date-like localized string is quoted": German `title: "2024-01-01"` renders `title: "2024-01-01"` and Astro
     reads a string.
   - "union rule": English `prev: false` + German prev `{ label: "Zurück" }` -> `prev: false`; English `prev: "Back"`
@@ -602,7 +650,12 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
   ```
   `path` is the project-relative POSIX path; `rel` the path inside the locale (`guides/Getting-Started.md`). Files
   whose NAME starts with `_` are skipped silently (folders starting with `_` are walked, spec 5.2); dot entries are
-  skipped; a symbolic link anywhere under `<docsDir>` (file or folder) is a warning and not followed. Two files of one
+  skipped; a symbolic link anywhere under `<docsDir>` (file or folder), or `<docsDir>` or one of its components
+  below the project root being one, is a warning and not followed. A top-level folder is matched to a locale by
+  its slugified name (`DE/` is German, as Starlight reads it, F-ID/F-LOCALE); two folders slugifying to one locale
+  are both errors. In root-locale mode a top-level folder that no layout map names and whose name `normalizeLocale`
+  accepts with a 2-letter language (for example `es`, `pt-br`) gets one warning: "imported as English pages; if it
+  is a Starlight locale, list it in otherLocaleDirs". Two files of one
   locale with the same derived slug are both `error: "slug collides with <other path>"`; `.md` and `.mdx` twins keep
   today's message (`import.ts:204`).
 
@@ -610,7 +663,8 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
   `guides/_draft.md` (skipped), `_partials/x.md` (scanned, slug `_partials/x`), `notes.txt` (ignored, not
   unsupported), `old.markdown` (unsupported), `de/getting-started.md` (German, slug `getting-started`),
   `zh-cn/index.mdx` (locale `zh-CN`), `fr/a.md` (skipped: other locale folder, one warning), `a.md` + `A.md`
-  (collision errors), and a symlinked folder (warning). Own-folder mode (`sourceDir: "en"`): `en/a.md` is a source,
+  (collision errors), a symlinked folder (warning), `DE/b.md` (German), `es/c.md` (English page `es/c` plus the
+  warning), and a folder named `constructor` (an English page, no crash, D12). Own-folder mode (`sourceDir: "en"`): `en/a.md` is a source,
   `de/a.md` German, a top-level `x.md` is a warning "outside every locale folder".
 - [ ] **Step 2: Run, see FAIL.** **Step 3: Implement.** **Step 4: Tests, typecheck, suite.**
 - [ ] **Step 5: Commit** `feat(markdown): scan a Starlight docs folder into pages and locale files`.
@@ -690,7 +744,9 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
 - [ ] **Step 3: Implement** phase 1 (scan; read source files; list the collection's documents with
   `listDocuments(includeDeleted: false)` pages of 200 and `getDocuments` per page; compute created/updated/unchanged,
   gone, new, stop, prune) and phase 2 (one transaction per page as `import.ts:277-283` does, then publish; prune with
-  `deleteDocument`). A `LicenceError` aborts the run as in `import.ts:264`.
+  `deleteDocument`; a `NotFoundError` there means a concurrent prune already deleted it and is not an error). A
+  `LicenceError` aborts the run as in `import.ts:264`. Add one own-folder test (`layoutOwn`): a new page and a changed
+  page.
 - [ ] **Step 4: Tests, typecheck, suite.** PASS, and every existing `import.test.ts` test passes unchanged.
 - [ ] **Step 5: Commit** `feat(markdown): Starlight import of source pages with the rename safety stop and prune`.
 
@@ -729,7 +785,19 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
     reports "already current" and writes nothing.
   - Review Focus 1: `de/getting-started.md` next to English `Getting-Started.md` is the same page.
   - References: a German hero image `../../../assets/h.webp` is stored canonical `../../assets/h.webp`.
-- [ ] **Steps 2-4** as usual. **Step 5: Commit** `feat(markdown): Starlight import of locale files (day one, classes, draft rule)`.
+- [ ] **Step 2: Run, see FAIL.**
+- [ ] **Step 3: Implement**, per locale file, in this order: (1) skip with a warning when its slug has no live
+  document (outcome `skipped`); (2) read and split it, un-rebase `fileRefs` and the body to canonical; (3) classify
+  against the heads (from Task 12's page reads) and, only for files matching neither, the earlier versions
+  (`listPublishedVersions` per locale, ids in chunks of 1000); (4) `--restore` overrides `behind`/`published`
+  (save as a human draft; "already current" when `published`); (5) the follows-English report (union toggles and
+  `draft` included); (6) the locale-draft rule (file `draft: true`, English not); (7) for `hand work`, carry a
+  suppressed union value forward from the current head, then save: `untracked` and published when the locale has no
+  row of any state (day one) unless rule 6 applies; otherwise a human draft, published only with `publish` and never
+  under rule 6. Outcomes: no row written -> `unchanged`; a row written -> `updated`; skipped -> `skipped`; read or
+  save failure -> `error`.
+- [ ] **Step 4: Tests, typecheck, suite.** Add one own-folder test (`layoutOwn`): day one and a hand edit.
+- [ ] **Step 5: Commit** `feat(markdown): Starlight import of locale files (day one, classes, draft rule)`.
 
 ### Task 14: Starlight export, writing files and the manifest
 
@@ -750,9 +818,15 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
   type ManifestEntry = { path: string; slug: string; locale: string; version: number; sha256: string };  // internal
   ```
   `attention` holds exactly the exit-4 causes of spec 5.4 (a `pending` or `hand work` file left, except a pending
-  locale `draft: true` file; a symlink refusal; a live document whose English file is missing; a locale whose folder
-  is not in `starlightLocaleDirs` when that list is given; a page skipped because a stored MDX block does not
-  parse). A self-check failure throws `Error("internal: export self-check failed for <path>: <field>")`.
+  locale `draft: true` file; a symlink refusal; a live document whose English file is missing or cannot be read
+  (Task 7 per-file error; panel round 1 CA-4); a locale whose folder is not in `starlightLocaleDirs` when that list
+  is given; a page skipped because a stored MDX block does not parse).
+  The keep test ("same parsed content", spec 5.4): the existing file and the candidate are both read with Astro's
+  options (F-YAML, so a plain date and a quoted one differ); they are the same when their front-matter values are
+  deeply equal (a `Date` compared by time) after removing, from the existing file, the top-level keys that English
+  lacks and the layout does not map, and their bodies parse (`markdownToTree`, the file's mode) to equal trees.
+  The manifest lists every file export wrote AND every file it kept as `published` (spec 5.4), with the SHA-256 of
+  the bytes on disk. A self-check failure throws `Error("internal: export self-check failed for <path>: <field>")`.
   Manifest file: `{"version":1,"files":[` newline, one compact JSON entry per line sorted by `path`, `]}` newline;
   written to a temporary file in `.mogging/` and renamed.
 
@@ -777,11 +851,21 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
     and not recreated elsewhere.
   - Extension change: English `a.md` -> `a.mdx`, manifest-listed `de/a.md` classified `published` -> written as
     `de/a.mdx`, `de/a.md` removed; an unlisted `de/a.md` -> both left, reported.
-  - Day-one name: `de/getting-started.md` (published) next to English `Getting-Started.md` -> written as
-    `de/Getting-Started.md` and the old file removed; when the old file is `hand work`, both left and reported.
+  - Day-one name: `de/getting-started.md` (published) next to English `Getting-Started.md` -> moved with one
+    `fs.renameSync` to `de/Getting-Started.md`, then written (move first, so a case-insensitive file system never
+    deletes the file it just wrote; panel round 1 F7); `de/Getting Started.md` (same derived slug, a name that
+    differs beyond case) next to English `Getting-Started.md` -> written as `de/Getting-Started.md` and the old file
+    removed; when the old file is `hand work`, both are left and reported.
+  - Kept files are listed: after a day-one import, an export that keeps the German file lists it in the manifest
+    with the SHA-256 of its unchanged bytes (panel round 1 F3/PP-2); a second unchanged export leaves the manifest
+    byte for byte.
+  - Keep rule edges: English changes `lastUpdated` from plain to quoted -> the German file is rewritten; a German
+    file whose stored ESM block does not parse but which is kept is not re-parsed and is not in `attention`.
   - Case-only rename: English `Foo.md` -> `foo.md` with `de/Foo.md` -> one rename to `de/foo.md`, then written.
-  - Symlinks (Review Focus 4): a symlinked `de` folder or target file -> `refuse`, in `attention`, nothing written
-    through it.
+  - Symlinks (Review Focus 4): a symlinked `de` folder, target file, `<docsDir>` or `.mogging` folder -> `refuse`, in
+    `attention`, nothing written through it; a pre-existing `de/a.md.<anything>.mogging-tmp` symlink is never written
+    through.
+  - Own-folder mode (`layoutOwn`): a new German file and a day-one name adoption.
   - Locale skip: `starlightLocaleDirs: ["de"]` -> no `zh-cn` file, in `attention`; `null` -> written as configured.
   - MDX: a German body holding a stored `mdxjsEsm` block that does not parse (saved through the SDK) with a non-zero
     depth difference -> that page skipped, its existing file and manifest entry unchanged, in `attention`, the rest
@@ -795,8 +879,12 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
   versions from one `listPublishedVersions` per locale for the divergent files. The English file of each document is
   the scanned source file whose derived slug equals the published shared slug. Every target path is computed from
   the English file's `rel`, the locale folder and `docsDir`, and checked with `path.resolve` to stay inside
-  `<root>/<docsDir>`; `fsSafe` checks every existing component with `lstat` and writes `<target>.mogging-tmp` then
-  renames. The manifest is written after all files.
+  `<root>/<docsDir>`; `fsSafe` checks with `lstat` every existing path component below the project root (so
+  `<docsDir>`, the locale folder, the target and `.mogging/` are covered; the project root and its ancestors are not),
+  creates `<target>.<random hex>.mogging-tmp` with `fs.openSync(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644)`,
+  writes, closes, then renames over the target. When an old path and its replacement differ only by letter case,
+  the old file is renamed to the new name first. Earlier versions are read with `listPublishedVersions` per locale
+  in chunks of 1000 ids. The manifest is written after all files, the same way.
 - [ ] **Step 4: Tests, typecheck, suite.** PASS, and every existing `export.test.ts` test passes unchanged.
 - [ ] **Step 5: Commit** `feat(markdown): Starlight export with classification, self-check and manifest`.
 
@@ -812,7 +900,8 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
   recomputed from the English file, layout and locale (`../../etc/passwd`, another folder) is ignored with a warning
   (Review Focus 4); a file never becomes removable because English changed; a hand-deleted listed file of a live
   published translation is recreated with a warning.
-- [ ] **Steps 2-4.** Deleted documents are found with `listDocuments({ includeDeleted: true })`.
+- [ ] **Steps 2-4.** Deleted documents are found with `listDocuments({ includeDeleted: true, limit: 200 })` in a
+  loop over `next` until it is null (panel round 1 F4; the default limit is 50).
 - [ ] **Step 5: Commit** `feat(markdown): Starlight export removes only manifest-listed, unchanged, withdrawn files`.
 
 ### Task 16: `renamePage` (5.6)
@@ -839,21 +928,23 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
   completion is a no-op; a differing existing target -> `ConflictError`, nothing moved; dry run checks uniqueness
   with a read and changes nothing; `references` lists each line of `astro.config.mjs` and of Markdown under
   `<docsDir>` containing the old slug; `reminder` mentions redirects; a depth change with a relative image is
-  refused; a case-only rename on the English file moves in one rename. API test adds `renamePage`.
+  refused; a case-only rename on the English file moves in one rename; one own-folder rename (`layoutOwn`). API test
+  adds `renamePage`.
 - [ ] **Steps 2-4.** **Step 5: Commit** `feat(markdown): renamePage keeps a document and its translations`.
 
 ### Task 17: query bound and the 2,000-page measurement
 
 **Files:**
-- Create: `packages/markdown/test/starlight/queries.test.ts`, `scripts/starlight-perf.mjs`
+- Create: `packages/markdown/test/starlight/queries.test.ts`, `packages/markdown/test/starlight/perf.test.ts`
 
 - [ ] **Step 1: Failing test** "an unchanged re-export issues a query count independent of the page count":
   fixtures of 50 and of 150 pages x 2 locales, imported and exported once, then a second export counted with a
   postgres.js `debug` callback: equal counts; the same for an unchanged re-import.
 - [ ] **Step 2-4.** Fix any per-file read the test exposes.
-- [ ] **Step 5: Measurement (CONTROLLER ONLY, never a subagent; owner's timing discipline).** `scripts/starlight-perf.mjs`
-  generates 2,000 pages x 6 locales in a temp project, runs import and export twice each, and prints wall time and
-  query counts per run. The controller runs it backgrounded on an idle machine with no other tool calls until it
+- [ ] **Step 5: Measurement (CONTROLLER ONLY, never a subagent; owner's timing discipline).** `perf.test.ts` is
+  skipped unless `MOGGING_PERF=1` (as `packages/ai/test/live.test.ts` is gated); it generates 2,000 pages x 6
+  locales in a temp project, runs import and export twice each, and prints wall time and query counts per run. Run
+  with `MOGGING_PERF=1 pnpm --filter @mogging/markdown test perf` (no `--`). The controller runs it backgrounded on an idle machine with no other tool calls until it
   finishes, twice, and records the warm range and the uncontrolled background load in the plan's execution ledger.
 - [ ] **Step 6: Commit** `test(markdown): Starlight import/export query count is independent of page count`.
 
@@ -881,3 +972,34 @@ with files under it), `readTree(root)` (every file under root as POSIX path -> t
   whole collection (6b checks, spec ledger round 1 AX3); the preset's final field names (6b moves the Task 6 test
   fixture into `@mogging/starlight`).
 - Line citations were read on main 256726f; tasks that modify a cited region carry a Step 0 state check.
+
+## Review ledger
+
+- Panel round 1 (2026-11-17; persona relentless-adversarial-auditor; Sonnet solo seats Axiom Breaker, Cascade Analyst,
+  Literal Implementer, Protocol Pedant, Boundary Smuggler: 23 findings; agy seats Axiom Breaker, Cascade Analyst,
+  State Corruptor, Mechanism Gamer, Dependency Cynic, Resource Vampire: 7 findings, 3 overlapping). Every finding
+  was verified against the code or by measurement before folding; all FOLDED:
+  - AB-1 rebasing strings wrong, own-folder no-op false (measured with `path.posix`): Task 8 strings, D11, spec errata.
+  - AB-2 merge keys leak through a cloned English document: Task 9 materializes such documents.
+  - AB-3 / LI-3 / F2 clone keeps the core schema (measured: created `title: 2024-01-01` unquoted), delete-then-set
+    loses key order: Task 9 re-parses with Astro's options, sets in place, `lineWidth: 0`; Review Focus 2 reworded.
+  - CA-1 / F4 1000-id cap vs divergent files; `listDocuments` default limit 50: chunking (Tasks 4, 13, 14), paging (15).
+  - CA-2 lock-order test could not fail: chosen ids, concurrency and a `pg_locks` assertion (Task 5).
+  - CA-3 estimate counted unsent leaves: `estimateJob` uses `wireValue` (Task 2).
+  - CA-4 unreadable English file: an `attention` cause (Task 14).
+  - CA-5 own-folder mode untested end to end: `layoutOwn` tests in Tasks 12 to 16.
+  - LI-1 `isTranslatable` line 27, LI-2 `withFixedLeaves` defined against the wire projection (Task 2).
+  - LI-4 keep rule undefined: defined in Task 14's interface.
+  - LI-5 helpers created in Task 6; LI-6 hoist `pairOf` (Task 4); LI-7 Task 13 Step 3; LI-8 perf as a gated test.
+  - PP-1 NFC in `deriveSlug`; PP-2 / F3 kept files listed in the manifest; PP-3 kept files never re-parsed (Task 14).
+  - BS-1 symlinked `<docsDir>`/`.mogging`, exclusive no-follow temp files (Task 14); BS-2 own-key lookups (D12);
+    BS-3 alias bomb wrapped (Task 7); BS-4 locale folders matched by slugified name, warning for locale-shaped
+    folders (Task 10).
+  - F1 the json test moved to the context path (Task 1); F5 prune tolerates a concurrent delete (Task 12); F6
+    `publishWithinTx` reads the collection (Task 5); F7 move before write on case-only differences (Task 14).
+  - Anomaly (outside the plan): core readers hard-code the key `slug`; logged in `.clavity/local-anomalies.md`,
+    D10 keeps Starlight mode inside it.
+
+## Stand-downs
+
+None in round 1: no finding was discarded below the floor or accepted unverified.

@@ -83,6 +83,9 @@ configured docs collection with slug `<path>`; `<docsDir>/<localeDir>/<path>.md`
 (Starlight `root` locale) and the default language in its own folder. There is no collection segment in the path; a
 Starlight site has one docs collection. In the second mode English and the locales sit at the same depth, so the
 rebasing of 5.9 is a no-op. A locale file uses the same extension (`.md` or `.mdx`) as its source file.
+Erratum 2026-11-17 (plan 6a panel round 1): "no-op" holds only for references that leave both locale folders; a
+reference to a file beside the English page still changes (`./img.png` of `en/guides/a.md` is `../../en/guides/img.png`
+from `de/guides/a.md`), so the exact rule of 5.9 applies in both modes.
 Files whose name starts with `_` are skipped on import and never written, as Starlight's glob skips them
 (`src/loaders.ts:57`: the `[^_]*` part of `**/[^_]*.{...}` constrains the file name only, so a folder starting with
 `_` is NOT skipped and its pages are imported like any other). An `index.md` at any depth keeps `index` as the last slug segment (`index`, `guides/index`),
@@ -439,6 +442,8 @@ Seat consult `.clavity/seams/starlight-ownership-first.md`, [VERDICT: ALIGNED], 
   write the file (5.4); a file export keeps or refuses is never re-parsed. When a block does not parse, that page's
   locale file is not written: the existing file and its manifest entry stay as they are, a per-file error names the
   block, the rest of the export runs, and the run exits `4` (5.4); it never stops the whole export (panel round 10).
+  Erratum 2026-11-17 (plan 6a panel round 1): the re-parse runs whenever the English and locale files sit in
+  different directories, which is every locale file, not only at a non-zero depth difference (see the 5.2 erratum).
 - `mogging rename` to a different folder depth is refused when the page or any of its translations contains a
   relative file reference (the stored references would need rebasing; documented limit, move it by hand); renames
   within the same depth are unaffected.
