@@ -8,7 +8,7 @@ import type { Sql } from "postgres";
 import { run } from "../src/run.js";
 import type { Deps } from "../src/types.js";
 import { withTestDb } from "./db.js";
-import { aiConfigFor, config, coreCtx, ctxFor, testDeps } from "./fixtures.js";
+import { aiConfigFor, config, coreCtx, ctxFor, md, testDeps } from "./fixtures.js";
 import { asyncMockModel, dataOf, identity, mockModel } from "./mockModel.js";
 import type { MockCallOptions } from "./mockModel.js";
 
@@ -265,7 +265,7 @@ describe("mogging compile --include-untracked", () => {
       await seed(sql, { "en/docs/intro.md": EN("Intro") });
       const [{ doc_id: docId }] = (await sql`select doc_id from document_localized where locale = 'en'`) as unknown as [{ doc_id: string }];
       // BOTH fields are present in de, so none is `missing` (a missing field is queued without the flag).
-      await saveDraft(coreCtx(sql), { docId, locale: "de", data: { title: "Einleitung", body: "Hallo" }, untracked: true });
+      await saveDraft(coreCtx(sql), { docId, locale: "de", data: { title: "Einleitung", body: md("Hallo") }, untracked: true });
       await publish(coreCtx(sql), { docId, locale: "de" });
 
       const without = await compileCmd(sql, mockModel([]), ["--locales", "de", "--budget", "1", "--json"]);

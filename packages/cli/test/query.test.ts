@@ -3,7 +3,7 @@ import { createDocument, migrate, publish, saveDraft } from "@mogging/core";
 import type { Sql } from "postgres";
 import { run } from "../src/run.js";
 import { withTestDb } from "./db.js";
-import { aiDraft, coreCtx, DAY, publishedDoc, setFirstMigration, testDeps } from "./fixtures.js";
+import { aiDraft, coreCtx, DAY, md, publishedDoc, setFirstMigration, testDeps } from "./fixtures.js";
 
 /** A per-test schema with the migrations applied. */
 const withDb = (fn: (sql: Sql) => Promise<void>) =>
@@ -31,7 +31,7 @@ describe("mogging query: control characters in stored text", () => {
     await withDb(async (sql) => {
       const docId = await publishedDoc(sql, "intro");
       const title = "Intro \u001b[8mhidden\u001b[0m\rover";
-      await saveDraft(coreCtx(sql), { docId, locale: "en", data: { title, body: "Hello" } });
+      await saveDraft(coreCtx(sql), { docId, locale: "en", data: { title, body: md("Hello") } });
       await publish(coreCtx(sql), { docId, locale: "en" });
       for (const args of [["docs"], ["docs/intro"]]) {
         const r = await query(sql, ...args);
@@ -66,7 +66,7 @@ describe("mogging query: a collection", () => {
       expect(r.code).toBe(0);
       const doc = JSON.parse(r.out) as { ok: boolean; data: unknown };
       expect(doc.ok).toBe(true);
-      expect(doc.data).toEqual([{ id: first, data: { slug: "intro", title: "Intro", body: "Hello" }, fellBack: {}, missing: [] }]);
+      expect(doc.data).toEqual([{ id: first, data: { slug: "intro", title: "Intro", body: md("Hello") }, fellBack: {}, missing: [] }]);
     });
   });
 
@@ -116,13 +116,13 @@ describe("mogging query: one document", () => {
       const r = await query(sql, "docs/intro", "--locale", "de");
       expect(r.code).toBe(0);
       expect(r.out).toBe(
-        ["slug [shared]: intro", "title [de]: Einleitung", "body [en (fell back from de)]: Hello", ""].join("\n"),
+        ["slug [shared]: intro", "title [de]: Einleitung", 'body [en (fell back from de)]: {"mode":"md","type":"root","version":1,"children":[{"type":"paragraph","children":[{"type":"text","marks":[],"value":"Hello"}]}]}', ""].join("\n"),
       );
 
       const json = await query(sql, "docs/intro", "--locale", "de", "--json");
       expect((JSON.parse(json.out) as { data: unknown }).data).toEqual({
         id: docId,
-        data: { slug: "intro", title: "Einleitung", body: "Hello" },
+        data: { slug: "intro", title: "Einleitung", body: md("Hello") },
         fellBack: { body: "en" },
         missing: [],
       });

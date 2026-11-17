@@ -14,6 +14,12 @@ import {
 import type { Ctx } from "@mogging/core";
 import type { Deps, Io } from "../src/types.js";
 
+/** A one-paragraph rich-text tree holding `text` (an empty string gives a tree with no children). */
+export const md = (text: string) => ({
+  type: "root" as const, version: 1 as const, mode: "md" as const,
+  children: text === "" ? [] : [{ type: "paragraph", children: [{ type: "text", value: text, marks: [] }] }],
+});
+
 export const docs = defineCollection("docs", {
   slug: slug(),
   title: text({ localized: true }),
@@ -66,12 +72,12 @@ export const setFirstMigration = (sql: Sql, at: Date) => sql`update migrations s
 /** A core `Ctx` over `sql` for the fixture config, for seeding documents from a test. */
 export const coreCtx = (sql: Sql): Ctx => ({ sql, config: structuredClone(config), actor: "test" });
 
-/** A `docs/<slug>` document whose shared and `en` heads are published (en v1: title "Intro", body "Hello"). */
+/** A `docs/<slug>` document whose shared and `en` heads are published (en v1: title "Intro", body `md("Hello")`). */
 export async function publishedDoc(sql: Sql, slugText = "intro"): Promise<string> {
   const ctx = coreCtx(sql);
   const { id: docId } = await createDocument(ctx, { collection: "docs" });
   await saveDraft(ctx, { docId, locale: "shared", data: { slug: slugText } });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Intro", body: "Hello" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Intro", body: md("Hello") } });
   await publish(ctx, { docId, locale: "shared" });
   await publish(ctx, { docId, locale: "en" });
   return docId;

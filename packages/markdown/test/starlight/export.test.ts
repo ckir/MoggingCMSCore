@@ -119,7 +119,7 @@ describe("exportFolder, Starlight mode", () => {
     await setup(async (_sql, ctx) => {
       const root = docsProject({ "a.md": page("A"), "h.md": page("H", "hero:\n  title: Welcome\n", "Body") });
       await imp(ctx, root);
-      await translate(ctx, "a", "de", { title: "A-de", body: { type: "root", children: [] } });
+      await translate(ctx, "a", "de", { title: "A-de", body: { type: "root", version: 1, mode: "md", children: [] } });
       await translate(ctx, "h", "de", { title: "H-de", body: md("Inhalt"), hero: {} });
       const r = await run(ctx, root);
       expect(actionFor(r, "skip", `${D}/de/a.md`)).toMatchObject({ reason: "incomplete" });
