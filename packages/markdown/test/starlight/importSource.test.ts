@@ -422,6 +422,24 @@ describe("importFolder, Starlight mode, source pages", () => {
       });
     });
 
+    test("a symlinked folder with a dot in its name (v1.x) keeps its pages found and refuses prune", async () => {
+      await setup(async (_sql, ctx) => {
+        const root = docsProject({ "keep.md": page("Keep"), "v1.x/a.md": page("VA") });
+        await run(ctx, root);
+        expect((await bySlug(ctx, "v1x/a"))!.deletedAt).toBeNull();
+        const real = path.join(root, "elsewhere");
+        fs.mkdirSync(real);
+        fs.renameSync(path.join(root, D, "v1.x"), path.join(real, "v1.x"));
+        fs.symlinkSync(path.join(real, "v1.x"), path.join(root, D, "v1.x"));
+
+        await rejectsValidation(run(ctx, root, { prune: true }), /could not be read.*v1\.x/);
+        const r = await run(ctx, root);
+        expect(r.starlight!.stop).toBeNull();
+        expect(r.starlight!.pruned).toEqual([]);
+        expect((await bySlug(ctx, "v1x/a"))!.deletedAt).toBeNull();
+      });
+    });
+
     test("a gone page is not paired with an unreadable file", async () => {
       await setup(async (_sql, ctx) => {
         const root = docsProject({ "a.md": page("A"), "b.md": page("B") });

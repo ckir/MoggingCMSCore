@@ -86,8 +86,8 @@ const join = (a: string, b: string): string => (a === "" ? b : b === "" ? a : `$
  *
  * Names starting with `.` are skipped, and so are files starting with `_` (folders starting with `_` are walked).
  * A top-level folder is matched to a target locale by its slugified name (`DE/` is German). A symbolic link is
- * classified by its name and never followed: a name with a Starlight extension is a `file`, a name with no extension
- * is a `folder`, and any other link is a warning only. Two files of one locale with one slug are both errors.
+ * classified by its name and never followed: a name with a Starlight extension is a `file`, any other name is a
+ * `folder` (so a link such as `v1.x` or `logo.png` also blocks prune, the safe direction). Two files of one locale with one slug are both errors.
  *
  * @param root absolute project root.
  * @param layout a validated Starlight layout (`docsDir`, `sourceDir`, `localeDirs`, `otherLocaleDirs`).
@@ -117,23 +117,24 @@ export function scanDocs(root: string, layout: StarlightLayout, config: MoggingC
   }
   const docsAbs = path.join(root, ...layout.docsDir.split("/"));
 
-  /** Records a symbolic link by name: file, folder, or a warning for any other name. */
+  /**
+   * Records a symbolic link by name, never following it: a name with a Starlight extension is a `file`; every other
+   * name (no extension, or one such as `v1.x` or `logo.png`) is a `folder`, because the link may point at a folder of
+   * pages whose slugs start with the name's slug.
+   */
   const link = (name: string, rel: string, filePath: string, place: Place): void => {
-    const ext = extOf(name);
-    if (ext === "") {
-      const slug = folderSlug(rel);
-      if (slug === null) warn(filePath, "symbolic link not followed (its folder name has no safe slug)");
-      else scan.symlinks.push({ path: filePath, locale: place.locale, slug, kind: "folder" });
-    } else if (STARLIGHT_EXTS.has(ext)) {
+    if (STARLIGHT_EXTS.has(extOf(name))) {
       if (name.startsWith("_")) return;
       try {
         scan.symlinks.push({ path: filePath, locale: place.locale, slug: deriveSlug(rel), kind: "file" });
       } catch {
         warn(filePath, "symbolic link not followed (its file name has no safe slug)");
       }
-    } else if (!name.startsWith("_")) {
-      warn(filePath, "symbolic link not followed");
+      return;
     }
+    const slug = folderSlug(rel);
+    if (slug === null) warn(filePath, "symbolic link not followed (its folder name has no safe slug)");
+    else scan.symlinks.push({ path: filePath, locale: place.locale, slug, kind: "folder" });
   };
 
   /** Records a regular file by extension. */

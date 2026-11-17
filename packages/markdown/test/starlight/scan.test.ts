@@ -131,12 +131,21 @@ describe("scanDocs, symbolic links", () => {
     ]);
   });
 
-  test("assets/logo.png linked is a warning only", () => {
+  test("assets/logo.png linked is a listed folder (it may be a folder of pages), never followed", () => {
     const root = docsProject({ "assets/real.png": "" });
     linkIn(root, "assets/logo.png", "real.png");
     const s = scanDocs(root, layout, config);
-    expect(s.symlinks).toEqual([]);
-    expect(s.warnings).toEqual([{ file: `${D}/assets/logo.png`, message: "symbolic link not followed" }]);
+    expect(s.symlinks).toEqual([{ path: `${D}/assets/logo.png`, locale: "en", slug: "assets/logopng", kind: "folder" }]);
+    expect(s.warnings).toEqual([]);
+  });
+
+  test("a linked folder with a dot in its name (v1.x) is a folder whose slug v1x matches the pages under it", () => {
+    const root = docsProject({ "real/a.md": "" });
+    linkIn(root, "v1.x", "real");
+    const s = scanDocs(root, layout, config);
+    expect(s.symlinks).toEqual([{ path: `${D}/v1.x`, locale: "en", slug: "v1x", kind: "folder" }]);
+    expect(s.warnings).toEqual([]);
+    expect(slugs(s.sources)).toEqual(["en:real/a"]); // nothing under the link was scanned
   });
 
   test("a symlinked locale folder is a warning, not scanned", () => {
@@ -153,7 +162,7 @@ describe("scanDocs, symbolic links", () => {
     fs.mkdirSync(path.join(real, "src/content"), { recursive: true });
     fs.symlinkSync(path.join(real, "real"), path.join(real, "src/content/docs"));
     const s = scanDocs(real, layout, config);
-    expect(s.sources).toEqual([]);
+    expect(slugs(s.sources)).toEqual(["en:real/a"]); // nothing under the link was scanned
     expect(s.warnings).toEqual([expect.objectContaining({ file: D })]);
 
     const parent = project({ "elsewhere/content/docs/a.md": "" });
