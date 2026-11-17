@@ -447,6 +447,12 @@ async function planLocales(
   const sourceLocale = ctx.config.locales.source;
   const files = [...scan.locales].sort((a, b) => byText(a.path, b.path));
   const restore = new Set(options.restore ?? []);
+  // A `--restore` path that names no scanned locale file (a typo, an absolute or `./` path, an English file) would
+  // otherwise be ignored without a word: it is an error, listed under the path as given.
+  const scannedPaths = new Set(files.map((f) => f.path));
+  for (const p of [...restore].sort(byText)) {
+    if (!scannedPaths.has(p)) plan.errors.set(p, "restore: no locale file at this path");
+  }
   const pageBySlug = new Map<string, SourcePage>(plan.pages.map((p) => [p.file.slug, p]));
   const sourcePathBySlug = new Map<string, string>(scan.sources.filter((s) => s.slug !== "").map((s) => [s.slug, s.path]));
   const sourceBase = layout.sourceDir === null ? layout.docsDir : `${layout.docsDir}/${layout.sourceDir}`;

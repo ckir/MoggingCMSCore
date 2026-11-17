@@ -186,6 +186,28 @@ describe("importFolder, Starlight mode, locale files", () => {
     });
   });
 
+  test("a restore path that matches no locale file is an error under the path as given; the matching one still works", async () => {
+    await setup(async (sql, ctx) => {
+      const root = docsProject({ "a.md": page("A"), "de/a.md": page("Eins") });
+      await run(ctx, root);
+      const rows = await counts(sql);
+      const bad = [
+        `${D}/de/typo.md`,          // a typo
+        `${D}/a.md`,                // an English file
+        `./${D}/de/a.md`,           // `./`-prefixed
+        path.join(root, D, "de", "a.md"), // absolute
+      ];
+      for (const dryRun of [false, true]) {
+        const r = await run(ctx, root, { restore: [...bad, `${D}/de/a.md`], dryRun }, true);
+        expect(r.errors.map((e) => e.file).sort()).toEqual([...bad].sort());
+        for (const e of r.errors) expect(e.message).toBe("restore: no locale file at this path");
+        expect(warningsOf(r, "de/a.md").join("\n")).toMatch(/already current/);
+      }
+      expect(await counts(sql)).toBe(rows);
+      expect((await run(ctx, root, { restore: [`${D}/de/a.md`] })).errors).toEqual([]);
+    });
+  });
+
   test("R10-1: a hand-work file without prev keeps the head's prev", async () => {
     await setup(async (_sql, ctx) => {
       const root = docsProject({ "a.md": page("A", "prev: false\n"), "de/a.md": page("Eins", "prev:\n  label: Zurück\n") });
