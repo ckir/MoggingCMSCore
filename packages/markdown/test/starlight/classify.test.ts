@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import { markdownToTree } from "../../src/parse.js";
 import { classifyEarlier, classifyHeads, sameLocalized } from "../../src/starlight/classify.js";
 import type { FileClass } from "../../src/starlight/classify.js";
+import { boolean, defineCollection, defineConfig, json, object, richText, slug, text } from "@mogging/core";
+import { defineStarlightLayout } from "../../src/index.js";
 import { docs, layout } from "./fixtures.js";
 
 type Rec = Record<string, unknown>;
@@ -26,6 +28,10 @@ describe("classification precedence", () => {
   test("anything else is hand work, also with no heads and no history", () => {
     expect(classify(v("Z"), v("A"), v("B"), [v("C")])).toBe("hand work");
     expect(classify(v("Z"), null, null, [])).toBe("hand work");
+  });
+  test("a file equal to both the published head and the draft head is published (first match wins)", () => {
+    expect(classify(v("A"), v("A"), v("A"), [])).toBe("published");
+    expect(classifyHeads(layout, docs, v("A"), { published: v("A"), draft: v("A") })).toBe("published");
   });
   test("a file equal to both the draft head and an earlier version is pending", () => {
     expect(classify(v("B"), v("A"), v("B"), [v("B")])).toBe("pending");
@@ -82,9 +88,14 @@ describe("the richText root mode follows the file extension", () => {
     const other = { ...v("A"), body: markdownToTree("Bye\n", { mode: "mdx" }) };
     expect(classify(other, stored, null, [])).toBe("hand work");
   });
-  test("a non-richText field named like a root is left alone, and nulls and strings do not throw", () => {
+  test("nulls and strings in a richText field do not throw", () => {
     expect(sameLocalized(layout, docs, v("A", { body: null }), v("A", { body: null }))).toBe(true);
     expect(sameLocalized(layout, docs, v("A", { body: "x" }), v("A", { body: "y" }))).toBe(false);
+  });
+  test("a json field holding a root-shaped object keeps its mode: only richText fields are reset", () => {
+    const root = (mode: string) => ({ type: "root", version: 1, mode, children: [] });
+    expect(sameLocalized(layout, docs, v("A", { extra: root("mdx") }), v("A", { extra: root("md") }))).toBe(false);
+    expect(sameLocalized(layout, docs, v("A", { extra: root("md") }), v("A", { extra: root("md") }))).toBe(true);
   });
 });
 
@@ -100,5 +111,43 @@ describe("purity", () => {
   });
   test("key order never matters (canonical hash)", () => {
     expect(sameLocalized(layout, docs, { title: "A", description: "d" }, { description: "d", title: "A" })).toBe(true);
+  });
+});
+
+describe("the layout and the collection drive the rule, not the fixture's names", () => {
+  const other = defineCollection("pages", {
+    slug: slug(),
+    title: text({ localized: true, required: true }),
+    backToggle: boolean(),
+    back: object({ label: text(), link: text({ translate: false }) }, { localized: true }),
+    prev: object({ label: text() }, { localized: true }),
+    summary: richText({ localized: true }),
+    content: richText({ localized: true, body: true }),
+    extra: json(),
+  });
+  const cfg = defineConfig({ collections: [other], locales: { source: "en", chains: { de: ["en"] } } });
+  const lay = defineStarlightLayout({
+    collection: "pages", passthrough: "extra",
+    paths: [{ path: "back", union: { toggle: "backToggle", value: "back", stringAs: "label" } }],
+  }, cfg);
+  const tree = (mode: "md" | "mdx") => markdownToTree("Hi\n", { mode });
+
+  test("a union value with another name is ignored when the file lacks it or holds {}", () => {
+    expect(sameLocalized(lay, other, v("A"), v("A", { back: { label: "L" } }))).toBe(true);
+    expect(sameLocalized(lay, other, v("A", { back: {} }), v("A", { back: { label: "L" } }))).toBe(true);
+    expect(sameLocalized(lay, other, v("A", { back: { label: "X" } }), v("A", { back: { label: "L" } }))).toBe(false);
+  });
+  test("prev is an ordinary field in this layout: a file lacking it is different", () => {
+    expect(sameLocalized(lay, other, v("A"), v("A", { prev: { label: "L" } }))).toBe(false);
+    expect(sameLocalized(lay, other, v("A", { prev: {} }), v("A", { prev: { label: "L" } }))).toBe(false);
+  });
+  test("every richText field is reset to md, whatever its name (body and a second field)", () => {
+    expect(sameLocalized(lay, other, v("A", { content: tree("mdx") }), v("A", { content: tree("md") }))).toBe(true);
+    expect(sameLocalized(lay, other, v("A", { summary: tree("mdx") }), v("A", { summary: tree("md") }))).toBe(true);
+    expect(sameLocalized(lay, other, v("A", { summary: tree("mdx") }), v("A", { summary: markdownToTree("Bye\n") }))).toBe(false);
+  });
+  test("a field named body that is not richText here is not reset", () => {
+    const root = (mode: string) => ({ type: "root", version: 1, mode, children: [] });
+    expect(sameLocalized(lay, other, v("A", { body: root("mdx") }), v("A", { body: root("md") }))).toBe(false);
   });
 });
