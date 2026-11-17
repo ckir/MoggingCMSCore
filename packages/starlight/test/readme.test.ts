@@ -21,6 +21,22 @@ function commandLines(): string[] {
   return out;
 }
 
+/** The fenced shell blocks, each as its list of non-empty command lines. */
+function commandBlocks(): string[][] {
+  const blocks: string[][] = [];
+  let current: string[] | null = null;
+  for (const line of lines) {
+    const fence = /^\s*```(\w*)/.exec(line);
+    if (fence !== null) {
+      if (current === null) current = fence[1] === "sh" || fence[1] === "bash" ? [] : null;
+      else { blocks.push(current); current = null; }
+      continue;
+    }
+    if (current !== null && line.trim() !== "") current.push(line.trim());
+  }
+  return blocks;
+}
+
 describe("the @mogging/starlight README", () => {
   it("puts the licence first", () => {
     const first = lines.find((l) => l.startsWith("## "));
@@ -61,5 +77,30 @@ describe("the @mogging/starlight README", () => {
 
   it("has a section on adding a language", () => {
     expect(lines.some((l) => /^#{2,} /.test(l) && l.includes("language"))).toBe(true);
+  });
+
+  it("commits the manifest with the exported files", () => {
+    const add = commandLines().filter((l) => l.includes("git add"));
+    expect(add.length).toBeGreaterThan(0);
+    expect(add.some((l) => l.includes(".mogging/manifest.json"))).toBe(true);
+  });
+
+  it("translates the language the 'Adding a language later' steps add", () => {
+    const start = lines.findIndex((l) => /^## Adding a language later/.test(l));
+    expect(start).toBeGreaterThanOrEqual(0);
+    const rest = lines.slice(start + 1);
+    const end = rest.findIndex((l) => l.startsWith("## "));
+    const section = rest.slice(0, end < 0 ? undefined : end).join("\n");
+    expect(section).toContain("chains: { fr:");
+    expect(section).toContain("compile --locales fr ");
+    expect(section).not.toContain("compile --locales it");
+  });
+
+  it("never lists `review` and `review --approve-clean` in one block (a literal reader runs one)", () => {
+    for (const block of commandBlocks()) {
+      const plain = block.some((l) => /mogging review$/.test(l));
+      const clean = block.some((l) => l.includes("review --approve-clean"));
+      expect(plain && clean, `one block lists both: ${JSON.stringify(block)}`).toBe(false);
+    }
   });
 });

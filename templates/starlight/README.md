@@ -68,11 +68,15 @@ You need Node 22.23.4 or later, Docker (for a local Postgres) and, for the AI st
    ```
 
 9. Review the drafts. No AI text reaches the site without a recorded human approval. The interactive review shows each
-   draft and asks you to approve or reject it. `review --approve-clean` approves the drafts that passed every check
-   without opening them, so read the list it prints.
+   draft and asks you to approve or reject it.
 
    ```sh
    npm run mogging -- review
+   ```
+
+   Or, to approve the drafts that passed every check without opening them (read the list it prints), run this instead:
+
+   ```sh
    npm run mogging -- review --approve-clean
    ```
 
@@ -94,10 +98,13 @@ You need Node 22.23.4 or later, Docker (for a local Postgres) and, for the AI st
     npm run mogging -- export
     ```
 
-12. Build the site, then commit the exported files together with your English changes.
+12. Build the site, then commit the exported files together with your English changes. Commit
+    `.mogging/manifest.json` too: it records which files the export wrote, and without it a fresh clone's `export`
+    cannot remove the translations of a page you pruned.
 
     ```sh
     npm run build
+    git add src/content/docs mogging.config.ts .mogging/manifest.json
     ```
 
     A static host builds the committed files like any Starlight site. Install `@mogging/starlight` (it is a

@@ -139,11 +139,15 @@ You need Node 22 or newer (Astro 7.4 needs 22.23.4), a Postgres database 16 or n
    ```
 
 7. Review the drafts. No AI text reaches the site without a recorded human approval. `review` shows each draft beside
-   its source and asks you to approve, reject or edit it. `review --approve-clean` approves every draft with no
-   warnings without opening it, so read the list it prints.
+   its source and asks you to approve, reject or edit it.
 
    ```sh
    npx mogging review
+   ```
+
+   Or, to approve every draft with no warnings without opening it (read the list it prints), run this instead:
+
+   ```sh
    npx mogging review --approve-clean
    ```
 
@@ -167,11 +171,12 @@ You need Node 22 or newer (Astro 7.4 needs 22.23.4), a Postgres database 16 or n
    ```
 
 10. Build the site, then commit the exported files together with your English changes. The site builds from the
-    committed files like any Starlight site.
+    committed files like any Starlight site. Commit `.mogging/manifest.json` too: it records which files the export
+    wrote, and without it a fresh clone's `export` cannot remove the translations of a page you pruned.
 
     ```sh
     npm run build
-    git add src/content/docs mogging.config.ts
+    git add src/content/docs mogging.config.ts .mogging/manifest.json
     ```
 
 Later edits to an English page show up as stale translations in `mogging status`. Run `import`, `compile`, `review`, a
@@ -254,7 +259,7 @@ Add the language in three places, then run the usual loop for it:
 3. then translate it:
 
    ```sh
-   npx mogging compile --locales it --budget 2
+   npx mogging compile --locales fr --budget 2
    ```
 
    and `review`, release and `export` as in the first session.
