@@ -5,7 +5,7 @@ import { glossaryModeFor, type AiCtx, type ModelPrice } from "./config.js";
 import type { CallCost } from "./claim.js";
 import { jobContext } from "./context.js";
 import { actualCostMicros, apportion, planRequests, type RequestPlan } from "./estimate.js";
-import { outputSchema } from "./fields.js";
+import { outputSchema, stringLeaves, wireField } from "./fields.js";
 import type { JobRow } from "./jobs.js";
 import { buildPrompt, maxTemplateTokens, type PromptVariant } from "./prompt.js";
 import { prepareField, validateField, type GlossaryEntry, type PreparedField } from "./validate.js";
@@ -78,10 +78,21 @@ async function run(
   const { siblings, shared, glossary, contextChars, glossaryChars } =
     jobContext(ctx.ai, collection, doc, targetLocale, job.fieldPaths, args.glossary);
 
+  // A value field whose wire form holds no string leaf (for example `{ link: "/a" }` with `link` untranslated) is not
+  // sent: its draft is the source value and no call is recorded for it.
+  const fields: Record<string, unknown> = {};
+  const sent = [...prepared.values()].filter((p) => {
+    if (p.prepared.kind === "value" && stringLeaves(p.prepared.wire).length === 0) {
+      fields[p.prepared.field] = p.prepared.source;
+      return false;
+    }
+    return true;
+  });
+
   // (c) the requests
   const plan = planRequests({
     ai: ctx.ai, price, sourceLocale, targetLocale,
-    fields: [...prepared.values()].map((p) => ({ name: p.prepared.field, wire: p.prepared.wire })),
+    fields: sent.map((p) => ({ name: p.prepared.field, wire: p.prepared.wire })),
     contextChars, glossaryChars, templateTokens: maxTemplateTokens(),
   });
   if ("tooLarge" in plan) {
@@ -89,13 +100,12 @@ async function run(
   }
 
   const glossaryMode = glossaryModeFor(ctx.ai, collection.name);
-  const fields: Record<string, unknown> = {};
   const perField: AiProvenanceInput[] = [];
   const warnings: string[] = [];
 
   for (const request of plan.requests) {
     const translate = Object.fromEntries(request.fields.map((f) => [f, prepared.get(f)!.prepared.wire]));
-    const schemaFields = Object.fromEntries(request.fields.map((f) => [f, prepared.get(f)!.field]));
+    const schemaFields = Object.fromEntries(request.fields.map((f) => [f, wireField(prepared.get(f)!.field)!]));
     let lastRejections: string[] = [];
     let accepted = false;
 

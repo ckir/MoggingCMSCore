@@ -2,10 +2,10 @@ import { expect, test } from "vitest";
 import postgres from "postgres";
 import type { Sql } from "postgres";
 import {
-  NotFoundError, ValidationError, createDocument, getDocument, listDocuments, migrate, publish, resolve,
+  NotFoundError, ValidationError, createDocument, getDocument, getDocuments, listDocuments, migrate, publish, resolve,
   resolveReference, saveDraft, unpublish, deleteDocument, defineCollection, defineConfig, number, richText, slug,
 } from "../src/index.js";
-import { ctxFor, insertPublishedLocalized } from "./fixtures.js";
+import { ctxFor, extraConnection, insertPublishedLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 async function setup(sql: Sql) {
@@ -388,4 +388,65 @@ test("a collection with only shared fields still resolves on its shared head", a
   expect(out).toHaveLength(1);
   expect(out[0]).toMatchObject({ id, data: { slug: "home", order: 1, body: "x" }, missing: [] });
   expect(await resolveReference(ctx, { docId: id, locale: "de" })).toEqual({ id, resolvedLocale: "de" });
+}));
+
+test("getDocuments equals getDocument per id, in input order, omitting unknown and malformed ids", async () => withTestDb(async (sql) => {
+  const { ctx, ids } = await setup(sql);
+  // ids[0]: published shared and locales, a draft too; ids[1]: soft-deleted; ids[2]: a draft only (no published head).
+  await saveDraft(ctx, { docId: ids[0]!, locale: "en", data: { title: "T1 en v2" } });
+  await deleteDocument(ctx, { docId: ids[1]! });
+  const draftOnly = (await createDocument(ctx, { collection: "posts" })).id;
+  await saveDraft(ctx, { docId: draftOnly, locale: "en", data: { title: "only a draft" } });
+  const unknown = "00000000-0000-4000-8000-000000000000";
+  const asked = [draftOnly, "not-a-uuid", ids[1]!, unknown, ids[0]!, ids[0]!.toUpperCase()];
+  const got = await getDocuments(ctx, { collection: "posts", docIds: asked });
+  expect(got.map((r) => r.id)).toEqual([draftOnly, ids[1], ids[0]]);
+  expect(got[1]!.deletedAt).not.toBeNull();
+  for (const r of got) expect(r).toEqual(await getDocument(ctx, { collection: "posts", docId: r.id }));
+  expect(await getDocuments(ctx, { collection: "posts", docIds: [] })).toEqual([]);
+  expect(await getDocuments(ctx, { collection: "posts", docIds: ["x", unknown] })).toEqual([]);
+}));
+
+test("getDocuments refuses more than 1000 ids and an undeclared collection", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const ctx = ctxFor(sql);
+  const id = "00000000-0000-4000-8000-000000000000";
+  await expect(getDocuments(ctx, { collection: "posts", docIds: Array(1001).fill(id) })).rejects.toBeInstanceOf(ValidationError);
+  await expect(getDocuments(ctx, { collection: "posts", docIds: Array(1000).fill(id) })).resolves.toEqual([]);
+  await expect(getDocuments(ctx, { collection: "nope", docIds: [id] })).rejects.toBeInstanceOf(NotFoundError);
+}));
+
+test("getDocuments does not return a document of another collection", async () => withTestDb(async (sql) => {
+  const { ids } = await setup(sql);
+  const other = defineConfig({
+    collections: [defineCollection("notes", { slug: slug(), title: richText({ localized: true, body: true }) }), ...ctxFor(sql).config.collections],
+    locales: { source: "en", chains: {} },
+  });
+  const ctx = { sql, config: other, actor: "reader" };
+  expect(await getDocuments(ctx, { collection: "notes", docIds: ids })).toEqual([]);
+  expect((await getDocuments(ctx, { collection: "posts", docIds: ids })).length).toBe(3);
+}));
+
+test("getDocuments issues 3 queries for 1 and for 50 ids", async () => withTestDb(async (sql) => {
+  const { ctx, ids } = await setup(sql);
+  const [{ s }] = (await sql`select current_schema() as s`) as unknown as [{ s: string }];
+  let queries = 0;
+  const counting = postgres(process.env.DATABASE_URL!, {
+    max: 1, onnotice: () => {}, connection: { search_path: s }, debug: () => { queries++; },
+  });
+  try {
+    const cctx = { ...ctx, sql: counting };
+    // Warm the connection (type fetch, prepare) so only getDocuments' own statements are counted.
+    await counting`select 1`;
+    queries = 0;
+    expect((await getDocuments(cctx, { collection: "posts", docIds: [ids[0]!] })).length).toBe(1);
+    expect(queries).toBe(3);
+    queries = 0;
+    const many = [...ids, ...Array.from({ length: 47 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`)];
+    expect(many.length).toBe(50);
+    expect((await getDocuments(cctx, { collection: "posts", docIds: many })).length).toBe(3);
+    expect(queries).toBe(3);
+  } finally {
+    await counting.end({ timeout: 5 });
+  }
 }));

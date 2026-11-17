@@ -7,7 +7,7 @@ import { assertActor } from "./actor.js";
 import { priceFor, type AiCtx } from "./config.js";
 import { jobContext } from "./context.js";
 import { estimateRequest, planRequests } from "./estimate.js";
-import { isTranslatable } from "./fields.js";
+import { isTranslatable, stringLeaves, wireValue } from "./fields.js";
 import { listGlossary } from "./glossary.js";
 import { maxTemplateTokens } from "./prompt.js";
 import { getBudgets, scopesFor, type BudgetRow } from "./budget.js";
@@ -15,7 +15,11 @@ import { listLimit } from "./provenance.js";
 
 type Json = Parameters<Sql["json"]>[0];
 
-export type EnqueueInput = { locales: string[]; collection?: string; docIds?: string[] };
+export type EnqueueInput = {
+  locales: string[]; collection?: string; docIds?: string[];
+  /** Also queue fields whose target value records no source hash (`untracked`), e.g. day-one translations. Default false. */
+  includeUntracked?: boolean;
+};
 export type Skipped = {
   docId: string; locale: string; field: string | null; reason: "not translatable" | "human draft pending" | "draft already current";
 };
@@ -76,7 +80,15 @@ function estimateJob(
   const { contextChars, glossaryChars } = jobContext(ctx.ai, collection, doc, locale, fields, glossary);
   const templateTokens = maxTemplateTokens();
 
-  let candidates = fields.map((name) => ({ name, wire: source.data[name] }));
+  // What is sent: the wire projection of each value, and nothing for a value field with no string leaf to translate.
+  let candidates: Array<{ name: string; wire: unknown }> = [];
+  for (const name of fields) {
+    const field = Object.hasOwn(collection.fields, name) ? collection.fields[name] : undefined;
+    const wire = field && field.kind !== "richText" ? wireValue(field, source.data[name]) : source.data[name];
+    if (field && field.kind !== "richText" && stringLeaves(wire).length === 0) continue;
+    candidates.push({ name, wire });
+  }
+  const wireOf = new Map(candidates.map((c) => [c.name, c.wire]));
   for (;;) {
     const plan = planRequests({
       ai: ctx.ai, price, sourceLocale, targetLocale: locale, fields: candidates, contextChars, glossaryChars, templateTokens,
@@ -87,7 +99,7 @@ function estimateJob(
     }
     let micros = 0;
     for (const r of plan.requests) {
-      const translateChars = r.fields.reduce((n, f) => n + (JSON.stringify(source.data[f]) ?? "").length, 0);
+      const translateChars = r.fields.reduce((n, f) => n + (JSON.stringify(wireOf.get(f)) ?? "").length, 0);
       micros += estimateRequest({
         sourceLocale, targetLocale: locale, translateChars, contextChars: r.noContext ? glossaryChars : contextChars,
         templateTokens, price,
@@ -103,7 +115,9 @@ type Pair = {
 };
 
 /**
- * Queues one job per (document, locale) with stale or missing translatable fields (spec 8.1, 8.2). Licence-guarded.
+ * Queues one job per (document, locale) with stale or missing translatable fields (spec 8.1, 8.2); with
+ * `includeUntracked` it also queues the fields whose target value records no source hash (`untracked`, such as
+ * day-one translations imported from files). Licence-guarded.
  * Reads (sync state, one getDocument per document, the glossary once per locale) happen first; every cancel and
  * insert then runs in one transaction. Takes no budget lock.
  */
@@ -126,7 +140,7 @@ export async function enqueueStale(ctx: AiCtx, input: EnqueueInput): Promise<Enq
   }
 
   const skipped: Skipped[] = [];
-  // (docId, locale) -> stale or missing translatable fields; insertion order is the sweep order.
+  // (docId, locale) -> stale, missing (or opted-in untracked) translatable fields; insertion order is the sweep order.
   const groups = new Map<string, { docId: string; locale: string; collection: Collection; fields: string[] }>();
   for (const collection of collections) {
     for (const locale of locales) {
@@ -137,7 +151,7 @@ export async function enqueueStale(ctx: AiCtx, input: EnqueueInput): Promise<Enq
         rows.push(...await getSyncState(ctx, { collection: collection.name, locale }));
       }
       for (const r of rows) {
-        if (r.state !== "stale" && r.state !== "missing") continue;
+        if (r.state !== "stale" && r.state !== "missing" && !(r.state === "untracked" && input.includeUntracked === true)) continue;
         const field = Object.hasOwn(collection.fields, r.field) ? collection.fields[r.field] : undefined;
         if (!field || !isTranslatable(field)) {
           skipped.push({ docId: r.docId, locale: r.locale, field: r.field, reason: "not translatable" });

@@ -25,3 +25,32 @@ Tracked debt promoted from local anomaly captures (see the clavity open-issues s
   - control characters: `escapeControl` covers the review view, `query`, `jobs` and `provenance` text, but not the error text `run.ts` prints (core's unacknowledged-warnings `ValidationError` quotes warning texts), nor `export`/`import` warning messages, and not Unicode bidi or line-separator characters.
 - [ ] `@mogging/core` `recordAiDraft` in a PUBLISHED locale: rejecting an AI draft that superseded an `APPROVED` (unpublished) draft restarts the next draft from the published head, so the approved text is lost to every head (the base `order by` puts `is_head_published` first; never-published locales keep the approved text). Decide whether that is intended (design 6.3 defines reject as restoring the published value) and say so in the docs. Recorded 2026-11-13, plan 5 final review.
 - [ ] `@mogging/cli` `release remove <collection>/<slug>` resolves the LIVE document when a soft-deleted document's slug was reused by a new one (slug lookup prefers live, `packages/core/src/read/resolve.ts`), so it prints `not in release` while the stuck item of the deleted document stays; workaround: `release remove <name> <collection>/<docId> --locale <l>` using the UUID that `publishRelease`'s error names. Document it in the CLI README or give the verb a way to name a deleted document by id. Recorded 2026-11-13, plan 5 final review.
+
+## Plan 6a follow-ups (Starlight engine)
+
+- [ ] `@mogging/core` the advisory slug-lock key (`hashtext('mogging_slug:' || name)`, `packages/core/src/documents/slugGuard.ts`) is not schema-scoped, so engines in different schemas of one database serialize on each other. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/core` the slug lock is taken for slug-less collections too (`lockSlugs` runs before `assertSlugFree` finds no slug field). Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/core` `assertSlugFree` scans the collection's heads once per shared save, so a cold import of 12,000 files took about 323 s (measured in the final review); needs an index or a set read per run. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/core` no test covers a slug field not named `slug`; the slugGuard test titled "unpublishing alone" has no unpublish step. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/core` an untracked save over a tracked base drops the stored source hashes (by spec, but undocumented): document it in `docs/CONTENT_ARCHITECTURE.md`. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/core` the `getDocuments` and versions tests lack a deleted document and a published source-locale case (the other-collection case was closed by the plan 6a test audit). Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/ai` the "is this field sent" predicate is written twice (the estimate in `jobs.ts` and `translate.ts`); no worker-level test runs a job whose fields are all unsent. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` a bare `..` is not canonical in `rebase.ts`. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` `rebaseEsm` skips silently what it cannot offset, which could hide an offset regression; add an assertion or a warning. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` YAML warnings are fatal in the renderer (`render.ts`), which is stricter than Astro. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` removing an empty union value is undocumented (spec 5.9 does not say it). Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` `scanDocs` does not catch a `readdirSync` error (an unreadable folder aborts the scan). Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` the scan test's "not followed" assertion is vacuous. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` `present` and `unionValues` are duplicated between `importStarlight.ts` and `classify.ts`. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` `planLocales` is too large (about 150 lines in one function); split it. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` chunking above 1,000 document ids (`CHUNK`) is untested. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` no test for a `LicenceError` aborting an import mid-run. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` the rebasing error list reports only the first error of a file. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` the `msg`, `inTx` and `isPlain` helpers are duplicated across the Starlight modules. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` export's `input.locales` is not normalized; the plan 6b CLI must normalize it before calling. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` `O_NOFOLLOW` is undefined on Windows (`fsSafe.ts`); the `lstat` checks remain the only guard there. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` the export self-check reports only the first mismatching key. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` the removal decision can use another document's draft slug. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` a manifest entry whose file is already gone is dropped silently on export. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` `renamePage`: an extension swap through an existing target; reference matches are substring matches; the manifest is rewritten on a no-op re-run. Recorded 2026-11-17, plan 6a final review.
+- [ ] `@mogging/markdown` `perf.test.ts`: the `every keep` assertion is vacuous on an empty list, and `MOGGING_PERF=0` enables the test. Recorded 2026-11-17, plan 6a final review.

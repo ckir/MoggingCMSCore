@@ -2,7 +2,7 @@ import type { Field } from "@mogging/core";
 import { restoreDraft, sentinelize, validateTree } from "@mogging/markdown";
 import type { SentinelPrepared } from "@mogging/markdown";
 import type { GlossaryMode } from "./config.js";
-import { checkShape, stringLeaves } from "./fields.js";
+import { checkShape, stringLeaves, withFixedLeaves, wireValue } from "./fields.js";
 
 export type GlossaryEntry = {
   sourceLocale: string; targetLocale: string; term: string; translation: string | null;
@@ -19,13 +19,16 @@ export type FieldVerdict =
 
 const PLACEHOLDER_RE = /\{[A-Za-z_][A-Za-z0-9_]*\}/g;
 
-/** Rich text: validate the tree, then replace code and opaque nodes with sentinels. Anything else goes over the wire as is. */
+/**
+ * Rich text: validate the tree, then replace code and opaque nodes with sentinels. Any other value goes over the wire
+ * projected onto the field's wire form (`translate: false` leaves left out) and keeps the full value as `source`.
+ */
 export function prepareField(name: string, field: Field, value: unknown): PreparedField {
   if (field.kind === "richText") {
     const prepared = sentinelize(validateTree(value));
     return { kind: "richText", field: name, prepared, wire: prepared.markdown };
   }
-  return { kind: "value", field: name, source: value, wire: value };
+  return { kind: "value", field: name, source: value, wire: wireValue(field, value) };
 }
 
 function escapeRegExp(s: string): string {
@@ -93,10 +96,14 @@ export function validateField(args: {
       }
     }
   } else {
-    sourceText = leafText(prepared.source);
-    draftText = leafText(draft);
-    if (stringLeaves(draft).some((l) => l.text.includes("\u0000"))) rejections.push(reject("contains U+0000"));
-    const shape = checkShape(field, prepared.source, draft);
+    // The draft completed with the source's `translate: false` leaves, which the model never saw.
+    const merged = withFixedLeaves(field, prepared.source, draft);
+    value = merged;
+    // The text checks compare only what the model saw and wrote: `translate: false` leaves are in neither text.
+    sourceText = leafText(wireValue(field, prepared.source));
+    draftText = leafText(wireValue(field, merged));
+    if (stringLeaves(merged).some((l) => l.text.includes("\u0000"))) rejections.push(reject("contains U+0000"));
+    const shape = checkShape(field, prepared.source, merged);
     for (const s of shape) rejections.push(reject(s));
     if (shape.length > 0) wellFormed = false;
   }

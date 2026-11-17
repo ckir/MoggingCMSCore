@@ -166,6 +166,13 @@ A locale file whose source page has no live document (for example after a prune)
 
 Pre-existing content is the team's: the promise that no AI text reaches the site without a recorded human approval
 covers text Mogging generates. Day-one files are recorded as human and visibly `untracked`, whatever their origin.
+Erratum 2026-11-17 (plan 6a execution): an incomplete hand-edited translation, one that lacks a localized field the
+English page has and the 5.4 completeness rule requires (a `required` field, the body, a `requiredWhenSource` field),
+is saved as a human draft and never published, on day one or later, with or without `--publish`, and import warns
+`incomplete translation (missing <fields>); saved as an unpublished draft`; a pending draft that is incomplete is not
+published by `--publish` either. Export lists an incomplete slot's existing file in `attention` (exit `4`); with no
+file the skip stays silent. Import also reports a `--restore` path that matches no scanned locale file as a per-file
+error, and treats every symbolic link that is not a Starlight-extension file as a linked folder (it blocks `--prune`).
 
 ### 5.4 Export, the manifest and hand edits
 
@@ -287,6 +294,10 @@ covers text Mogging generates. Day-one files are recorded as human and visibly `
   by `<old-slug>`, or, when the database step already ran, by `<new-slug>`, and continues with the file steps. A
   move whose target already exists proceeds only when the target has the same parsed content as the file being
   moved; otherwise rename stops and names both files.
+  Erratum 2026-11-17 (plan 6a execution): a rename is also refused while the shared scope has an unpublished draft
+  whose slug is not the target (an interrupted rename, whose draft holds the target, is completed instead); it is
+  refused, dry run included and before any write, when the project directory holds no source file under the docs
+  folder (a wrong directory, a missing or symbolic-link docs folder), because the database alone would be renamed.
 - After a rename, the command searches `astro.config.*` and the Markdown files under `<docsDir>` for the old slug as
   text and lists every hit, because Starlight fails the build when a sidebar entry names a slug that no longer exists
   (`src/utils/navigation.ts:157-160`); it does not edit them. It also reminds the operator that old URLs need a
@@ -449,6 +460,9 @@ Seat consult `.clavity/seams/starlight-ownership-first.md`, [VERDICT: ALIGNED], 
 - `mogging rename` to a different folder depth is refused when the page or any of its translations contains a
   relative file reference (the stored references would need rebasing; documented limit, move it by hand); renames
   within the same depth are unaffected.
+  Erratum 2026-11-17 (plan 6a execution): the rule is a change of the English file's DIRECTORY, not of its depth: a
+  stored relative reference is relative to that directory, so it breaks whenever the directory changes (same flaw as
+  the 5.2 erratum). A rename that keeps the directory is unaffected.
 
 Untrusted YAML. The passthrough and path-split code builds plain objects from repository content: it uses
 null-prototype objects or own-key checks throughout (today's guard is `Object.hasOwn`, `contentFile.ts:113`) and

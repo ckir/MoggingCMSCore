@@ -1,5 +1,6 @@
 import { NotFoundError, ValidationError } from "../errors.js";
 import type { Collection } from "./collection.js";
+import type { Field } from "./fields.js";
 import { normalizeLocale } from "./locale.js";
 
 export type MoggingConfig = {
@@ -10,6 +11,30 @@ export type MoggingConfig = {
   /** Purchase address named in the licence refusal (spec 12.3); default https://mogging.dev/buy. */
   purchaseUrl?: string;
 };
+
+/** True when the field is a `json` field or holds one anywhere inside its list item or object fields. */
+function containsJson(f: Field): boolean {
+  if (f.kind === "json") return true;
+  if (f.kind === "list") return containsJson(f.item);
+  if (f.kind === "object") return Object.values(f.fields).some(containsJson);
+  return false;
+}
+
+/** The path (relative to `f`) of the first non-text field that declares `translate: false`, or null. */
+function badTranslateFalse(f: Field): string | null {
+  if (f.translate === false && f.kind !== "text") return "";
+  if (f.kind === "list") {
+    const inner = badTranslateFalse(f.item);
+    return inner === null ? null : `[]${inner}`;
+  }
+  if (f.kind === "object") {
+    for (const [k, sub] of Object.entries(f.fields)) {
+      const inner = badTranslateFalse(sub);
+      if (inner !== null) return `.${k}${inner}`;
+    }
+  }
+  return null;
+}
 
 export function defineConfig(c: {
   collections: Collection[];
@@ -28,6 +53,13 @@ export function defineConfig(c: {
     names.add(col.name);
     let bodies = 0;
     for (const [fname, f] of Object.entries(col.fields)) {
+      if (f.localized && containsJson(f)) {
+        throw new ValidationError(`${col.name}.${fname}: json cannot be localized`);
+      }
+      const bad = badTranslateFalse(f);
+      if (bad !== null) {
+        throw new ValidationError(`${col.name}.${fname}${bad}: translate: false is only valid on text`);
+      }
       if (f.kind === "slug" && f.localized) {
         throw new ValidationError(`${col.name}.${fname}: slug cannot be localized`);
       }

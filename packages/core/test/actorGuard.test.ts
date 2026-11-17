@@ -34,12 +34,12 @@ const WRITERS: Record<string, (ctx: Ctx) => Promise<unknown>> = {
 };
 // Take a ctx but never persist the actor (reads, and removeFromRelease, which records nothing: spec 9.3).
 const READERS = [
-  "migrate", "getDocument", "listDocuments", "resolve", "resolveReference", "getSyncState", "removeFromRelease",
+  "migrate", "getDocument", "getDocuments", "listDocuments", "listPublishedVersions", "listLocaleRows", "resolve", "resolveReference", "getSyncState", "removeFromRelease",
   "listDraftHeads", "getDraftReview", "listReleases", "getLicenceState", "assertLicensed",
 ];
 // Pure helpers and schema builders: no ctx at all.
 const NO_CTX = [
-  "defineConfig", "defineCollection", "text", "richText", "number", "boolean", "dateTime", "slug", "reference", "list",
+  "defineConfig", "defineCollection", "text", "richText", "number", "boolean", "dateTime", "slug", "json", "reference", "list",
   "object", "normalizeLocale", "chainFor", "hashValue", "normalizeValue", "verifyKey",
 ];
 

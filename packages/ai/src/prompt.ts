@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { Field } from "@mogging/core";
 import { sentinelize, validateTree } from "@mogging/markdown";
-import { isTranslatable } from "./fields.js";
+import { isTranslatable, wireValue } from "./fields.js";
 
 export type PromptVariant = "standard" | "strict";
 export const PROMPT_VERSION = "translate.v1";
@@ -38,7 +38,9 @@ function contextValue(field: Field, value: unknown): unknown {
     try { return sentinelize(validateTree(value)).markdown; } catch { return undefined; }
   }
   // Text, or a list/object of text: the shape test of isTranslatable, whether or not the field is localized.
-  return isTranslatable({ ...field, localized: true } as Field) ? value : undefined;
+  // `translate: false` leaves are projected away: they never reach the model in any role.
+  const localized = { ...field, localized: true } as Field;
+  return isTranslatable(localized) ? wireValue(localized, value) : undefined;
 }
 
 /** The longest prefix of `text` that, suffixed with " […]", keeps the result within `limit`; undefined if none. */
