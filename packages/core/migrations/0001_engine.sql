@@ -32,6 +32,10 @@ create table document_shared (
 );
 create unique index uq_doc_shared_head_published on document_shared (doc_id) where is_head_published;
 create unique index uq_doc_shared_head_draft on document_shared (doc_id) where is_head_draft;
+-- Slug lookups (getDocument by slug, assertSlugFree) read the shared heads' `slug` key. `defineConfig` fixes the slug
+-- field's name to `slug`, so one expression index serves every collection. Not unique: uniqueness per collection is
+-- assertSlugFree's job, under the collection's advisory lock.
+create index idx_doc_shared_slug on document_shared ((data ->> 'slug')) where is_head_published or is_head_draft;
 
 create table document_localized (
   id bigint generated always as identity primary key,

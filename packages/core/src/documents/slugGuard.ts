@@ -38,17 +38,15 @@ export async function assertSlugFree(
   input: { collection: string; docId: string; data: Record<string, unknown> },
 ): Promise<void> {
   const collection = ctx.config.collections.find((c) => c.name === input.collection);
-  if (!collection) return;
-  const field = Object.keys(collection.fields).find((k) => collection.fields[k]!.kind === "slug");
-  if (field === undefined) return;
-  const value = Object.hasOwn(input.data, field) ? input.data[field] : undefined;
+  if (!collection || !Object.hasOwn(collection.fields, "slug")) return;
+  const value = Object.hasOwn(input.data, "slug") ? input.data["slug"] : undefined;
   if (typeof value !== "string") return;
   const [clash] = await tx`
     select 1 as x
     from document_shared s join documents d on d.id = s.doc_id
     where d.collection = ${input.collection} and d.deleted_at is null and d.id <> ${input.docId}
       and (s.is_head_published or s.is_head_draft)
-      and s.data ->> ${field}::text = ${value}
+      and s.data ->> 'slug' = ${value}
     limit 1`;
   if (clash) {
     throw new ValidationError(
