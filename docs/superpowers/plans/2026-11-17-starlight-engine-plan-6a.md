@@ -60,7 +60,9 @@ its lockfile pins 7.4.4), `yaml` v2.9.1, `github-slugger` 2.0.0. These are the o
   `getting-started`, `guides/Hello World.md` -> `guides/hello-world`, `a_b/c.d.md` -> `a_b/cd`, `Über/naïve.mdx` ->
   `über/naïve`.
 - F-GLOB. Starlight's loader: `glob({ base: <srcDir>/content/docs, pattern: '**/[^_]*.{markdown,mdown,mkdn,mkd,mdwn,md,mdx}' })`,
-  no custom `generateId` (starlight `packages/starlight/src/loaders.ts:6,55-59`).
+  no custom `generateId` (starlight `packages/starlight/src/loaders.ts:6,55-59`); `mdoc` is added only when the
+  Markdoc integration is installed (`loaders.ts:48-53`), so Mogging lists `.mdoc` with the other unsupported
+  extensions unconditionally.
 - F-YAML. Astro parses `---` front matter with `parseDocument(source, { customTags: ['timestamp'], merge: true, schema: 'core' })`
   (`@astrojs/internal-helpers@0.13.0` `src/yaml.ts:4-8`, exported as `@astrojs/internal-helpers/frontmatter`
   `parseFrontmatter`); `+++` front matter is TOML; leading blank lines before `---` are allowed
@@ -101,8 +103,13 @@ attaches `data.estree` to an `mdxjsEsm` node; each `ImportDeclaration`/`Export*D
 - D5. Starlight-mode front matter with keys the mapped field does not declare inside a mapped object (for example
   `hero.actions[].attrs`, spec 5.9) drops those keys with a per-file warning naming the path; the English file keeps
   them (it is never rewritten).
-- D6. TOML front matter (`+++`), and `---` front matter preceded by blank lines (which Astro accepts, F-YAML), are a
-  per-file error in Starlight mode naming the limit; a front-matter `slug` key is a per-file error (spec 5.2).
+- D6. A Starlight file whose front matter Astro would read differently from Mogging is a per-file error naming the
+  limit: `readStarlightFile` runs Astro's own front-matter regex
+  `/(?:^\uFEFF?|^\s*\n)(?:---|\+\+\+)([\s\S]*?\n)(?:---|\+\+\+)/` (`@astrojs/internal-helpers@0.13.0`
+  `src/frontmatter.ts:17`) and refuses the file when that block differs from the one `splitFrontMatter`'s rule
+  extracts, or when it is TOML (`+++`). Measured: `--- \n` (trailing space), a closing `---x`, and blank lines before
+  `---` are read by Astro and not by Mogging (panel round 2 BS-5). A front-matter `slug` key is a per-file error
+  (spec 5.2).
 - D7. Import is plan-then-apply: phase 1 reads (files, then heads in pages of documents) and computes every outcome;
   phase 2 writes. `dryRun` returns phase 1's report and writes nothing, which is the "simulates the creating pass in
   memory" of spec 5.4.
@@ -253,7 +260,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     with `list(json(), { localized: true })` and `object({ a: json() }, { localized: true })` throws the same; with
     `json({ body: true })` throws `/only a richText field can be the body/` (existing message, `config.ts:36`).
   - `values.test.ts` "json normalizes any JSON value": `normalizeValue(json(), { a: [1, null, "é"] })` equals the NFC
-    form with the nested null kept; `normalizeValue(json(), "x\u0000")` throws `ValidationError`; a `Date`, `NaN`,
+    form with the nested null kept; `normalizeValue(json(), "x\u0000")` throws `ValidationError`;
+    `normalizeValue(json(), JSON.parse('{"a":{"__proto__":{"x":1}}}'))` throws `ValidationError(/__proto__/)`; a `Date`, `NaN`,
     and `{ k: undefined }` -> `{}` (dropped) behave as `nfcDeep` does (`normalize.ts:11-32`); a key `"a\u0000"` throws.
   - `api.test.ts`: add `"json"` to `FUNCTIONS`.
   - `ai/test/fields.test.ts` "a json leaf is never sent and is compared by value": `prompt.ts` `contextValues`
@@ -267,7 +275,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   `pnpm --filter @mogging/ai test fields`, `pnpm --filter @mogging/markdown test import`. Expected: FAIL (`json` is
   not exported).
 - [ ] **Step 3: Implement.** `json = (o?: FieldOptions): Field => ({ kind: "json", ...base(o) })`. `normalizeAt`
-  case `"json"`: `return nfcDeep(value, path)`. `defineConfig`: refuse `json` with `localized: true`, and walk each
+  case `"json"`: refuse a `__proto__` key at any depth (`ValidationError`; assignment would drop it and set the
+  prototype, measured, panel round 2 AX-1), then `return nfcDeep(value, path)`. `defineConfig`: refuse `json` with `localized: true`, and walk each
   localized field's `item`/`fields` refusing a nested `json` (message
   `` `${col.name}.${fname}: json cannot be localized` ``). ai `leafKinds`: `case "json": into.add("json")`, with
   `LeafKind` gaining `"json"`, and `isTranslatable` returns false when `kinds.has("json")`; `fieldSchema` `case
@@ -309,8 +318,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     contains `"$.actions[0].link: non-text value changed"`. With the fixture-shaped `image: object({ alt: text(),
     file: text({ translate: false }) })` and a source image holding only `file`, the wire value has no `image` and the
     merged draft has the source's `image`; a source list `[null, { text: "a", link: "/b" }]` keeps the null.
-  - "the enqueue estimate counts what is sent": `estimateJob`'s request characters for the `hero` value above equal
-    `JSON.stringify(wireValue(hero, value)).length`, not the full value's.
+  - "the enqueue estimate counts what is sent" (`estimateJob` is private, `jobs.ts:70`): two documents whose `hero`
+    values differ only in the length of a `translate: false` link get equal `estimateMicros` from `enqueueStale`.
   - ai `translate.test.ts` "translate: false leaves never reach the model and come back from the source": with a
     mock model that records its call, the request's JSON schema and user message contain no `link` and no `/start`,
     the model answers without `link`, and the outcome's field value has `link: "/start"`.
@@ -354,14 +363,18 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 - [ ] **Step 4: Tests, typecheck, suite.** PASS.
 - [ ] **Step 5: Commit** `feat(core,ai): untracked target saves and enqueueStale includeUntracked`.
 
-### Task 4: bulk reads `getDocuments` and `listPublishedVersions`
+### Task 4: bulk reads `getDocuments`, `listPublishedVersions` and `listLocaleRows`
 
 **Files:**
 - Modify: `packages/core/src/read/resolve.ts` (beside `getDocument`), `packages/core/src/index.ts:33-34`
-- Create: `packages/core/src/read/versions.ts`
+- Create: `packages/core/src/read/versions.ts` (`listPublishedVersions`, `listLocaleRows`)
 - Test: `packages/core/test/resolve.test.ts`, `packages/core/test/versions.test.ts` (new), `packages/core/test/api.test.ts`
 
 **Interfaces:**
+- Produces: `listLocaleRows(ctx: Ctx, input: { collection: string; docIds: string[] }): Promise<Array<{ docId: string; locale: string }>>`:
+  every (document, locale) pair with at least one `document_localized` row in ANY state, head or not (a rejected
+  draft and an unpublished locale keep rows with no head, `rejectDraft.ts:52`; `getDocument` reads heads only,
+  `resolve.ts:172`); one query; at most 1000 ids. It is spec 5.3's "no row of any state" test (panel round 2 BS-4).
 - Produces: `getDocuments(ctx: Ctx, input: { collection: string; docIds: string[] }): Promise<DocumentRecord[]>`
   (records in `docIds` order, unknown or malformed ids omitted, deleted documents included with `deletedAt` set,
   exactly 3 queries whatever the number of ids; at most 1000 ids, else `ValidationError`);
@@ -372,12 +385,14 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   `ValidationError`), ordered by `docId`, then `version` descending; one query; at most 1000 ids.
 
 - [ ] **Step 0: State check** of `getDocument` (`resolve.ts`, the `pairOf`/`toSnapshot` helpers). STOP on mismatch.
-- [ ] **Step 1: Failing tests.** "getDocuments equals getDocument per id": for 3 documents (one deleted, one with a
+- [ ] **Step 1: Failing tests.** "listLocaleRows sees rows without a head": after `rejectDraft` of a `de` AI draft
+  (no other `de` row), and after `unpublish` of the only `zh-CN` version, both pairs are returned; a
+  locale with no row is absent. "getDocuments equals getDocument per id": for 3 documents (one deleted, one with a
   draft only) plus one unknown and one malformed id, `getDocuments` returns 3 records each `toEqual` to
   `getDocument` for that id, in input order. "getDocuments issues 3 queries for 1 and for 50 ids" (count with a
   postgres.js `debug` callback on an `extraConnection`, `core/test/fixtures.ts`). "listPublishedVersions returns
   every published version newest first": publish v1, publish v2, unpublish, republish v1 (copy v3): versions
-  `[3, 2, 1]` with their data; a draft-only row is absent; `locale: "shared"` throws. API test adds both functions.
+  `[3, 2, 1]` with their data; a draft-only row is absent; `locale: "shared"` throws. API test adds `getDocuments`, `listPublishedVersions` and `listLocaleRows`.
 - [ ] **Step 2: Run, see FAIL.**
 - [ ] **Step 3: Implement** with `docIds` bound as one JSONB array (`jsonb_array_elements_text`), never interpolated;
   hoist `pairOf` (today a closure inside `getDocument`, `resolve.ts:174`) to module scope beside `toSnapshot`
@@ -414,7 +429,9 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   "two releases spanning two collections in opposite order both complete": the documents are inserted with raw SQL
   and chosen ids so that each release's item order (`order by doc_id`, `releases.ts:195`) visits the collections in
   the opposite order from the other; the two releases run concurrently on two `extraConnection`s, 10 times; and a
-  `pg_locks` read inside the release transaction shows both collection locks held before the first item publishes.
+  test of the up-front lock: a third connection holds `pg_advisory_xact_lock(hashtext('mogging_slug:' || 'B'))`, a
+  release with shared items of collections `A` and `B` starts, and a fourth connection's `pg_locks` read shows the
+  release's backend holding `A`'s lock and waiting on `B`'s before any item is published (panel round 2 TO-3).
 - [ ] **Step 2: Run, see FAIL.**
 - [ ] **Step 3: Implement.** In `saveDraft`, shared scope only, after the `documents` row lock: `lockSlugs` then
   `assertSlugFree` with the normalized `data`. In `publishWithinTx` (whose input has no collection,
@@ -458,7 +475,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   export function localeOfDir(layout: StarlightLayout, dir: string): string | null;   // internal
   ```
   `localeDirs` in the result maps EVERY declared non-source locale to its folder; `entries` holds the explicit
-  entries plus one implicit `plain` entry per remaining declared field (D1), sorted by path.
+  entries plus one implicit `plain` entry per remaining declared field (D1) other than the `slug` field, the body
+  field and the passthrough field, sorted by path.
 
 - [ ] **Step 0: State check**: `packages/markdown/src/index.ts` exports exactly the 9 runtime names pinned by
   `test/api.test.ts:6`. STOP on mismatch.
@@ -572,7 +590,9 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   Property test (300 generated relative paths, depth 0 to 4, with `?`/`#` suffixes): `rebase(rebase(v, E, L), L, E)
   === canonical(v)` and canonical is idempotent. A rebase that returns its input unchanged must fail the first block
   of exact-string assertions (the plan's oracle: spec 5.9 "a rebase that does nothing must fail a test"), and a
-  "prepend one `../`" implementation must fail the colocated rows.
+  "prepend one `../`" implementation must fail the colocated rows. A tree test (panel round 2 TO-1) puts `./a.png`
+  in a list item, a table cell, a blockquote, a heading, a container label and inside a link (`[![x](./a.png)](/p)`),
+  English to German and back, and asserts each `url` exactly (`../../guides/a.png`, then `./a.png`).
 - [ ] **Step 2: Run, see FAIL.**
 - [ ] **Step 3: Implement** per the interface; no regular expression touches an ESM block.
 - [ ] **Step 4: Tests, typecheck, suite.** PASS.
@@ -598,10 +618,12 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   core-schema document would write a created date-like string unquoted, measured) and clone it; when that document
   holds any alias or merge key, use `new YAML.Document(doc.toJS(), sameOptions)` instead (values and types kept,
   comments lost; one warning per file; panel round 1 AB-2). Then, for each localized `plain` entry: when the locale
-  has a value, `setIn(path, createNode(value))` (in place when English had the path, so key order and the pair's
-  comment stay; else appended to its parent mapping, creating parents); when it has none, `deleteIn(path)`. For each
-  union, read English's value at its path: `false` -> keep `false`; otherwise the locale's value field when present,
-  in the shortest form (an object whose only key is `stringAs` becomes that string), else delete the key. Rebase
+  has a value, `setIn(path, createNode(value))` (in place when English had the path, so key order and leading
+  comments stay; a trailing comment on that key may be dropped, measured; else appended to its parent mapping,
+  creating parents); when it has none, `deleteIn(path)`. For each union, read English's value at its path: `false` ->
+  keep `false`; otherwise the locale's value field when present, else delete the key. Every value of an entry with
+  `stringAs` (union or plain, for example `sidebar.badge`) is written in the shortest form: an object whose only key
+  is `stringAs` becomes that string (panel round 2 TO-4). Rebase
   `fileRefs` leaves and the body tree from `englishPath` to `localePath`. Stringify with `{ lineWidth: 0 }`; the body
   is `treeToMarkdown(tree)` (empty tree -> empty body); the output is `---\n<doc>---\n<body>` (no front matter block
   when the document is empty).
@@ -619,7 +641,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     reads a string.
   - "union rule": English `prev: false` + German prev `{ label: "Zurück" }` -> `prev: false`; English `prev: "Back"`
     + German `{ label: "Zurück" }` -> `prev: Zurück`; English absent + German `{ label: "Zurück", link: "/de/a" }`
-    -> the object; English `prev: true` + no German value -> no `prev` key.
+    -> the object; English `prev: true` + no German value -> no `prev` key; German `sidebarBadge: { text: "Neu" }`
+    -> `badge: Neu` and `{ text: "Neu", variant: "tip" }` -> the object.
   - "orphaned per-locale value is written": English without `banner`, German `banner: { content: "Nur hier" }` ->
     written.
   - "file references are rebased": hero image `../../assets/h.webp` (canonical, English at depth 0) renders
@@ -661,7 +684,7 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 
 - [ ] **Step 1: Failing tests** over a temp tree, root-locale mode: `index.mdx`, `Getting-Started.md`,
   `guides/_draft.md` (skipped), `_partials/x.md` (scanned, slug `_partials/x`), `notes.txt` (ignored, not
-  unsupported), `old.markdown` (unsupported), `de/getting-started.md` (German, slug `getting-started`),
+  unsupported), `old.markdown` and `x.mdoc` (unsupported), `de/getting-started.md` (German, slug `getting-started`),
   `zh-cn/index.mdx` (locale `zh-CN`), `fr/a.md` (skipped: other locale folder, one warning), `a.md` + `A.md`
   (collision errors), a symlinked folder (warning), `DE/b.md` (German), `es/c.md` (English page `es/c` plus the
   warning), and a folder named `constructor` (an English page, no crash, D12). Own-folder mode (`sourceDir: "en"`): `en/a.md` is a source,
@@ -738,6 +761,13 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   - Review Focus 1: `Getting Started.md` creates slug `getting-started`; a second run is `unchanged`.
   - "other Starlight extensions are listed once": `a.markdown` and `b.mdoc` give one warning naming both and appear in
     `starlight.unsupported`; nothing is imported from them.
+  - "a source file that cannot be read is never gone" (panel round 2 BS-1): a page whose English file has a
+    front-matter error, a page in a slug collision, and a page under a symlinked folder are not gone: no prune, no
+    safety stop pairing; and `prune: true` refuses with `ValidationError(/could not be read/)` naming the files
+    while any source file of the run is unreadable or skipped, deleting nothing.
+  - "first run": a fresh database with English, `de/` and `zh-cn/` files of new pages imports all of them in one
+    call (German and Chinese as day-one, published, untracked); the dry run of the same tree reports the same
+    outcomes (panel round 2 TO-5).
   - "heads are read per page of documents": the run issues no per-file `getDocument` (assert with the counting sql:
     the query count for 10 and for 40 unchanged pages is equal).
 - [ ] **Step 2: Run, see FAIL.**
@@ -745,6 +775,9 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   `listDocuments(includeDeleted: false)` pages of 200 and `getDocuments` per page; compute created/updated/unchanged,
   gone, new, stop, prune) and phase 2 (one transaction per page as `import.ts:277-283` does, then publish; prune with
   `deleteDocument`; a `NotFoundError` there means a concurrent prune already deleted it and is not an error). A
+  source document is "found" when the scan saw a source file with its derived slug in ANY state (read, per-file
+  error, collision, or a symlink entry, whose slug is derived from its path without following it); prune refuses
+  while any source entry is unreadable or skipped. A
   `LicenceError` aborts the run as in `import.ts:264`. Add one own-folder test (`layoutOwn`): a new page and a changed
   page.
 - [ ] **Step 4: Tests, typecheck, suite.** PASS, and every existing `import.test.ts` test passes unchanged.
@@ -785,15 +818,17 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     reports "already current" and writes nothing.
   - Review Focus 1: `de/getting-started.md` next to English `Getting-Started.md` is the same page.
   - References: a German hero image `../../../assets/h.webp` is stored canonical `../../assets/h.webp`.
+  - Not day one (panel round 2 BS-4): after a `de` AI draft is rejected (no `de` head left) a hand-written German file
+    is saved as an unpublished human draft (published only with `publish`); the same after `unpublish` of `de`.
 - [ ] **Step 2: Run, see FAIL.**
 - [ ] **Step 3: Implement**, per locale file, in this order: (1) skip with a warning when its slug has no live
-  document (outcome `skipped`); (2) read and split it, un-rebase `fileRefs` and the body to canonical; (3) classify
+  document, where live includes documents this run creates (or, in a dry run, would create) (outcome `skipped`); (2) read and split it, un-rebase `fileRefs` and the body to canonical; (3) classify
   against the heads (from Task 12's page reads) and, only for files matching neither, the earlier versions
   (`listPublishedVersions` per locale, ids in chunks of 1000); (4) `--restore` overrides `behind`/`published`
   (save as a human draft; "already current" when `published`); (5) the follows-English report (union toggles and
   `draft` included); (6) the locale-draft rule (file `draft: true`, English not); (7) for `hand work`, carry a
   suppressed union value forward from the current head, then save: `untracked` and published when the locale has no
-  row of any state (day one) unless rule 6 applies; otherwise a human draft, published only with `publish` and never
+  row of any state (`listLocaleRows`, one call per page of documents; day one) unless rule 6 applies; otherwise a human draft, published only with `publish` and never
   under rule 6. Outcomes: no row written -> `unchanged`; a row written -> `updated`; skipped -> `skipped`; read or
   save failure -> `error`.
 - [ ] **Step 4: Tests, typecheck, suite.** Add one own-folder test (`layoutOwn`): day one and a hand edit.
@@ -821,12 +856,23 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   locale `draft: true` file; a symlink refusal; a live document whose English file is missing or cannot be read
   (Task 7 per-file error; panel round 1 CA-4); a locale whose folder is not in `starlightLocaleDirs` when that list
   is given; a page skipped because a stored MDX block does not parse).
-  The keep test ("same parsed content", spec 5.4): the existing file and the candidate are both read with Astro's
-  options (F-YAML, so a plain date and a quoted one differ); they are the same when their front-matter values are
-  deeply equal (a `Date` compared by time) after removing, from the existing file, the top-level keys that English
-  lacks and the layout does not map, and their bodies parse (`markdownToTree`, the file's mode) to equal trees.
+  The keep test ("same parsed content", spec 5.4), without rendering (panel round 2 FR-1): a file is kept when it
+  classifies `published` (so its localized content, body included, already equals the head in canonical space) AND
+  its follows-English front matter equals what export would copy: both the file and the English file are read with
+  Astro's options (F-YAML, so a plain date and a quoted one differ), the localized mapped paths and union value forms
+  are removed from both, the file's top-level keys that English lacks and the layout does not map are removed, and the
+  rest is deeply equal (a `Date` compared by time) with each union toggle equal. A kept file is never rendered and so
+  never re-parsed. Comparisons of body trees (classification and self-check) ignore the root's `mode`; export stamps
+  the stored tree with the mode of the extension it writes, and a body that does not parse in that mode (an English
+  `.md` -> `.mdx` change with `{` or `<` in the German text) skips the page into `attention` (panel round 2 CA-1).
   The manifest lists every file export wrote AND every file it kept as `published` (spec 5.4), with the SHA-256 of
-  the bytes on disk. A self-check failure throws `Error("internal: export self-check failed for <path>: <field>")`.
+  the bytes on disk; entries for files this run did not evaluate (a locale skipped or filtered out, a page whose
+  English file is missing or unreadable, a refused symlink, an MDX skip) are carried over unchanged; entries are
+  dropped only for files this run evaluated and classified `pending`/`hand work`, or removed (panel round 2 BS-2).
+  `input.collections` is ignored in Starlight mode (one collection); `input.locales` restricts the locales evaluated.
+  At the start of a run, files named `*.<hex>.mogging-tmp` under `<docsDir>` and `.mogging/` (found with `lstat`, not
+  followed) are leftovers of an interrupted run: they are removed and each is reported in `warnings` (panel round 2
+  BS-6). A self-check failure throws `Error("internal: export self-check failed for <path>: <field>")`.
   Manifest file: `{"version":1,"files":[` newline, one compact JSON entry per line sorted by `path`, `]}` newline;
   written to a temporary file in `.mogging/` and renamed.
 
@@ -867,9 +913,14 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
     through.
   - Own-folder mode (`layoutOwn`): a new German file and a day-one name adoption.
   - Locale skip: `starlightLocaleDirs: ["de"]` -> no `zh-cn` file, in `attention`; `null` -> written as configured.
-  - MDX: a German body holding a stored `mdxjsEsm` block that does not parse (saved through the SDK) with a non-zero
-    depth difference -> that page skipped, its existing file and manifest entry unchanged, in `attention`, the rest
-    exported.
+  - MDX: a German body holding a stored `mdxjsEsm` block that does not parse (saved through the SDK) -> that page
+    skipped, its existing file and manifest entry unchanged, in `attention`, the rest exported; the same under
+    `layoutOwn` (D11; panel round 2 FR-2 / agy F1).
+  - Mode: English `a.md` -> `a.mdx` with a German body that is valid Markdown and valid MDX -> `de/a.mdx` written,
+    self-check passes; with a German body holding `{x}` -> skipped into `attention`, `de/a.md` untouched.
+  - Manifest carry-over: an export with `locales: ["de"]` keeps every `zh-CN` entry; a page whose English file was
+    deleted keeps its locale entries.
+  - Leftovers: a `de/a.md.0a1b.mogging-tmp` file is removed and reported at the next run.
   - Crash (Review Focus 5): after writing one file, a thrown error from the second `fs.renameSync` (spy) leaves the
     first file whole and the second's old content whole; the next run classifies the first `published` and keeps it.
   - Dry run: `actions` equal to the real run's, no file or manifest written.
@@ -896,9 +947,13 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
 - [ ] **Step 1: Failing tests.** A manifest-listed German file whose bytes match the manifest is removed when its
   document is soft-deleted, and when its German translation is unpublished; a listed file whose bytes changed is
   left and reported; an unlisted file is never removed; a manifest entry whose slug no document of the database has
-  (live or deleted) removes nothing and is reported (a fresh database); an entry whose path does not match the path
-  recomputed from the English file, layout and locale (`../../etc/passwd`, another folder) is ignored with a warning
-  (Review Focus 4); a file never becomes removable because English changed; a hand-deleted listed file of a live
+  (live or deleted) removes nothing and is reported (a fresh database); an entry whose path fails validation is
+  ignored with a warning (Review Focus 4). Validation (panel round 2 BS-3; the English file is usually gone when its
+  document is deleted): the entry's path must resolve inside `<docsDir>`, its first folder below `<docsDir>` must be
+  the layout's folder for `entry.locale` (looked up with `Object.hasOwn`), its extension `.md`/`.mdx`, and
+  `deriveSlug` of the rest must equal `entry.slug`; tests: `../../etc/passwd`, another locale's folder, and a valid
+  path whose slug differs, each with a deleted document's slug; and a prune-then-export run that removes the German
+  file of the pruned page; a file never becomes removable because English changed; a hand-deleted listed file of a live
   published translation is recreated with a warning.
 - [ ] **Steps 2-4.** Deleted documents are found with `listDocuments({ includeDeleted: true, limit: 200 })` in a
   loop over `next` until it is null (panel round 1 F4; the default limit is 50).
@@ -918,7 +973,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   export async function renamePage(ctx: Ctx, input: RenameInput): Promise<RenameReport>;
   ```
   Errors: `ValidationError` for a `to` that is not a derived-form slug (`deriveSlug` of itself plus an extension
-  must equal itself) or leaves `<docsDir>`, a depth change when the page or any translation holds a relative file
+  must equal itself), whose last segment starts with `_` (the scan would skip it; agy round 2 F2), or that leaves
+  `<docsDir>`, a depth change when the page or any translation holds a relative file
   reference, an unknown `from`; core's `ValidationError` for a duplicate slug; `ConflictError` when a move target
   exists with different parsed content (naming both files).
 
@@ -928,7 +984,8 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   completion is a no-op; a differing existing target -> `ConflictError`, nothing moved; dry run checks uniqueness
   with a read and changes nothing; `references` lists each line of `astro.config.mjs` and of Markdown under
   `<docsDir>` containing the old slug; `reminder` mentions redirects; a depth change with a relative image is
-  refused; a case-only rename on the English file moves in one rename; one own-folder rename (`layoutOwn`). API test
+  refused; a case-only rename on the English file moves in one rename; `to: "guides/_old"` is refused; one own-folder
+  rename (`layoutOwn`). API test
   adds `renamePage`.
 - [ ] **Steps 2-4.** **Step 5: Commit** `feat(markdown): renamePage keeps a document and its translations`.
 
@@ -1000,6 +1057,23 @@ text), `extraConnection(sql)` (a second connection on the same per-test schema, 
   - Anomaly (outside the plan): core readers hard-code the key `slug`; logged in `.clavity/local-anomalies.md`,
     D10 keeps Starlight mode inside it.
 
+- Panel round 2 (2026-11-17; Sonnet solo seats Fold Regression, Test Oracle Auditor, Blindspot Auditor, Activation
+  Auditor, Axiom Breaker, Cascade Analyst: 16 findings; agy seats Fold Regression, Test Oracle Auditor, State
+  Corruptor: 3 findings, 1 overlapping). Verified (yaml/regex/JS probes, `rejectDraft.ts:52`, `resolve.ts:172`,
+  `contentFile.ts:23`); all FOLDED:
+  - BS-1 prune could delete a page whose file exists but failed to read: "found" counts every source entry; prune
+    refuses while any is unreadable (Task 12).
+  - FR-1 keep rule needed rendering: keep = `published` class + follows-English equality, no render (Task 14).
+  - FR-2 / agy F1 stale "non-zero depth difference" (Task 14); FR-3 trailing comment wording (Task 9).
+  - TO-1 nested images untested (Task 8); TO-2 `.mdoc` (F-GLOB, Task 10); TO-3 private `estimateJob` and an
+    impossible `pg_locks` read (Tasks 2, 5); TO-4 shortest form for every `stringAs` entry (Task 9); TO-5 first run
+    with new pages and locale files (Tasks 12, 13).
+  - BS-2 manifest carry-over and the `locales` filter; BS-6 leftover temp files (Task 14); BS-3 removal path
+    validation without the English file (Task 15); BS-4 day one needs an any-state read: `listLocaleRows` (Tasks 4,
+    13); BS-5 Astro-vs-Mogging front-matter divergence (D6).
+  - AX-1 `__proto__` in json values (Task 1); CA-1 body `mode` after an extension change (Task 14).
+  - agy F2 rename to a `_` name refused; agy F3 implicit entries exclude slug, body and passthrough (Tasks 16, 6).
+
 ## Stand-downs
 
-None in round 1: no finding was discarded below the floor or accepted unverified.
+None in rounds 1 and 2: no finding was discarded below the floor or accepted unverified.
