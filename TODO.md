@@ -47,10 +47,18 @@ Tracked debt promoted from local anomaly captures (see the clavity open-issues s
 - [ ] `@mogging/markdown` no test for a `LicenceError` aborting an import mid-run. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/markdown` the rebasing error list reports only the first error of a file. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/markdown` the `msg`, `inTx` and `isPlain` helpers are duplicated across the Starlight modules. Recorded 2026-11-17, plan 6a final review.
-- [ ] `@mogging/markdown` export's `input.locales` is not normalized; the plan 6b CLI must normalize it before calling. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/markdown` `O_NOFOLLOW` is undefined on Windows (`fsSafe.ts`); the `lstat` checks remain the only guard there. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/markdown` the export self-check reports only the first mismatching key. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/markdown` the removal decision can use another document's draft slug. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/markdown` a manifest entry whose file is already gone is dropped silently on export. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/markdown` `renamePage`: an extension swap through an existing target; reference matches are substring matches; the manifest is rewritten on a no-op re-run. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/markdown` `perf.test.ts`: the `every keep` assertion is vacuous on an empty list, and `MOGGING_PERF=0` enables the test. Recorded 2026-11-17, plan 6a final review.
+
+## Plan 6b follow-ups (Starlight CLI, package, template)
+
+- [ ] `@mogging/starlight` the template's `@mogging/*` dependencies are `0.0.0` until the packages are published (v0.1 ship step 4); the first real `npm install` of the template waits for that. Recorded 2026-11-17, plan 6b Task 13.
+- [ ] `@mogging/starlight` `npx astro add @mogging/starlight` needs the network and the published package, so it is checked by hand before the v0.1 release (spec 7), not in CI. Recorded 2026-11-17, plan 6b Task 13.
+- [ ] `@mogging/starlight` the README says where the licence key goes (`MOGGING_LICENSE_KEY`) but links no page to register for the zero-price `noncommercial` key or to buy a commercial one: the repository has no such URL yet. Add the link to `packages/starlight/README.md` and `templates/starlight/README.md` with the v0.1 release (ship step 4). Recorded 2026-11-17, plan 6b Task 13.
+- [ ] `@mogging/cli` publishing the approved drafts takes `release create`, `release add <name> --all-approved` and `release publish <name>`, and a release name can be used once; a one-step "publish every approved draft" (and a per-page `publish` after `review --approve-clean`) would help large sites. Recorded 2026-11-17, plan 6b Task 13.
+- [ ] `@mogging/markdown` and `@mogging/ai` a `richText` body stored as a plain string (core accepts it, `packages/core/src/values/normalize.ts:46-51`) crashes the Starlight export (`packages/markdown/src/starlight/render.ts:168-172`, the body is treated as a tree) and fails AI translation before the provider is called (`packages/ai/src/translate.ts:71-74`, `source: ...` reason). Owner decision: reject a string `richText` in core, or accept it in the two consumers. Recorded 2026-11-17, plan 6b Task 13; not fixed.
+- [ ] `@mogging/cli` the test fixture `tempProjectDir` leaks `/tmp/mogging-cli-*` folders: its cleanup runs on `process.once("exit")` (`packages/cli/test/fixtures.ts:97`), which never fires in vitest workers. Use an `afterAll` or the vitest teardown. Recorded 2026-11-17, plan 6b Task 13; not fixed.

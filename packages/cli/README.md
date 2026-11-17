@@ -1,6 +1,6 @@
 # @mogging/cli
 
-The `mogging` command line of MoggingCMSCore: it sets up a project, imports and exports Markdown, shows which
+The `mogging` command line of MoggingCMSCore: it sets up a project (including a Starlight docs site), imports and exports Markdown, shows which
 translations are stale, runs the AI translation pipeline under a budget, reviews and approves what the model wrote,
 and publishes documents or releases (spec sections 8 and 9.2). Every command is a thin layer over the `@mogging/core`,
 `@mogging/ai` and `@mogging/markdown` SDKs.
@@ -18,6 +18,8 @@ pnpm install
 pnpm --filter @mogging/cli dev <command> [options]   # runs src/bin.ts with tsx
 pnpm build                                           # compiles every package to packages/*/dist
 DATABASE_URL=... pnpm smoke:pack                     # packs the four packages, installs the tarballs, runs `mogging`
+DATABASE_URL=... pnpm accept:starlight               # the Starlight starter template, packed packages, npm registry
+DATABASE_URL=... pnpm accept:adopter                 # an existing Starlight site: day one, rename, export, astro build
 ```
 
 `pnpm --filter ... dev` runs with `packages/cli` as the working directory, so pass `--config <path to your
@@ -25,18 +27,23 @@ mogging.config.ts>` there. The packed manifest declares the `mogging` binary (`d
 (see [docs/dev-setup.md](../../docs/dev-setup.md)) is the check that an installed copy runs.
 
 Requires Node 22 or newer and a PostgreSQL database. `mogging init` writes a starter `mogging.config.ts` and applies the
-engine migrations.
+engine migrations. `accept:starlight` and `accept:adopter` install from the npm registry, so they need network access
+as well as `DATABASE_URL`; they are not part of `pnpm test`, and CI runs them in its `starlight` job.
 
 ## Commands
 
 ```text
-mogging init
+mogging init [--starlight [--locales de,fr] [--source-locale en]]
 mogging migrate
 mogging import <dir> [--publish]
+mogging import [--publish] [--prune] [--accept-new-and-gone] [--restore <file>]... [--dry-run]   (Starlight projects)
 mogging export <dir> [--collection <c>]... [--locale <l>]...
+mogging export [--locale <l>]... [--dry-run]   (Starlight projects)
+mogging rename <old-slug> <new-slug> [--dry-run]   (Starlight projects)
 mogging status [<collection>] [--locale <l>]
 mogging track <collection>/<slug> --locale <l> [--fields a,b]
-mogging compile --locales de,fr --budget <usd> [--collection <c>] [<collection>/<slug> ...]
+mogging track --collection <c> --locale <l> [--dry-run]
+mogging compile --locales de,fr --budget <usd> [--collection <c>] [<collection>/<slug> ...] [--include-untracked]
 mogging worker [--once] [--poll-ms <n>] [--budget <usd>] [--collection <c>] [--locales a,b]
 mogging jobs [--state <s>] [--collection <c>] [--limit <n>] [--retry <id,...>] [--cancel <id,...>]
 mogging provenance <collection>/<slug> [--locale <l>] [--discarded-only] [--limit <n>]
@@ -71,13 +78,16 @@ after the slash, and splits at the first `/`, so a nested slug (`docs/guide/setu
 
 | Command | What it does |
 | --- | --- |
-| `init` | Writes `mogging.config.ts` unless a config already exists (never overwrites), then applies the migrations. Needs a database URL before it writes anything. |
+| `init` | Writes `mogging.config.ts` unless a config already exists (never overwrites), then applies the migrations. Needs a database URL before it writes anything. With `--starlight` the config uses the `@mogging/starlight` preset: it reads the `locales` of the `astro.config` beside the config file statically, writes the fallback chains and the folder of every language, never prompts, and warns when the installed `@astrojs/starlight` is outside `>=0.43.0 <0.44.0`. A single-language site (or an `astro.config` it cannot read statically) needs `--locales`, optionally `--source-locale`, and gets the `locales` block to paste into `astro.config` on stderr. A written config that does not load (`@mogging/starlight` or `@mogging/core` not installed) is deleted again and the run is a usage error. |
 | `migrate` | Applies pending migrations. |
 | `import <dir>` | Imports a `<locale>/<collection>/<slug>.md` tree as drafts; `--publish` publishes them in the same run. |
+| `import` (Starlight project) | A project whose config exports `starlight` imports its docs folder and takes no directory argument (one is a usage error). English is published on import; a locale file with no history is imported as a published, `untracked` human translation and reported `updated`. `--prune` soft-deletes the pages whose English file is gone (final: there is no undelete; refused when the run found no English file). `--accept-new-and-gone` confirms that pages gone and files added in one run are deletions plus new pages, instead of the safety stop (a rename); the gone pages are deleted only with `--prune` as well. `--restore <file>` brings an older locale file back as a human draft (a path relative to the working directory, `./`-prefixed or absolute, inside the project). `--dry-run` prints what would happen and writes nothing. The Starlight-only flags on a project without `starlight` are a usage error. A safety stop exits `4` when other files were created or updated, `1` otherwise. |
 | `export <dir>` | Writes the published content as the same tree; `--collection` and `--locale` narrow it (undeclared names are a usage error). |
+| `export` (Starlight project) | Writes the published translations into the docs folder next to the English files, with a manifest; no directory argument and no `--collection` (a usage error). `--locale` takes Starlight's folder spelling too (`zh-cn` for `zh-CN`). `--dry-run` lists every action and writes nothing (a usage error without `starlight`). Exits `4` when the report's `attention` list is not empty (a hand-edited file left alone, an incomplete translation, a language missing from `astro.config`). |
+| `rename <old-slug> <new-slug>` | Starlight projects only (a usage error otherwise, before the database is opened). Renames the page, keeps every language's history, moves the English file and the locale files, updates the manifest, then lists the lines of `astro.config` and the docs that still name the old slug and reminds you that the old URL needs a redirect. `--dry-run` writes nothing. Re-running an interrupted rename finishes it. |
 | `status [<collection>]` | One line per locale and state (`current`, `stale`, `missing`, `untracked`, `orphaned`), then one line per field that is not current, then a `run: mogging track ...` line for each document with untracked fields. |
-| `track` | Asserts that untracked translated fields are in sync with the source; without `--fields` it tracks every untracked field of that locale. |
-| `compile` | Queues every stale or missing translation for `--locales`, runs the worker until the queue is empty or `--budget` (USD for this run, required) is spent, and reports. Needs an `ai` export in the config. Targets given as `<collection>/<slug>` must share one collection. |
+| `track` | Asserts that untracked translated fields are in sync with the source; without `--fields` it tracks every untracked field of that locale. `track --collection <c> --locale <l>` does so for every document of the collection (`--dry-run` lists what it would track; it takes neither a target nor `--fields`). |
+| `compile` | Queues every stale or missing translation for `--locales`, runs the worker until the queue is empty or `--budget` (USD for this run, required) is spent, and reports. Needs an `ai` export in the config. Targets given as `<collection>/<slug>` must share one collection. `--include-untracked` also queues the fields that are `untracked` (day-one translations), which `compile` skips otherwise. |
 | `worker` | Runs the translation worker. `--once` stops when the queue is empty; `--poll-ms` (100 to 2147483647) is the idle poll interval; `--budget` is a per-run cap. Needs an `ai` export. |
 | `jobs` | Job counts by state, the job table (id, document, locale, state, attempts, lease holder, lease expiry, error) and one budget line per scope. `--state` is `queued`, `running`, `failed`, `cancelled` or `completed`. `--retry` and `--cancel` take comma-separated ids and cannot be combined. Lists every row unless `--limit` (1 to 1000) is given. Needs an `ai` export. |
 | `provenance` | Every AI provenance row of one document, discarded calls included (`--discarded-only` shows only those); every row unless `--limit` (1 to 1000). |
@@ -142,7 +152,7 @@ errors (`error: <message>`) go to stderr. Every write to either stream has datab
 | `1` | Error: the command failed, or every item it attempted failed or was refused. |
 | `2` | Usage error: unknown command or option, a missing or malformed argument, no config, no database URL. Also `mogging` with no command. |
 | `3` | Licence refusal (spec 12.3). |
-| `4` | Partial failure: a command that attempts several items and at least one succeeded (or was already in the wanted state) and at least one failed or was refused. |
+| `4` | Partial failure: a command that attempts several items and at least one succeeded (or was already in the wanted state) and at least one failed or was refused. Also a Starlight `export` whose `attention` list is not empty, and a Starlight `import` stopped by the rename safety stop after it imported other files. |
 
 One rule decides `1` versus `4`. Commands that attempt several items (`import` files, `publish` heads, `release add`
 and `release remove` items, `compile` and `worker` jobs, `jobs --retry` ids, interactive review) count `failed` and `done`: `failed = 0`
@@ -167,14 +177,14 @@ With `--json` stdout is exactly one JSON document, with these members:
 - `licence.state` is `licensed`, `evaluation` or `expired`; `daysLeft` and `licensee` may be `null`; `keyError` names a
   rejected key. The whole member is `null` when the command never opened the project.
 
-`data` for the commands: `init` `{ configCreated, applied }`; `migrate` `{ applied }`; `import` and `export` the
+`data` for the commands: `init` `{ configCreated, applied }` (with `--starlight` also `starlight`: `{ source, targets, sourceDir, docsDir, pasteBlock }`, or `null` when a config already existed); `migrate` `{ applied }`; `import` and `export` the
 importer's or exporter's report; `status` `{ rows }`; `compile` `{ enqueue, worker, pendingJobs }`; `worker` the final
 worker report; `jobs` `{ jobs, budgets }` (with `--retry` or `--cancel`, the result of that call); `provenance` the row
 array; `review list` `{ items, next: null }`; `review show` the draft review; `review approve` and `review reject`
 `{ version }`; `review --approve-clean` `{ approved, skipped }`; `publish`, `unpublish`, `release add` and `release remove`
 `{ items: [{ target, locale, outcome, version?, message? }] }`; `release create` `{ id }`, the new release's id; `release list` the
 array of releases; `release publish` and `publish --release` `null`, except a stale release, which is exit `1` with
-`data: { stale: [...] }`; `track` `null`; `query` the resolved document `{ id, data, fellBack, missing }`, or an array of
+`data: { stale: [...] }`; `track` `null`, except `track --collection`: `{ tracked: [{ docId, slug, locale, fields }] }`; `rename` the rename report (`dryRun`, `actions`, `references`, `warnings`, `reminder`); `query` the resolved document `{ id, data, fellBack, missing }`, or an array of
 them for a collection (`--raw`: the document with its heads). `fellBack` maps each field that was taken from another
 locale to the locale it came from.
 

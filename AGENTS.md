@@ -26,23 +26,32 @@ pnpm typecheck                               # tsc --noEmit per package: the sta
 pnpm build                                   # tsc to packages/*/dist
 pnpm smoke:pack                              # pack + install tarballs outside the repo, run `mogging` (needs network)
 pnpm --filter @mogging/cli dev <command> --config /abs/path/mogging.config.ts   # CLI from source via tsx
+pnpm accept:starlight                        # acceptance run of templates/starlight against packed packages (needs DATABASE_URL and the npm registry)
+pnpm accept:adopter                          # acceptance run of the existing-adopter Starlight fixture (same needs)
 ```
 
 - **Never insert `--`** after `test` or `dev`. `pnpm --filter X test -- claim` passes `--` to vitest, which drops the
   filter and runs the whole suite. `pnpm --filter @mogging/cli dev -- init` fails with `unknown command --`.
 - The CLI `dev` script runs with `packages/cli` as its cwd, so config and content paths must be absolute.
+- `accept:starlight` and `accept:adopter` (`scripts/starlight-accept.mjs`, `scripts/starlight-adopter.mjs`) install
+  from the npm registry and run `astro build`, so they are not part of `pnpm test`. `.github/workflows/ci.yml` has a
+  `check` job (typecheck, test, smoke:pack) and a `starlight` job that runs both.
 - The live OpenRouter test (`packages/ai/test/live.test.ts`) is skipped unless `MOGGING_LIVE=1` and
   `OPENROUTER_API_KEY` are set. It spends real money.
 
 ## Package layering
 
 `core` <- `markdown` <- `ai` <- `cli`. `ai` depends on both `core` and `markdown`, and `cli` depends on all three.
-`core` imports none of the others.
+`core` imports none of the others. `starlight` (`@mogging/starlight`) depends on `core` and `markdown` (types for the
+preset); the CLI does not depend on it at run time, and a Starlight project's `mogging.config.ts` imports it. Its root
+entry is a no-op Astro integration that imports nothing; the preset is the separate `@mogging/starlight/preset` entry.
 
 - In the repo, every package's `main`/`exports` point at `./src/*.ts`, so vitest and tsx run from source with no build
   step. `publishConfig` swaps them to `dist` only at `pnpm pack`. `prepack` does not build.
 - `core`, `ai` and `markdown` each have `test/api.test.ts`, which pins the exact public export surface. A new export
   must be added to that test deliberately. Don't leak internals through `src/index.ts`.
+- `templates/starlight/` is the starter site; it sits outside the pnpm workspace and is exercised only by
+  `accept:starlight`.
 - Each package's `test/db.ts` has its own `withTestDb`. Each test gets a random `t_<hex>` schema, which is dropped
   afterwards. A killed run can leave stale schemas behind (see `TODO.md`).
 - AI tests use `test/mockModel.ts`. The normal suite never calls a provider.
@@ -102,7 +111,7 @@ pnpm --filter @mogging/cli dev <command> --config /abs/path/mogging.config.ts   
 
 - `docs/superpowers/specs/2026-11-11-moggingcms-core-design.md` is the authoritative engine design. Code comments cite
   it as "spec N.N".
-- Plans live in `docs/superpowers/plans/`. The Starlight integration spec is implemented in part: plan 6a built the SDK half (the core slug guard and `untracked` saves, `includeUntracked` in `ai`, the Starlight mode of `markdown`'s import, export and `renamePage`), and plan 6b (the CLI commands, the `@mogging/starlight` package, the template and CI) is pending.
+- Plans live in `docs/superpowers/plans/`. The Starlight integration spec is implemented: plan 6a built the SDK half (the core slug guard and `untracked` saves, `includeUntracked` in `ai`, the Starlight mode of `markdown`'s import, export and `renamePage`), and plan 6b built the CLI commands (`init --starlight`, the Starlight modes of `import` and `export`, `rename`, `track --collection`, `compile --include-untracked`), the `@mogging/starlight` package, the starter template, the two acceptance runs and CI. The ship steps after it (publishing, freezing migration 0001) are the owner's.
 - `TODO.md` holds tracked debt and accepted limits. Some items are deliberate decisions, not bugs. For example, aborted
   provider calls record no spend, and tests must not pin that behaviour with a spend assertion. Read the item before
   "fixing" one.
