@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Sql } from "postgres";
+import { afterAll } from "vitest";
 import { defineConfig } from "@mogging/core";
 import { starlightPreset } from "@mogging/starlight/preset";
 import type { Deps } from "../src/types.js";
@@ -17,13 +18,14 @@ export const starlightConfig = defineConfig({
 });
 
 const projectRoots: string[] = [];
-process.once("exit", () => {
-  for (const d of projectRoots) rmSync(d, { recursive: true, force: true });
+// Not `process.once("exit")`: that never fires in a vitest worker. `afterAll` runs once per test file that imports this.
+afterAll(() => {
+  for (const d of projectRoots.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
 /**
  * A fresh `mkdtemp` project root holding an empty `mogging.config.ts` and each of `files` at its project-relative
- * path; removed when the test process exits.
+ * path; removed when the importing test file finishes.
  *
  * @param files file text by project-relative POSIX path.
  * @returns the absolute project root.
