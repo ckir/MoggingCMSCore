@@ -20,19 +20,20 @@ test("README example runs and resolves with locale fallback", async () => withTe
   });
   const ctx = { sql, config, actor: "me" };
 
+  const welcome = { type: "root", version: 1, mode: "md", children: [{ type: "paragraph", children: [{ type: "text", value: "Welcome", marks: [] }] }] } as const;
   await migrate(sql);
   const { id } = await createDocument(ctx, { collection: "posts" });
   await saveDraft(ctx, { docId: id, locale: "shared", data: { slug: "hello" } });
-  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "Hello", body: "Welcome" } });
+  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "Hello", body: welcome } });
   await saveDraft(ctx, { docId: id, locale: "de", data: { title: "Hallo" } });
   await publish(ctx, { docId: id, locale: "shared" });
   await publish(ctx, { docId: id, locale: "en" });
   await publish(ctx, { docId: id, locale: "de" });
 
   const [doc] = await resolve(ctx, { collection: "posts", locale: "de-CH" });
-  // doc.data: { slug: "hello", title: "Hallo", body: "Welcome" }; doc.fellBack: { title: "de", body: "en" }
+  // doc.data: { slug: "hello", title: "Hallo", body: welcome }; doc.fellBack: { title: "de", body: "en" }
   // README:END
-  expect(doc!.data).toEqual({ slug: "hello", title: "Hallo", body: "Welcome" });
+  expect(doc!.data).toEqual({ slug: "hello", title: "Hallo", body: welcome });
   expect(doc!.fellBack).toEqual({ title: "de", body: "en" });
 }));
 

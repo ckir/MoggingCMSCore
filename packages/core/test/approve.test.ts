@@ -4,7 +4,7 @@ import {
   ConflictError, NotPublishableError, ValidationError, approve, approveClean, createDocument, getDocument, getDraftReview,
   getSyncState, hashValue, listDraftHeads, migrate, publish, recordAiDraft, rejectDraft, saveDraft, trackFields, unpublish,
 } from "../src/index.js";
-import { ctxFor, extraConnection, insertPublishedLocalized } from "./fixtures.js";
+import { md, ctxFor, extraConnection, insertPublishedLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 const prov = (fieldPath: string, extra: { warnings?: string[]; jobId?: number; callId?: string } = {}) => ({
@@ -16,9 +16,9 @@ async function setup(sql: Sql) {
   await migrate(sql);
   const ctx = ctxFor(sql, "reviewer");
   const { id: docId } = await createDocument(ctx, { collection: "posts" });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("World") } });
   await publish(ctx, { docId, locale: "en" });
-  const hashes = { title: hashValue("Hello"), body: hashValue("World") };
+  const hashes = { title: hashValue("Hello"), body: hashValue(md("World")) };
   return { ctx, docId, hashes };
 }
 
@@ -28,7 +28,7 @@ const heads = (sql: Sql, docId: string, locale: string) =>
 
 test("recordAiDraft returns SOURCE_MOVED when source advanced", async () => withTestDb(async (sql) => {
   const { ctx, docId, hashes } = await setup(sql);
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello 2", body: "World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello 2", body: md("World") } });
   await publish(ctx, { docId, locale: "en" });
   const r = await recordAiDraft(ctx, {
     docId, locale: "de", fields: { title: "Hallo" }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("title")],
@@ -83,18 +83,18 @@ test("recordAiDraft rejects source locale, shared and undeclared or prototype-na
 test("recordAiDraft supersedes a stale APPROVED draft and keeps its non-stale field values", async () => withTestDb(async (sql) => {
   const { ctx, docId, hashes } = await setup(sql);
   await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { title: "Hallo", body: "Welt" }, sourceVersion: 1, sourceHashes: hashes,
+    docId, locale: "de", fields: { title: "Hallo", body: md("Welt") }, sourceVersion: 1, sourceHashes: hashes,
     provenance: [prov("title"), prov("body")],
   });
   const approved = await approve(ctx, { docId, locale: "de", edits: { title: "Servus" } });
   expect(approved).toEqual({ version: 2 });
 
   // The source body changes: body is stale, title is not.
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "Brave World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("Brave World") } });
   await publish(ctx, { docId, locale: "en" });
-  const newHashes = { body: hashValue("Brave World") };
+  const newHashes = { body: hashValue(md("Brave World")) };
   const r = await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { body: "Tapfere Welt" }, sourceVersion: 2, sourceHashes: newHashes,
+    docId, locale: "de", fields: { body: md("Tapfere Welt") }, sourceVersion: 2, sourceHashes: newHashes,
     provenance: [prov("body")],
   });
   expect(r).toEqual({ version: 3 });
@@ -102,7 +102,7 @@ test("recordAiDraft supersedes a stale APPROVED draft and keeps its non-stale fi
   expect(rows.map((x) => [x.version, x.state, x.is_head_draft])).toEqual([
     [1, "DRAFT_AI", false], [2, "APPROVED", false], [3, "DRAFT_AI", true],
   ]);
-  expect(rows[2]!.data).toEqual({ title: "Servus", body: "Tapfere Welt" });
+  expect(rows[2]!.data).toEqual({ title: "Servus", body: md("Tapfere Welt") });
   expect(rows[2]!.source_hashes).toEqual({ title: hashes.title, body: newHashes.body });
 }));
 
@@ -156,7 +156,7 @@ test("concurrent saveDraft and recordAiDraft on the same (doc, locale): the huma
 test("approve with edits marks edited provenance and produces APPROVED head", async () => withTestDb(async (sql) => {
   const { ctx, docId, hashes } = await setup(sql);
   await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { title: "Hallo", body: "Welt", legal: "Recht" }, sourceVersion: 1, sourceHashes: hashes,
+    docId, locale: "de", fields: { title: "Hallo", body: md("Welt"), legal: "Recht" }, sourceVersion: 1, sourceHashes: hashes,
     provenance: [prov("title"), prov("body", { warnings: ["tone"] }), prov("legal")],
   });
   const bulkId = "11111111-1111-4111-8111-111111111111";
@@ -166,7 +166,7 @@ test("approve with edits marks edited provenance and produces APPROVED head", as
   expect(r).toEqual({ version: 2 });
   const rows = await heads(sql, docId, "de");
   expect(rows[0]).toMatchObject({ state: "DRAFT_AI", is_head_draft: false });
-  expect(rows[1]).toMatchObject({ state: "APPROVED", is_head_draft: true, data: { title: "Servus", body: "Welt", legal: "Recht" } });
+  expect(rows[1]).toMatchObject({ state: "APPROVED", is_head_draft: true, data: { title: "Servus", body: md("Welt"), legal: "Recht" } });
   const p = await sql`select * from content_provenance where doc_id = ${docId} and version = 2 order by field_path`;
   expect(p.map((x) => [x.field_path, x.edited, x.discarded])).toEqual([
     ["body", false, false], ["legal", false, false], ["title", true, false],
@@ -186,7 +186,7 @@ test("approve rejectFields reverts to published value", async () => withTestDb(a
   await saveDraft(ctx, { docId, locale: "de", data: { title: "Alt" } });
   await publish(ctx, { docId, locale: "de" });
   await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { title: "Neu", body: "Welt" }, sourceVersion: 1, sourceHashes: hashes,
+    docId, locale: "de", fields: { title: "Neu", body: md("Welt") }, sourceVersion: 1, sourceHashes: hashes,
     provenance: [prov("title"), prov("body")],
   });
   await approve(ctx, { docId, locale: "de", rejectFields: ["title", "body"] });
@@ -340,7 +340,7 @@ test("direct approve writes no bulk marker", async () => withTestDb(async (sql) 
 test("copied provenance rows carry zero tokens and cost; the AI version stays the single cost record", async () => withTestDb(async (sql) => {
   const { ctx, docId, hashes } = await setup(sql);
   await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { title: "T", body: "B" }, sourceVersion: 1, sourceHashes: hashes,
+    docId, locale: "de", fields: { title: "T", body: md("B") }, sourceVersion: 1, sourceHashes: hashes,
     provenance: [prov("title"), prov("body")],
   });
   await approve(ctx, { docId, locale: "de", edits: { title: "E" } });
@@ -357,7 +357,7 @@ test("copied provenance rows carry zero tokens and cost; the AI version stays th
 test("an edited field hashes the current source published value even when the source moved; non-edited keep the AI hash", async () => withTestDb(async (sql) => {
   const { ctx, docId, hashes } = await setup(sql);
   await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { title: "T", body: "B" }, sourceVersion: 1, sourceHashes: hashes,
+    docId, locale: "de", fields: { title: "T", body: md("B") }, sourceVersion: 1, sourceHashes: hashes,
     provenance: [prov("title"), prov("body")],
   });
   // Move the source head directly (publish flip by SQL): title changes, body is dropped.
@@ -370,28 +370,28 @@ test("an edited field hashes the current source published value even when the so
 
   // Edited field the source has no published value for: no hash stored.
   await recordAiDraft(ctx, { docId, locale: "de", fields: { title: "T" }, sourceVersion: 2, sourceHashes: { title: hashValue("Hello 2") }, provenance: [prov("title")] });
-  await approve(ctx, { docId, locale: "de", edits: { body: "Neu" } });
+  await approve(ctx, { docId, locale: "de", edits: { body: md("Neu") } });
   [head] = await sql`select source_hashes from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
   expect(head!.source_hashes).toEqual({ title: hashValue("Hello 2") });
 }));
 
 test("recordAiDraft after unpublish keeps the sibling fields and their hashes", async () => withTestDb(async (sql) => {
   const { ctx, docId, hashes } = await setup(sql);
-  await saveDraft(ctx, { docId, locale: "de", data: { title: "Deutscher Titel", body: "Deutscher Text" } });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Deutscher Titel", body: md("Deutscher Text") } });
   await publish(ctx, { docId, locale: "de" });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "New world" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("New world") } });
   await publish(ctx, { docId, locale: "en" });
   await unpublish(ctx, { docId, locale: "de" });
   const en = (await getDocument(ctx, { collection: "posts", docId }))!.locales.en!.published!;
   const r = await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { body: "Neuer deutscher Text" }, sourceVersion: en.version,
+    docId, locale: "de", fields: { body: md("Neuer deutscher Text") }, sourceVersion: en.version,
     sourceHashes: { body: en.sourceHashes.body! }, provenance: [prov("body")],
   });
   expect(r).toEqual({ version: 2 });
   const rows = await heads(sql, docId, "de");
   expect(rows[1]).toMatchObject({
     state: "DRAFT_AI", is_head_draft: true,
-    data: { title: "Deutscher Titel", body: "Neuer deutscher Text" },
+    data: { title: "Deutscher Titel", body: md("Neuer deutscher Text") },
     source_hashes: { title: hashes.title, body: en.sourceHashes.body },
   });
   await approve(ctx, { docId, locale: "de" });
@@ -406,11 +406,11 @@ test("recordAiDraft with only non-head rows and no published head bases on the L
   await saveDraft(ctx, { docId, locale: "de", data: { title: "B", legal: "L" } });
   await sql`update document_localized set is_head_draft = false where doc_id = ${docId} and locale = 'de'`;
   const r = await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { body: "Welt" }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("body")],
+    docId, locale: "de", fields: { body: md("Welt") }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("body")],
   });
   expect(r).toEqual({ version: 3 });
   const rows = await heads(sql, docId, "de");
-  expect(rows[2]!.data).toEqual({ title: "B", legal: "L", body: "Welt" });
+  expect(rows[2]!.data).toEqual({ title: "B", legal: "L", body: md("Welt") });
   expect(rows[2]!.source_hashes).toEqual({ title: hashes.title, body: hashes.body });
 }));
 
@@ -420,11 +420,11 @@ test("recordAiDraft prefers the published head over a later superseded draft row
   await sql`insert into document_localized (doc_id, locale, version, state, data, source_hashes, is_head_draft, created_by)
     values (${docId}, 'de', 2, 'DRAFT_HUMAN', ${sql.json({ title: "Old draft", legal: "x" })}, ${sql.json({})}, false, 'fixture')`;
   const r = await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { body: "Welt" }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("body")],
+    docId, locale: "de", fields: { body: md("Welt") }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("body")],
   });
   expect(r).toEqual({ version: 3 });
   const rows = await heads(sql, docId, "de");
-  expect(rows[2]!.data).toEqual({ title: "Pub", body: "Welt" });
+  expect(rows[2]!.data).toEqual({ title: "Pub", body: md("Welt") });
   expect(rows[2]!.source_hashes).toEqual({ title: hashes.title, body: hashes.body });
 }));
 
@@ -463,7 +463,7 @@ test("superseding a DRAFT_AI head records superseded_version on the new provenan
   const { ctx, docId, hashes } = await setup(sql);
   const input = { docId, locale: "de", sourceVersion: 1, sourceHashes: hashes };
   expect(await recordAiDraft(ctx, { ...input, fields: { title: "Hallo" }, provenance: [prov("title")] })).toEqual({ version: 1 });
-  expect(await recordAiDraft(ctx, { ...input, fields: { title: "Hallo!", body: "Welt" }, provenance: [prov("title"), prov("body")] }))
+  expect(await recordAiDraft(ctx, { ...input, fields: { title: "Hallo!", body: md("Welt") }, provenance: [prov("title"), prov("body")] }))
     .toEqual({ version: 2 });
   const v1 = await sql`select superseded_version from content_provenance where doc_id = ${docId} and version = 1`;
   expect(v1.map((r) => r.superseded_version)).toEqual([null]);
@@ -477,7 +477,7 @@ test("superseding an APPROVED head records the APPROVED version as superseded_ve
   const input = { docId, locale: "de", sourceVersion: 1, sourceHashes: hashes };
   expect(await recordAiDraft(ctx, { ...input, fields: { title: "Hallo" }, provenance: [prov("title")] })).toEqual({ version: 1 });
   expect(await approve(ctx, { docId, locale: "de" })).toEqual({ version: 2 });
-  expect(await recordAiDraft(ctx, { ...input, fields: { title: "Hallo!", body: "Welt" }, provenance: [prov("title"), prov("body")] }))
+  expect(await recordAiDraft(ctx, { ...input, fields: { title: "Hallo!", body: md("Welt") }, provenance: [prov("title"), prov("body")] }))
     .toEqual({ version: 3 });
   const v3 = await sql`select superseded_version from content_provenance where doc_id = ${docId} and version = 3`;
   expect(v3).toHaveLength(2);
@@ -488,7 +488,7 @@ test("a first AI draft over a published head records superseded_version null", a
   const { ctx, docId, hashes } = await setup(sql);
   await insertPublishedLocalized(sql, docId, "de", 1, { title: "Pub" }, { title: hashes.title });
   expect(await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { body: "Welt" }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("body")],
+    docId, locale: "de", fields: { body: md("Welt") }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("body")],
   })).toEqual({ version: 2 });
   const rows = await sql`select superseded_version from content_provenance where doc_id = ${docId} and version = 2`;
   expect(rows).toHaveLength(1);
@@ -499,7 +499,7 @@ test("a provenance entry with callId stores it; without, call_id is null", async
   const { ctx, docId, hashes } = await setup(sql);
   const callId = "3f2b8c1e-5d4a-4e7b-9a6c-0d1e2f3a4b5c";
   await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { title: "Hallo", body: "Welt" }, sourceVersion: 1, sourceHashes: hashes,
+    docId, locale: "de", fields: { title: "Hallo", body: md("Welt") }, sourceVersion: 1, sourceHashes: hashes,
     provenance: [prov("title", { callId }), prov("body")],
   });
   const rows = await sql`select field_path, call_id from content_provenance where doc_id = ${docId} order by field_path`;
@@ -540,7 +540,7 @@ const W2 = "tone: too formal";
 /** An AI draft whose provenance rows carry `warned[field]` (fields not listed have none). */
 function aiDraft(
   ctx: ReturnType<typeof ctxFor>, docId: string, fields: Record<string, unknown>, warned: Record<string, string[]> = {},
-  sourceVersion = 1, sourceHashes: Record<string, string> = { title: hashValue("Hello"), body: hashValue("World") },
+  sourceVersion = 1, sourceHashes: Record<string, string> = { title: hashValue("Hello"), body: hashValue(md("World")) },
 ) {
   return recordAiDraft(ctx, {
     docId, locale: "de", fields, sourceVersion, sourceHashes,
@@ -550,9 +550,9 @@ function aiDraft(
 
 /** Publishes a new source body ("World 2") and returns the v2 hashes for a body-only AI draft. */
 async function moveSourceBody(ctx: ReturnType<typeof ctxFor>, docId: string) {
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "World 2" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("World 2") } });
   await publish(ctx, { docId, locale: "en" });
-  return { body: hashValue("World 2") };
+  return { body: hashValue(md("World 2")) };
 }
 
 const fieldWarnings = async (sql: Sql, docId: string) =>
@@ -561,7 +561,7 @@ const fieldWarnings = async (sql: Sql, docId: string) =>
 
 test("approve with a stale expectedVersion throws ConflictError, writes no APPROVED row and leaves the draft head and its provenance untouched", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Hallo", body: "Welt" });
+  await aiDraft(ctx, docId, { title: "Hallo", body: md("Welt") });
   await aiDraft(ctx, docId, { title: "Hallo 2" }); // v2 replaces v1
   const before = await sql`select * from content_provenance order by id`;
   await expect(approve(ctx, { docId, locale: "de", expectedVersion: 1 }))
@@ -575,24 +575,24 @@ test("approve with a stale expectedVersion throws ConflictError, writes no APPRO
 
 test("approve with the current expectedVersion behaves as without", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Hallo", body: "Welt" });
+  await aiDraft(ctx, docId, { title: "Hallo", body: md("Welt") });
   expect(await approve(ctx, { docId, locale: "de", expectedVersion: 1 })).toEqual({ version: 2 });
   expect((await heads(sql, docId, "de"))[1]).toMatchObject({ state: "APPROVED", is_head_draft: true });
 }));
 
 test("approve with edits and a stale expectedVersion stores none of the edits", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Hallo", body: "Welt" });
+  await aiDraft(ctx, docId, { title: "Hallo", body: md("Welt") });
   await aiDraft(ctx, docId, { title: "Hallo 2" });
   await expect(approve(ctx, { docId, locale: "de", edits: { title: "Servus" }, expectedVersion: 1 })).rejects.toThrow(ConflictError);
   const rows = await heads(sql, docId, "de");
   expect(rows).toHaveLength(2);
-  expect(rows[1]).toMatchObject({ state: "DRAFT_AI", is_head_draft: true, data: { title: "Hallo 2", body: "Welt" } });
+  expect(rows[1]).toMatchObject({ state: "DRAFT_AI", is_head_draft: true, data: { title: "Hallo 2", body: md("Welt") } });
 }));
 
 test("approveClean still approves a head whose version changed since the scan", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Hallo", body: "Welt" });
+  await aiDraft(ctx, docId, { title: "Hallo", body: md("Welt") });
   await aiDraft(ctx, docId, { title: "Hallo 2" });
   expect(await approveClean(ctx)).toEqual({ approved: 1, skipped: [] });
   expect((await heads(sql, docId, "de"))[2]).toMatchObject({ version: 3, state: "APPROVED" });
@@ -600,7 +600,7 @@ test("approveClean still approves a head whose version changed since the scan", 
 
 test("approve of a draft with warnings and no acknowledgedWarnings throws ValidationError naming the warning text and writes nothing", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Hallo", body: "Welt" }, { title: [W1] });
+  await aiDraft(ctx, docId, { title: "Hallo", body: md("Welt") }, { title: [W1] });
   const before = await sql`select * from content_provenance order by id`;
   const e = await approve(ctx, { docId, locale: "de" }).catch((x: unknown) => x);
   expect(e).toBeInstanceOf(ValidationError);
@@ -611,7 +611,7 @@ test("approve of a draft with warnings and no acknowledgedWarnings throws Valida
 
 test("acknowledging every distinct text approves and records acknowledged_warnings on every row", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Hallo", body: "Welt" }, { title: [W1], body: [W1] });
+  await aiDraft(ctx, docId, { title: "Hallo", body: md("Welt") }, { title: [W1], body: [W1] });
   expect(await approve(ctx, { docId, locale: "de", acknowledgedWarnings: [W1] })).toEqual({ version: 2 });
   const p = await sql`select field_path, acknowledged_warnings from content_provenance where doc_id = ${docId} and version = 2 order by field_path`;
   expect(p.map((r) => [r.field_path, r.acknowledged_warnings])).toEqual([["body", [W1]], ["title", [W1]]]);
@@ -619,7 +619,7 @@ test("acknowledging every distinct text approves and records acknowledged_warnin
 
 test("a partial acknowledgement (two distinct texts, one named) throws and names the missing one", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Hallo", body: "Welt" }, { title: [W1], body: [W2] });
+  await aiDraft(ctx, docId, { title: "Hallo", body: md("Welt") }, { title: [W1], body: [W2] });
   const e = await approve(ctx, { docId, locale: "de", acknowledgedWarnings: [W1] }).catch((x: unknown) => x);
   expect(e).toBeInstanceOf(ValidationError);
   expect((e as Error).message).toBe(`${docId}/de has 2 warning(s) not acknowledged: ${W2}`);
@@ -628,7 +628,7 @@ test("a partial acknowledgement (two distinct texts, one named) throws and names
 
 test("an acknowledgement for a text the draft does not carry throws", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Hallo", body: "Welt" }, { title: [W1] });
+  await aiDraft(ctx, docId, { title: "Hallo", body: md("Welt") }, { title: [W1] });
   const e = await approve(ctx, { docId, locale: "de", acknowledgedWarnings: [W1, "invented"] }).catch((x: unknown) => x);
   expect(e).toBeInstanceOf(ValidationError);
   expect((e as Error).message).toBe(`${docId}/de acknowledges unknown warnings: invented`);
@@ -637,7 +637,7 @@ test("an acknowledgement for a text the draft does not carry throws", async () =
 
 test("a warning-free draft with a non-empty acknowledgedWarnings throws", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Hallo", body: "Welt" });
+  await aiDraft(ctx, docId, { title: "Hallo", body: md("Welt") });
   await expect(approve(ctx, { docId, locale: "de", acknowledgedWarnings: ["tone"] })).rejects.toThrow(/acknowledges unknown warnings: tone/);
   expect(await heads(sql, docId, "de")).toHaveLength(1);
   // An empty acknowledgement is the same as none.
@@ -646,9 +646,9 @@ test("a warning-free draft with a non-empty acknowledgedWarnings throws", async 
 
 test("a field carried over from a superseded draft keeps its warning: approve, approveClean, getDraftReview and listDraftHeads see it", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Katze", body: "Welt" }, { title: [W1] });
+  await aiDraft(ctx, docId, { title: "Katze", body: md("Welt") }, { title: [W1] });
   const body = await moveSourceBody(ctx, docId);
-  await aiDraft(ctx, docId, { body: "Welt 2" }, {}, 2, body); // v2 carries title from v1
+  await aiDraft(ctx, docId, { body: md("Welt 2") }, {}, 2, body); // v2 carries title from v1
   expect(await fieldWarnings(sql, docId)).toEqual([[1, "DRAFT_AI", { title: [W1] }], [2, "DRAFT_AI", { title: [W1] }]]);
 
   await expect(approve(ctx, { docId, locale: "de" })).rejects.toThrow(W1);
@@ -664,10 +664,10 @@ test("a field carried over from a superseded draft keeps its warning: approve, a
 
 test("an edited and acknowledged warning is not demanded again by a later draft that carries the field", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Katze", body: "Welt" }, { title: [W1] });
+  await aiDraft(ctx, docId, { title: "Katze", body: md("Welt") }, { title: [W1] });
   await approve(ctx, { docId, locale: "de", edits: { title: "Hallo" }, acknowledgedWarnings: [W1] });
   const body = await moveSourceBody(ctx, docId);
-  await aiDraft(ctx, docId, { body: "Welt 2" }, {}, 2, body); // v3 carries title from the APPROVED v2
+  await aiDraft(ctx, docId, { body: md("Welt 2") }, {}, 2, body); // v3 carries title from the APPROVED v2
   expect(await fieldWarnings(sql, docId)).toEqual([
     [1, "DRAFT_AI", { title: [W1] }], [2, "APPROVED", {}], [3, "DRAFT_AI", {}],
   ]);
@@ -678,9 +678,9 @@ test("an edited and acknowledged warning is not demanded again by a later draft 
 
 test("the gate holds after track", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Katze", body: "Welt" }, { title: [W1] });
+  await aiDraft(ctx, docId, { title: "Katze", body: md("Welt") }, { title: [W1] });
   const body = await moveSourceBody(ctx, docId);
-  await aiDraft(ctx, docId, { body: "Welt 2" }, {}, 2, body);
+  await aiDraft(ctx, docId, { body: md("Welt 2") }, {}, 2, body);
   await trackFields(ctx, { docId, locale: "de", fields: ["title"] }); // the never-published de's draft head
   await expect(approve(ctx, { docId, locale: "de" })).rejects.toThrow(W1);
   expect(await approveClean(ctx)).toEqual({ approved: 0, skipped: [{ docId, locale: "de", reason: "has warnings" }] });
@@ -688,9 +688,9 @@ test("the gate holds after track", async () => withTestDb(async (sql) => {
 
 test("a reject discards the rejected draft's text and its warnings: the next draft carries neither", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Katze", body: "Welt" }, { title: [W1] });
+  await aiDraft(ctx, docId, { title: "Katze", body: md("Welt") }, { title: [W1] });
   await rejectDraft(ctx, { docId, locale: "de" });
-  await aiDraft(ctx, docId, { body: "Welt 2" }); // v2 has no base: the rejected v1 row is not carried
+  await aiDraft(ctx, docId, { body: md("Welt 2") }); // v2 has no base: the rejected v1 row is not carried
   expect(await fieldWarnings(sql, docId)).toEqual([[1, "DRAFT_AI", { title: [W1] }], [2, "DRAFT_AI", {}]]);
   const review = await getDraftReview(ctx, { docId, locale: "de" });
   expect(review.fields.every((f) => f.warnings.length === 0)).toBe(true);
@@ -699,9 +699,9 @@ test("a reject discards the rejected draft's text and its warnings: the next dra
 
 test("the gate holds with no provenance rows", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Katze", body: "Welt" }, { title: [W1] });
+  await aiDraft(ctx, docId, { title: "Katze", body: md("Welt") }, { title: [W1] });
   const body = await moveSourceBody(ctx, docId);
-  await recordAiDraft(ctx, { docId, locale: "de", fields: { body: "Welt 2" }, sourceVersion: 2, sourceHashes: body, provenance: [] });
+  await recordAiDraft(ctx, { docId, locale: "de", fields: { body: md("Welt 2") }, sourceVersion: 2, sourceHashes: body, provenance: [] });
   await expect(approve(ctx, { docId, locale: "de" })).rejects.toThrow(W1);
   expect(await approve(ctx, { docId, locale: "de", acknowledgedWarnings: [W1] })).toEqual({ version: 3 });
   const marker = await sql`select * from content_provenance where doc_id = ${docId} and version = 3`;
@@ -733,17 +733,17 @@ test("provenance naming a field not in fields leaves field_warnings without that
 
 test("acknowledge once: a later draft that carries an acknowledged field needs no acknowledgement and is approveClean-able", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Katze", body: "Welt" }, { title: [W1] });
+  await aiDraft(ctx, docId, { title: "Katze", body: md("Welt") }, { title: [W1] });
   await approve(ctx, { docId, locale: "de", acknowledgedWarnings: [W1] }); // no edits
   const body = await moveSourceBody(ctx, docId);
-  await aiDraft(ctx, docId, { body: "Welt 2" }, {}, 2, body); // v3
+  await aiDraft(ctx, docId, { body: md("Welt 2") }, {}, 2, body); // v3
   expect(await approveClean(ctx)).toEqual({ approved: 1, skipped: [] });
   expect((await heads(sql, docId, "de"))[3]).toMatchObject({ version: 4, state: "APPROVED" });
 }));
 
 test("a re-drafted field drops its old warning", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Katze", body: "Welt" }, { title: [W1] });
+  await aiDraft(ctx, docId, { title: "Katze", body: md("Welt") }, { title: [W1] });
   await aiDraft(ctx, docId, { title: "Hallo" });
   expect(await fieldWarnings(sql, docId)).toEqual([[1, "DRAFT_AI", { title: [W1] }], [2, "DRAFT_AI", {}]]);
   expect(await approve(ctx, { docId, locale: "de" })).toEqual({ version: 3 });
@@ -751,7 +751,7 @@ test("a re-drafted field drops its old warning", async () => withTestDb(async (s
 
 test("a null field drops its warning", async () => withTestDb(async (sql) => {
   const { ctx, docId, hashes } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Katze", body: "Welt" }, { title: [W1] });
+  await aiDraft(ctx, docId, { title: "Katze", body: md("Welt") }, { title: [W1] });
   await recordAiDraft(ctx, { docId, locale: "de", fields: { title: null }, sourceVersion: 1, sourceHashes: hashes, provenance: [] });
   expect(await fieldWarnings(sql, docId)).toEqual([[1, "DRAFT_AI", { title: [W1] }], [2, "DRAFT_AI", {}]]);
   expect(await approve(ctx, { docId, locale: "de" })).toEqual({ version: 3 });
@@ -759,7 +759,7 @@ test("a null field drops its warning", async () => withTestDb(async (sql) => {
 
 test("field_warnings is {} on APPROVED, DRAFT_HUMAN and republished rows", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Katze", body: "Welt" }, { title: [W1] });
+  await aiDraft(ctx, docId, { title: "Katze", body: md("Welt") }, { title: [W1] });
   await approve(ctx, { docId, locale: "de", acknowledgedWarnings: [W1] }); // v2 APPROVED
   await publish(ctx, { docId, locale: "de" }); // v2 PUBLISHED
   await saveDraft(ctx, { docId, locale: "de", data: { title: "Von Hand" } }); // v3 DRAFT_HUMAN
@@ -773,7 +773,7 @@ test("field_warnings is {} on APPROVED, DRAFT_HUMAN and republished rows", async
 
 test("a stale expectedVersion is a ConflictError, not a warnings ValidationError", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
-  await aiDraft(ctx, docId, { title: "Katze", body: "Welt" }, { title: [W1] });
+  await aiDraft(ctx, docId, { title: "Katze", body: md("Welt") }, { title: [W1] });
   await aiDraft(ctx, docId, { title: "Katze 2" }, { title: [W2] });
   await expect(approve(ctx, { docId, locale: "de", expectedVersion: 1, acknowledgedWarnings: [W1] })).rejects.toThrow(ConflictError);
 }));

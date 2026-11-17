@@ -3,7 +3,7 @@ import {
   addToRelease, approve, createDocument, createRelease, deleteDocument, getDocument, getSyncState, migrate, publish, recordAiDraft, resolve,
   saveDraft, unpublish,
 } from "../src/index.js";
-import { ctxFor } from "./fixtures.js";
+import { md, ctxFor } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 const stateOf = (rows: Awaited<ReturnType<typeof getSyncState>>) =>
@@ -14,13 +14,13 @@ test("lifecycle: translate, source moves, re-translate by AI, approve, publish, 
   const ctx = ctxFor(sql, "editor");
   const { id: docId } = await createDocument(ctx, { collection: "posts" });
 
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("World") } });
   await publish(ctx, { docId, locale: "en" });
-  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt" } });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: md("Welt") } });
   await publish(ctx, { docId, locale: "de" });
   expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "current" });
 
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "New world" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("New world") } });
   await publish(ctx, { docId, locale: "en" });
   expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
 
@@ -28,7 +28,7 @@ test("lifecycle: translate, source moves, re-translate by AI, approve, publish, 
   const en = (await getDocument(ctx, { collection: "posts", docId }))!.locales.en!.published!;
   expect(en.version).toBe(2);
   const result = await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { body: "Neue Welt" }, sourceVersion: en.version,
+    docId, locale: "de", fields: { body: md("Neue Welt") }, sourceVersion: en.version,
     sourceHashes: { body: en.sourceHashes.body! },
     provenance: [{ fieldPath: "body", modelId: "m", promptVersion: "1", promptTokens: 1, completionTokens: 1, costMicros: 1 }],
   });
@@ -38,7 +38,7 @@ test("lifecycle: translate, source moves, re-translate by AI, approve, publish, 
 
   expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "current" });
   const [doc] = await resolve(ctx, { collection: "posts", locale: "de" });
-  expect(doc).toMatchObject({ id: docId, data: { title: "Hallo", body: "Neue Welt" }, fellBack: {} });
+  expect(doc).toMatchObject({ id: docId, data: { title: "Hallo", body: md("Neue Welt") }, fellBack: {} });
   expect(doc!.missing).not.toContain("title");
   expect(doc!.missing).not.toContain("body");
 }));
@@ -47,7 +47,7 @@ test("lifecycle: deleteDocument hides the document from resolve, asOf before the
   await migrate(sql);
   const ctx = ctxFor(sql, "editor");
   const { id: docId } = await createDocument(ctx, { collection: "posts" });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("World") } });
   await publish(ctx, { docId, locale: "en" });
   await new Promise((r) => setTimeout(r, 25));
   await deleteDocument(ctx, { docId });
@@ -56,18 +56,18 @@ test("lifecycle: deleteDocument hides the document from resolve, asOf before the
   expect(await resolve(ctx, { collection: "posts", locale: "en" })).toEqual([]);
   const before = await resolve(ctx, { collection: "posts", locale: "en", asOf: new Date(deletedAt.getTime() - 1) });
   expect(before).toHaveLength(1);
-  expect(before[0]).toMatchObject({ id: docId, data: { title: "Hello", body: "World" }, fellBack: {} });
+  expect(before[0]).toMatchObject({ id: docId, data: { title: "Hello", body: md("World") }, fellBack: {} });
   expect(await resolve(ctx, { collection: "posts", locale: "en", asOf: deletedAt })).toEqual([]);
   expect(await resolve(ctx, { collection: "posts", locale: "en", asOf: new Date(deletedAt.getTime() + 1000) })).toEqual([]);
 }));
 
 async function staleBodyDoc(ctx: ReturnType<typeof ctxFor>) {
   const { id: docId } = await createDocument(ctx, { collection: "posts" });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("World") } });
   await publish(ctx, { docId, locale: "en" });
-  await saveDraft(ctx, { docId, locale: "de", data: { title: "Halo", body: "Welt" } });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Halo", body: md("Welt") } });
   await publish(ctx, { docId, locale: "de" });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "New world" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("New world") } });
   await publish(ctx, { docId, locale: "en" });
   expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
   return docId;
@@ -77,7 +77,7 @@ test("regression pin: a typo fix that resubmits the unchanged body keeps it stal
   await migrate(sql);
   const ctx = ctxFor(sql, "editor");
   const docId = await staleBodyDoc(ctx);
-  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt" } });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: md("Welt") } });
   await publish(ctx, { docId, locale: "de" });
   expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
 }));
@@ -87,7 +87,7 @@ test("regression pin: unpublish, typo fix, re-save and publish keeps the unchang
   const ctx = ctxFor(sql, "editor");
   const docId = await staleBodyDoc(ctx);
   await unpublish(ctx, { docId, locale: "de" });
-  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt" } });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: md("Welt") } });
   await publish(ctx, { docId, locale: "de" });
   expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "stale" });
 }));
@@ -96,16 +96,16 @@ test("regression pin: AI re-translation after unpublish keeps the sibling field 
   await migrate(sql);
   const ctx = ctxFor(sql, "editor");
   const { id: docId } = await createDocument(ctx, { collection: "posts" });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("World") } });
   await publish(ctx, { docId, locale: "en" });
-  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: "Welt" } });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Hallo", body: md("Welt") } });
   await publish(ctx, { docId, locale: "de" });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "New world" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("New world") } });
   await publish(ctx, { docId, locale: "en" });
   await unpublish(ctx, { docId, locale: "de" });
   const en = (await getDocument(ctx, { collection: "posts", docId }))!.locales.en!.published!;
   const r = await recordAiDraft(ctx, {
-    docId, locale: "de", fields: { body: "Neue Welt" }, sourceVersion: en.version, sourceHashes: { body: en.sourceHashes.body! },
+    docId, locale: "de", fields: { body: md("Neue Welt") }, sourceVersion: en.version, sourceHashes: { body: en.sourceHashes.body! },
     provenance: [{ fieldPath: "body", modelId: "m", promptVersion: "1", promptTokens: 1, completionTokens: 1, costMicros: 1 }],
   });
   expect(r).toEqual({ version: 2 });
@@ -113,7 +113,7 @@ test("regression pin: AI re-translation after unpublish keeps the sibling field 
   await publish(ctx, { docId, locale: "de" });
   expect(stateOf(await getSyncState(ctx, { docId, locale: "de" }))).toEqual({ "de.title": "current", "de.body": "current" });
   const [doc] = await resolve(ctx, { collection: "posts", locale: "de" });
-  expect(doc).toMatchObject({ data: { title: "Hallo", body: "Neue Welt" }, fellBack: {} });
+  expect(doc).toMatchObject({ data: { title: "Hallo", body: md("Neue Welt") }, fellBack: {} });
 }));
 
 test("every lifecycle write records its actor (spec 8.7)", async () => withTestDb(async (sql) => {
@@ -128,7 +128,7 @@ test("every lifecycle write records its actor (spec 8.7)", async () => withTestD
   await publish(pub, { docId, locale: "shared" });
   await saveDraft(maker, { docId, locale: "shared", data: { slug: "b" } });
   await publish(ctxFor(sql, "second"), { docId, locale: "shared" }); // supersedes v1: the superseding actor is recorded
-  await saveDraft(maker, { docId, locale: "en", data: { title: "T", body: "B" } });
+  await saveDraft(maker, { docId, locale: "en", data: { title: "T", body: md("B") } });
   await publish(pub, { docId, locale: "en" });
   await unpublish(un, { docId, locale: "en" });
   await saveDraft(maker, { docId, locale: "shared", data: { slug: "c" } });

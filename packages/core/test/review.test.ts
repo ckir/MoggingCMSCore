@@ -5,7 +5,7 @@ import {
   migrate, publish, recordAiDraft, rejectDraft, saveDraft,
 } from "../src/index.js";
 import type { Ctx } from "../src/index.js";
-import { ctxFor } from "./fixtures.js";
+import { md, ctxFor } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 const W = 'glossary: "cat" expected "gata"';
@@ -17,12 +17,12 @@ const prov = (fieldPath: string, warnings: string[] = []) => ({
 async function enDoc(ctx: Ctx, slug?: string): Promise<string> {
   const { id: docId } = await createDocument(ctx, { collection: "posts" });
   if (slug !== undefined) await saveDraft(ctx, { docId, locale: "shared", data: { slug } });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: "World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("World") } });
   await publish(ctx, { docId, locale: "en" });
   return docId;
 }
 
-const HASHES = { title: hashValue("Hello"), body: hashValue("World") };
+const HASHES = { title: hashValue("Hello"), body: hashValue(md("World")) };
 
 const aiDraft = (
   ctx: Ctx, docId: string, locale: string, fields: Record<string, unknown>, warned: Record<string, string[]> = {},
@@ -36,7 +36,7 @@ test("listDraftHeads returns draft heads with collection, slug, locale, version 
   await migrate(sql);
   const ctx = ctxFor(sql, "lister");
   const a = await enDoc(ctx, "alpha");
-  await aiDraft(ctx, a, "de", { title: "Hallo", body: "Welt" }, { title: [W, "tone"], body: [W] });
+  await aiDraft(ctx, a, "de", { title: "Hallo", body: md("Welt") }, { title: [W, "tone"], body: [W] });
   await aiDraft(ctx, a, "de-CH", { title: "Gruezi" });
   const b = await enDoc(ctx);
   await saveDraft(ctx, { docId: b, locale: "de", data: { title: "Von Hand" } });
@@ -103,7 +103,7 @@ test("getDraftReview pairs draft, previous and source per field", async () => wi
   const docId = await enDoc(ctx, "alpha");
   await saveDraft(ctx, { docId, locale: "de", data: { title: "Alt" } });
   await publish(ctx, { docId, locale: "de" });
-  await aiDraft(ctx, docId, "de", { title: "Neu", body: "Welt" }, { title: [W] });
+  await aiDraft(ctx, docId, "de", { title: "Neu", body: md("Welt") }, { title: [W] });
 
   const review = await getDraftReview(ctx, { docId, locale: "de" });
   expect(review).toMatchObject({
@@ -117,8 +117,8 @@ test("getDraftReview pairs draft, previous and source per field", async () => wi
     edited: false, sourceChanged: false,
   });
   const body = review.fields.find((f) => f.path === "body")!;
-  expect(body.source).toBe("World");
-  expect(body.draft).toBe("Welt");
+  expect(body.source).toEqual(md("World"));
+  expect(body.draft).toEqual(md("Welt"));
   expect(body.previous).toBeUndefined();
   expect(body.previousFrom).toBeNull();
   expect(body.warnings).toEqual([]);
@@ -129,21 +129,21 @@ test("getDraftReview reports the superseded AI draft as previous", async () => w
   await migrate(sql);
   const ctx = ctxFor(sql, "reviewer");
   const docId = await enDoc(ctx);
-  await aiDraft(ctx, docId, "de", { title: "Erste", body: "Welt" });
+  await aiDraft(ctx, docId, "de", { title: "Erste", body: md("Welt") });
   await aiDraft(ctx, docId, "de", { title: "Zweite" });
   const review = await getDraftReview(ctx, { docId, locale: "de" });
   expect(review).toMatchObject({ version: 2, supersededVersion: 1, slug: null });
   const title = review.fields.find((f) => f.path === "title")!;
   expect(title).toMatchObject({ draft: "Zweite", previous: "Erste", previousFrom: "superseded" });
   // The carried-over body is the same text as the superseded draft's.
-  expect(review.fields.find((f) => f.path === "body")).toMatchObject({ draft: "Welt", previous: "Welt", previousFrom: "superseded" });
+  expect(review.fields.find((f) => f.path === "body")).toMatchObject({ draft: md("Welt"), previous: md("Welt"), previousFrom: "superseded" });
 }));
 
 test("getDraftReview marks edited fields after approve and sourceChanged after the source moves", async () => withTestDb(async (sql: Sql) => {
   await migrate(sql);
   const ctx = ctxFor(sql, "reviewer");
   const docId = await enDoc(ctx);
-  await aiDraft(ctx, docId, "de", { title: "Hallo", body: "Welt" });
+  await aiDraft(ctx, docId, "de", { title: "Hallo", body: md("Welt") });
   const fresh = await getDraftReview(ctx, { docId, locale: "de" });
   expect(fresh.fields.map((f) => [f.path, f.edited, f.sourceChanged])).toEqual([["body", false, false], ["title", false, false]]);
 
@@ -151,15 +151,15 @@ test("getDraftReview marks edited fields after approve and sourceChanged after t
   const approved = await getDraftReview(ctx, { docId, locale: "de" });
   expect(approved).toMatchObject({ version: 2, state: "APPROVED" });
   expect(approved.fields.map((f) => [f.path, f.draft, f.edited, f.sourceChanged])).toEqual([
-    ["body", "Welt", false, false], ["title", "Servus", true, false],
+    ["body", md("Welt"), false, false], ["title", "Servus", true, false],
   ]);
 
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello 2", body: "World" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello 2", body: md("World") } });
   await publish(ctx, { docId, locale: "en" });
   const moved = await getDraftReview(ctx, { docId, locale: "de" });
   expect(moved.sourceVersion).toBe(2);
   expect(moved.fields.map((f) => [f.path, f.source, f.sourceChanged])).toEqual([
-    ["body", "World", false], ["title", "Hello 2", true],
+    ["body", md("World"), false], ["title", "Hello 2", true],
   ]);
 }));
 

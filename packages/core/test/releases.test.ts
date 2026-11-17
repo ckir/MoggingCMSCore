@@ -5,7 +5,7 @@ import {
   approve, assertLicensed, createDocument, createRelease, deleteDocument, getSyncState, hashValue, listReleases, migrate,
   publish, publishRelease, recordAiDraft, removeFromRelease, saveDraft,
 } from "../src/index.js";
-import { ctxFor, extraConnection, insertAiDraftLocalized } from "./fixtures.js";
+import { md, ctxFor, extraConnection, insertAiDraftLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 type Ctx = ReturnType<typeof ctxFor>;
@@ -18,10 +18,10 @@ async function setup(sql: Sql) {
 /** A document with a published en head (title "T", body "B") and, optionally, an unpublished de draft. */
 async function docWithSource(ctx: Ctx, withDe: boolean): Promise<{ docId: string; deVersion: number }> {
   const { id: docId } = await createDocument(ctx, { collection: "posts" });
-  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: "B" } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "T", body: md("B") } });
   await publish(ctx, { docId, locale: "en" });
   let deVersion = 0;
-  if (withDe) ({ version: deVersion } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: "B de" } }));
+  if (withDe) ({ version: deVersion } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: md("B de") } }));
   return { docId, deVersion };
 }
 
@@ -52,7 +52,7 @@ test("addToRelease rejects DRAFT_AI, historical drafts, published heads, duplica
   const { id } = await createRelease(ctx, { name: "r" });
   const { docId, deVersion } = await docWithSource(ctx, true);
   // historical draft
-  const { version: v2 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de 2", body: "B de" } });
+  const { version: v2 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de 2", body: md("B de") } });
   await expect(addToRelease(ctx, { releaseId: id, docId, locale: "de", version: deVersion })).rejects.toThrow(NotPublishableError);
   // already published en head
   await expect(addToRelease(ctx, { releaseId: id, docId, locale: "en", version: 1 })).rejects.toThrow(NotPublishableError);
@@ -86,7 +86,7 @@ test("publishRelease flips all items atomically", async () => withTestDb(async (
   }
   // One item stops being the draft head after it was added.
   const victim = docs[2]!;
-  await saveDraft(ctx, { docId: victim.docId, locale: "de", data: { title: "newer", body: "B de" } });
+  await saveDraft(ctx, { docId: victim.docId, locale: "de", data: { title: "newer", body: md("B de") } });
   const snapshot = async () => sql`select doc_id, version, state, is_head_draft, is_head_published, published_at, published_by
     from document_localized order by doc_id, locale, version`;
   const before = await snapshot();
@@ -137,7 +137,7 @@ test("stale APPROVED item refuses the whole release and names it", async () => w
   await addToRelease(ctx, { releaseId: id, docId: fresh.docId, locale: "de", version: fresh.deVersion });
   await addToRelease(ctx, { releaseId: id, docId: stale.docId, locale: "de", version: stale.deVersion });
   // Source moves on after the draft was written: title changes, body does not.
-  await republishSource(ctx, stale.docId, { title: "T2", body: "B" });
+  await republishSource(ctx, stale.docId, { title: "T2", body: md("B") });
   const before = await sql`select doc_id, locale, version, state, is_head_draft, is_head_published from document_localized order by doc_id, locale, version`;
   const err = await publishRelease(ctx, { releaseId: id }).then(() => undefined, (e: unknown) => e);
   expect(err).toBeInstanceOf(StaleReleaseError);
@@ -156,9 +156,9 @@ test("a draft whose published head exists is judged by the draft, not the publis
   const ctx = await setup(sql);
   const { docId, deVersion } = await docWithSource(ctx, true);
   await publish(ctx, { docId, locale: "de" }); // de published, current
-  await republishSource(ctx, docId, { title: "T2", body: "B" }); // published de head is now stale on title
+  await republishSource(ctx, docId, { title: "T2", body: md("B") }); // published de head is now stale on title
   // A fresh de draft written against the new source is current, so the release must go through.
-  const { version } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T2 de", body: "B de" } });
+  const { version } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T2 de", body: md("B de") } });
   expect(version).toBeGreaterThan(deVersion);
   const { id } = await createRelease(ctx, { name: "d" });
   await addToRelease(ctx, { releaseId: id, docId, locale: "de", version });
@@ -174,7 +174,7 @@ test("allowStale publishes and records allow_stale = true, including the non-sta
   const stale = await docWithSource(ctx, true);
   await addToRelease(ctx, { releaseId: id, docId: fresh.docId, locale: "de", version: fresh.deVersion });
   await addToRelease(ctx, { releaseId: id, docId: stale.docId, locale: "de", version: stale.deVersion });
-  await republishSource(ctx, stale.docId, { title: "T2", body: "B2" });
+  await republishSource(ctx, stale.docId, { title: "T2", body: md("B2") });
   await expect(publishRelease(ctx, { releaseId: id })).rejects.toThrow(StaleReleaseError);
   await publishRelease(ctx, { releaseId: id, allowStale: true });
   const rows = await sql`select doc_id, state, is_head_published from document_localized where locale = 'de'`;
@@ -192,8 +192,8 @@ test("a stale item lists every stale field name, sorted, across several items", 
   const b = await docWithSource(ctx, true);
   await addToRelease(ctx, { releaseId: id, docId: a.docId, locale: "de", version: a.deVersion });
   await addToRelease(ctx, { releaseId: id, docId: b.docId, locale: "de", version: b.deVersion });
-  await republishSource(ctx, a.docId, { title: "T2", body: "B2" });
-  await republishSource(ctx, b.docId, { title: "T3", body: "B" });
+  await republishSource(ctx, a.docId, { title: "T2", body: md("B2") });
+  await republishSource(ctx, b.docId, { title: "T3", body: md("B") });
   const err = await publishRelease(ctx, { releaseId: id }).then(() => undefined, (e: unknown) => e) as
     StaleReleaseError & { items: Array<{ docId: string; locale: string; fields: string[] }> };
   expect(err).toBeInstanceOf(StaleReleaseError);
@@ -243,7 +243,7 @@ test("two overlapping releases published concurrently both complete without dead
       for (let i = 0; i < 6; i++) docs.push(await docWithSource(ctx, true));
       // Release A holds each doc's de draft; release B holds each doc's de-CH draft. Same documents, opposite order.
       const deCh: number[] = [];
-      for (const d of docs) deCh.push((await saveDraft(ctx, { docId: d.docId, locale: "de-CH", data: { title: "T ch", body: "B ch" } })).version);
+      for (const d of docs) deCh.push((await saveDraft(ctx, { docId: d.docId, locale: "de-CH", data: { title: "T ch", body: md("B ch") } })).version);
       const a = await createRelease(ctx, { name: `a${round}` });
       const b = await createRelease(ctx, { name: `b${round}` });
       for (const d of docs) await addToRelease(ctx, { releaseId: a.id, docId: d.docId, locale: "de", version: d.deVersion });
@@ -326,7 +326,7 @@ async function releaseWithNewSource(ctx: Ctx, data: Record<string, unknown>) {
 
 test("a release with a new source item and a target derived from the old source is stale", async () => withTestDb(async (sql) => {
   const ctx = await setup(sql);
-  const { docId, id } = await releaseWithNewSource(ctx, { title: "T2", body: "B" });
+  const { docId, id } = await releaseWithNewSource(ctx, { title: "T2", body: md("B") });
   const before = await sql`select doc_id, locale, version, state, is_head_draft, is_head_published from document_localized order by doc_id, locale, version`;
   const err = await publishRelease(ctx, { releaseId: id }).then(() => undefined, (e: unknown) => e) as StaleErr;
   expect(err).toBeInstanceOf(StaleReleaseError);
@@ -338,7 +338,7 @@ test("a release with a new source item and a target derived from the old source 
 
 test("the same release publishes with allowStale and records allow_stale = true", async () => withTestDb(async (sql) => {
   const ctx = await setup(sql);
-  const { docId, id } = await releaseWithNewSource(ctx, { title: "T2", body: "B" });
+  const { docId, id } = await releaseWithNewSource(ctx, { title: "T2", body: md("B") });
   await publishRelease(ctx, { releaseId: id, allowStale: true });
   const [rel] = await sql`select published_at, allow_stale from releases where id = ${id}`;
   expect(rel!.allow_stale).toBe(true);
@@ -348,7 +348,7 @@ test("the same release publishes with allowStale and records allow_stale = true"
 
 test("a target carrying the new source's hashes publishes without StaleReleaseError and reads current", async () => withTestDb(async (sql) => {
   const ctx = await setup(sql);
-  const { docId, deVersion, enVersion, id } = await releaseWithNewSource(ctx, { title: "T2", body: "B" });
+  const { docId, deVersion, enVersion, id } = await releaseWithNewSource(ctx, { title: "T2", body: md("B") });
   // Fixture: en v2 is only a draft here, so saveDraft(de) cannot stamp its hashes (it stamps the PUBLISHED
   // source). The de draft is made to be "translated against v2" by copying v2's self-hashes with direct SQL.
   await sql`update document_localized t set source_hashes = s.source_hashes
@@ -366,7 +366,7 @@ test("a release with only a target item is stale when the source moved after the
   const { docId, deVersion } = await docWithSource(ctx, true);
   const { id } = await createRelease(ctx, { name: "tgt-only" });
   await addToRelease(ctx, { releaseId: id, docId, locale: "de", version: deVersion });
-  await republishSource(ctx, docId, { title: "T2", body: "B" });
+  await republishSource(ctx, docId, { title: "T2", body: md("B") });
   const err = await publishRelease(ctx, { releaseId: id }).then(() => undefined, (e: unknown) => e) as StaleErr;
   expect(err).toBeInstanceOf(StaleReleaseError);
   expect(err.items).toEqual([{ docId, locale: "de", fields: ["title"] }]);
@@ -374,7 +374,7 @@ test("a release with only a target item is stale when the source moved after the
 
 test("staleness against an in-release source item is per field: an untouched title is not reported", async () => withTestDb(async (sql) => {
   const ctx = await setup(sql);
-  const { docId, id } = await releaseWithNewSource(ctx, { title: "T", body: "B2" });
+  const { docId, id } = await releaseWithNewSource(ctx, { title: "T", body: md("B2") });
   const err = await publishRelease(ctx, { releaseId: id }).then(() => undefined, (e: unknown) => e) as StaleErr;
   expect(err).toBeInstanceOf(StaleReleaseError);
   expect(err.items).toEqual([{ docId, locale: "de", fields: ["body"] }]);
@@ -384,7 +384,7 @@ test("a source item of document A does not make a target item of document B stal
   const ctx = await setup(sql);
   const a = await docWithSource(ctx, false);
   const b = await docWithSource(ctx, true); // de derived from B's unchanged published source
-  const { version: aEn } = await saveDraft(ctx, { docId: a.docId, locale: "en", data: { title: "T2", body: "B2" } });
+  const { version: aEn } = await saveDraft(ctx, { docId: a.docId, locale: "en", data: { title: "T2", body: md("B2") } });
   const { id } = await createRelease(ctx, { name: "ab" });
   await addToRelease(ctx, { releaseId: id, docId: a.docId, locale: "en", version: aEn });
   await addToRelease(ctx, { releaseId: id, docId: b.docId, locale: "de", version: b.deVersion });
@@ -422,7 +422,7 @@ test("removeFromRelease removes an item and the pair can be added again at a new
   const { docId, deVersion } = await docWithSource(ctx, true);
   const { id: releaseId } = await createRelease(ctx, { name: "re-add" });
   await addToRelease(ctx, { releaseId, docId, locale: "de", version: deVersion });
-  const { version: v2 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de 2", body: "B de" } });
+  const { version: v2 } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de 2", body: md("B de") } });
   // The item is no longer the draft head, so the release cannot publish (and addToRelease at v2 conflicts).
   await expect(publishRelease(ctx, { releaseId })).rejects.toThrow(NotPublishableError);
   await expect(addToRelease(ctx, { releaseId, docId, locale: "de", version: v2 })).rejects.toThrow(ConflictError);
@@ -574,9 +574,9 @@ test("removeFromRelease is not licence-guarded", async () => withTestDb(async (s
 test("publishRelease records the releasing actor as unpublished_by on the heads it supersedes", async () => withTestDb(async (sql) => {
   const ctx = await setup(sql);
   const { docId } = await docWithSource(ctx, false);
-  await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: "B de" } });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "T de", body: md("B de") } });
   await publish(ctx, { docId, locale: "de" }); // de v1 is the published head
-  const { version } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de 2", body: "B de 2" } });
+  const { version } = await saveDraft(ctx, { docId, locale: "de", data: { title: "T de 2", body: md("B de 2") } });
   const { id: releaseId } = await createRelease(ctx, { name: "supersede" });
   await addToRelease(ctx, { releaseId, docId, locale: "de", version });
   await publishRelease(ctxFor(sql, "release-publisher"), { releaseId });
@@ -617,7 +617,7 @@ test("listReleases returns id, name, itemCount and publishedAt", async () => wit
 test("addToRelease of a pair the release already holds at an older version throws ConflictError naming both versions", async () => withTestDb(async (sql) => {
   const ctx = await setup(sql);
   const { docId } = await docWithSource(ctx, false);
-  const hashes = { title: hashValue("T"), body: hashValue("B") };
+  const hashes = { title: hashValue("T"), body: hashValue(md("B")) };
   const draftAndApprove = async (title: string) => {
     await recordAiDraft(ctx, {
       docId, locale: "de", fields: { title }, sourceVersion: 1, sourceHashes: hashes, provenance: [],

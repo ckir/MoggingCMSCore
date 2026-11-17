@@ -5,7 +5,7 @@ import {
   NotFoundError, ValidationError, createDocument, getDocument, getDocuments, listDocuments, migrate, publish, resolve,
   resolveReference, saveDraft, unpublish, deleteDocument, defineCollection, defineConfig, number, richText, slug,
 } from "../src/index.js";
-import { ctxFor, extraConnection, insertPublishedLocalized } from "./fixtures.js";
+import { md, ctxFor, extraConnection, insertPublishedLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 async function setup(sql: Sql) {
@@ -18,9 +18,9 @@ async function setup(sql: Sql) {
     await saveDraft(ctx, { docId: id, locale: "shared", data: { slug: `post-${i}` } });
     await publish(ctx, { docId: id, locale: "shared" });
     await insertPublishedLocalized(sql, id, "en", 1, {
-      title: `T${i} en`, body: `B${i} en`, legal: `L${i} en`, price: 10 * i,
+      title: `T${i} en`, body: md(`B${i} en`), legal: `L${i} en`, price: 10 * i,
     }, { title: "h-en" });
-    await insertPublishedLocalized(sql, id, "de", 1, { title: `T${i} de`, body: `B${i} de` });
+    await insertPublishedLocalized(sql, id, "de", 1, { title: `T${i} de`, body: md(`B${i} de`) });
   }
   await insertPublishedLocalized(sql, ids[0]!, "de-CH", 1, { title: "T1 de-CH" });
   return { ctx, ids };
@@ -30,7 +30,7 @@ test("de-CH resolves title from de-CH, body from de, legal from en and reports f
   const { ctx, ids } = await setup(sql);
   const [d] = await resolve(ctx, { collection: "posts", locale: "de-CH", ids: [ids[0]!] });
   expect(d!.fellBack).toEqual({ body: "de", legal: "en" });
-  expect(d!.data).toMatchObject({ slug: "post-1", title: "T1 de-CH", body: "B1 de", legal: "L1 en" });
+  expect(d!.data).toMatchObject({ slug: "post-1", title: "T1 de-CH", body: md("B1 de"), legal: "L1 en" });
 }));
 
 test("price with fallback none is missing when de lacks it", async () => withTestDb(async (sql) => {
@@ -45,20 +45,20 @@ test("a field saved as JSON null in de falls back to en", async () => withTestDb
   await migrate(sql);
   const ctx = ctxFor(sql);
   const { id } = await createDocument(ctx, { collection: "posts" });
-  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "EN title", body: "EN body" } });
+  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "EN title", body: md("EN body") } });
   await publish(ctx, { docId: id, locale: "en" });
-  await saveDraft(ctx, { docId: id, locale: "de", data: { title: null, body: "DE body" } });
+  await saveDraft(ctx, { docId: id, locale: "de", data: { title: null, body: md("DE body") } });
   await publish(ctx, { docId: id, locale: "de" });
   const [d] = await resolve(ctx, { collection: "posts", locale: "de" });
   expect(d!.data.title).toBe("EN title");
-  expect(d!.data.body).toBe("DE body");
+  expect(d!.data.body).toEqual(md("DE body"));
   expect(d!.fellBack).toEqual({ title: "en" });
 }));
 
 test("an empty string in de is returned as empty, not fallen back", async () => withTestDb(async (sql) => {
   const { ctx, ids } = await setup(sql);
   await sql`update document_localized set is_head_published = false, unpublished_at = now() where doc_id = ${ids[0]!} and locale = 'de' and version = 1`;
-  await insertPublishedLocalized(sql, ids[0]!, "de", 2, { title: "", body: "B de", tags: [] });
+  await insertPublishedLocalized(sql, ids[0]!, "de", 2, { title: "", body: md("B de"), tags: [] });
   const [d] = await resolve(ctx, { collection: "posts", locale: "de", ids: [ids[0]!] });
   expect(d!.data.title).toBe("");
   expect(d!.data.tags).toEqual([]);
@@ -74,10 +74,10 @@ test("asOf between two publications returns the first version", async () => with
   await migrate(sql);
   const ctx = ctxFor(sql);
   const { id } = await createDocument(ctx, { collection: "posts" });
-  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "first", body: "b" } });
+  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "first", body: md("b") } });
   await publish(ctx, { docId: id, locale: "en" });
   await sql`select pg_sleep(0.01)`;
-  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "second", body: "b" } });
+  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "second", body: md("b") } });
   await publish(ctx, { docId: id, locale: "en" });
   const rows = await sql`select version, published_at from document_localized where doc_id = ${id} order by version`;
   const t1 = (rows[0]!.published_at as Date).getTime();
@@ -100,7 +100,7 @@ test("asOf equal to a publishedAt returned by getDocument resolves that exact ve
   const { id } = await createDocument(ctx, { collection: "posts" });
   const stamps: Array<[number, Date]> = [];
   for (let n = 1; n <= 20; n++) {
-    await saveDraft(ctx, { docId: id, locale: "en", data: { title: `v${n}`, body: "b" } });
+    await saveDraft(ctx, { docId: id, locale: "en", data: { title: `v${n}`, body: md("b") } });
     await publish(ctx, { docId: id, locale: "en" });
     const doc = await getDocument(ctx, { collection: "posts", docId: id });
     stamps.push([n, doc!.locales.en!.published!.publishedAt!]);
@@ -115,9 +115,9 @@ test("two publications in consecutive milliseconds: asOf at each returns its own
   await migrate(sql);
   const ctx = ctxFor(sql);
   const { id } = await createDocument(ctx, { collection: "posts" });
-  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "a", body: "b" } });
+  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "a", body: md("b") } });
   await publish(ctx, { docId: id, locale: "en" });
-  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "b", body: "b" } });
+  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "b", body: md("b") } });
   await publish(ctx, { docId: id, locale: "en" });
   // Force the consecutive-millisecond shape deterministically.
   await sql`update document_localized set published_at = '2030-01-01T00:00:00.000Z' where doc_id = ${id} and version = 1`;
@@ -132,7 +132,7 @@ test("boundaries: published_at == asOf is included, unpublished_at == asOf is ex
   await migrate(sql);
   const ctx = ctxFor(sql);
   const { id } = await createDocument(ctx, { collection: "posts" });
-  await insertPublishedLocalized(sql, id, "en", 1, { title: "x", body: "b" });
+  await insertPublishedLocalized(sql, id, "en", 1, { title: "x", body: md("b") });
   await sql`update document_localized set published_at = '2030-01-01T00:00:00.000Z', unpublished_at = '2030-01-02T00:00:00.000Z', is_head_published = false where doc_id = ${id}`;
   const n = async (iso: string) => (await resolve(ctx, { collection: "posts", locale: "en", asOf: new Date(iso) })).length;
   expect(await n("2029-12-31T23:59:59.999Z")).toBe(0);
@@ -147,9 +147,9 @@ test("publish, unpublish, republish: asOf inside the gap shows nothing for that 
   const { id } = await createDocument(ctx, { collection: "posts" });
   await saveDraft(ctx, { docId: id, locale: "shared", data: { slug: "s" } });
   await publish(ctx, { docId: id, locale: "shared" });
-  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "EN", body: "b" } });
+  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "EN", body: md("b") } });
   await publish(ctx, { docId: id, locale: "en" });
-  await saveDraft(ctx, { docId: id, locale: "de", data: { title: "DE", body: "b" } });
+  await saveDraft(ctx, { docId: id, locale: "de", data: { title: "DE", body: md("b") } });
   await publish(ctx, { docId: id, locale: "de" });
   await unpublish(ctx, { docId: id, locale: "de" });
   await publish(ctx, { docId: id, locale: "de", version: 1 });
@@ -175,11 +175,11 @@ test("publish, unpublish, republish: asOf inside the gap shows nothing for that 
 test("a per-field fallback override skips the default chain: de-CH legal comes from en even when de has legal", async () => withTestDb(async (sql) => {
   const { ctx, ids } = await setup(sql);
   await sql`update document_localized set is_head_published = false, unpublished_at = now() where doc_id = ${ids[0]!} and locale = 'de'`;
-  await insertPublishedLocalized(sql, ids[0]!, "de", 2, { title: "T1 de", body: "B1 de", legal: "L1 de" });
+  await insertPublishedLocalized(sql, ids[0]!, "de", 2, { title: "T1 de", body: md("B1 de"), legal: "L1 de" });
   const [d] = await resolve(ctx, { collection: "posts", locale: "de-CH", ids: [ids[0]!] });
   expect(d!.data.legal).toBe("L1 en");
   expect(d!.fellBack.legal).toBe("en");
-  expect(d!.data.body).toBe("B1 de");
+  expect(d!.data.body).toEqual(md("B1 de"));
   const [de] = await resolve(ctx, { collection: "posts", locale: "de", ids: [ids[0]!] });
   expect(de!.data.legal).toBe("L1 de");
 }));
@@ -228,7 +228,7 @@ test("resolve of 50 documents issues one SQL statement", async () => withTestDb(
     for (let i = 0; i < 50; i++) {
       const { id } = await createDocument(ctx, { collection: "posts" });
       created.push(id);
-      await insertPublishedLocalized(counting, id, "en", 1, { title: `t${i}`, body: "b" });
+      await insertPublishedLocalized(counting, id, "en", 1, { title: `t${i}`, body: md("b") });
     }
     count = 0;
     const out = await resolve(ctx, { collection: "posts", locale: "de-CH" });
@@ -236,7 +236,8 @@ test("resolve of 50 documents issues one SQL statement", async () => withTestDb(
     // Identity and projection, not just cardinality: every document once, in creation order, with its own data.
     expect(out.map((d) => d.id)).toEqual(created);
     expect(out.map((d) => d.data.title)).toEqual(created.map((_, i) => `t${i}`));
-    expect(out.every((d) => d.data.body === "b" && d.fellBack.title === "en")).toBe(true);
+    expect(out.map((d) => d.data.body)).toEqual(out.map(() => md("b")));
+    expect(out.every((d) => d.fellBack.title === "en")).toBe(true);
     expect(count).toBe(1);
   } finally {
     await counting.end();
@@ -274,7 +275,7 @@ test("prototype-named and unknown input is rejected, not crashed on", async () =
 
 test("getDocument by slug returns raw heads per locale with sourceHashes and no fallback", async () => withTestDb(async (sql) => {
   const { ctx, ids } = await setup(sql);
-  await saveDraft(ctx, { docId: ids[0]!, locale: "de", data: { title: "draft de", body: "b" } });
+  await saveDraft(ctx, { docId: ids[0]!, locale: "de", data: { title: "draft de", body: md("b") } });
   const doc = await getDocument(ctx, { collection: "posts", slug: "post-1" });
   expect(doc!.id).toBe(ids[0]);
   expect(doc!.collection).toBe("posts");
@@ -363,7 +364,7 @@ test("a document with only its shared head published is omitted when the collect
   await publish(ctx, { docId: id, locale: "shared" });
   expect(await resolve(ctx, { collection: "posts", locale: "de-CH" })).toEqual([]);
   expect(await resolveReference(ctx, { docId: id, locale: "de-CH" })).toBeNull();
-  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "T", body: "B" } });
+  await saveDraft(ctx, { docId: id, locale: "en", data: { title: "T", body: md("B") } });
   await publish(ctx, { docId: id, locale: "en" });
   const out = await resolve(ctx, { collection: "posts", locale: "de-CH" });
   expect(out.map((d) => d.id)).toEqual([id]);
@@ -382,11 +383,11 @@ test("a collection with only shared fields still resolves on its shared head", a
   const ctx = { sql, config: cfg, actor: "t" };
   const { id } = await createDocument(ctx, { collection: "pages" });
   expect(await resolve(ctx, { collection: "pages", locale: "de" })).toEqual([]); // nothing published
-  await saveDraft(ctx, { docId: id, locale: "shared", data: { slug: "home", order: 1, body: "x" } });
+  await saveDraft(ctx, { docId: id, locale: "shared", data: { slug: "home", order: 1, body: md("x") } });
   await publish(ctx, { docId: id, locale: "shared" });
   const out = await resolve(ctx, { collection: "pages", locale: "de" });
   expect(out).toHaveLength(1);
-  expect(out[0]).toMatchObject({ id, data: { slug: "home", order: 1, body: "x" }, missing: [] });
+  expect(out[0]).toMatchObject({ id, data: { slug: "home", order: 1, body: md("x") }, missing: [] });
   expect(await resolveReference(ctx, { docId: id, locale: "de" })).toEqual({ id, resolvedLocale: "de" });
 }));
 

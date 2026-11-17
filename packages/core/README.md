@@ -38,18 +38,21 @@ const config = defineConfig({
 });
 const ctx = { sql, config, actor: "me" };
 
+const welcome = { type: "root", version: 1, mode: "md", children: [{ type: "paragraph", children: [{ type: "text", value: "Welcome", marks: [] }] }] } as const;
 await migrate(sql);
 const { id } = await createDocument(ctx, { collection: "posts" });
 await saveDraft(ctx, { docId: id, locale: "shared", data: { slug: "hello" } });
-await saveDraft(ctx, { docId: id, locale: "en", data: { title: "Hello", body: "Welcome" } });
+await saveDraft(ctx, { docId: id, locale: "en", data: { title: "Hello", body: welcome } });
 await saveDraft(ctx, { docId: id, locale: "de", data: { title: "Hallo" } });
 await publish(ctx, { docId: id, locale: "shared" });
 await publish(ctx, { docId: id, locale: "en" });
 await publish(ctx, { docId: id, locale: "de" });
 
 const [doc] = await resolve(ctx, { collection: "posts", locale: "de-CH" });
-// doc.data: { slug: "hello", title: "Hallo", body: "Welcome" }; doc.fellBack: { title: "de", body: "en" }
+// doc.data: { slug: "hello", title: "Hallo", body: welcome }; doc.fellBack: { title: "de", body: "en" }
 ```
+
+A rich-text value is a tree; to store Markdown, convert it with `markdownToTree` from `@mogging/markdown`.
 
 `de-CH` has no German-Swiss text, so `title` falls back to `de` and `body` to `en`; `fellBack` says which.
 This example is run as a test (`test/readme.test.ts`), so it matches the real API.
