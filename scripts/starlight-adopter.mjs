@@ -131,8 +131,17 @@ try {
     writeFileSync(doc(f), text.replace(/\n---\n/, "\nsidebar:\n  order: 5\n---\n"));
     check(/^sidebar:\n {2}order: 5$/m.test(read(f)), `could not add sidebar.order to ${f}`);
   }
+  // The mixed sidebar object (spec 7): English guides/setup.md changes only `order`; the German file keeps its own
+  // `label` and `badge` while `order` follows English.
+  const englishSetup = read("guides/setup.md");
+  check(/^ {2}order: 2$/m.test(englishSetup), "English guides/setup.md has no `order: 2` under sidebar");
+  writeFileSync(doc("guides/setup.md"), englishSetup.replace(/^ {2}order: 2$/m, "  order: 3"));
+  check(/^ {2}order: 3$/m.test(read("guides/setup.md")), "could not change sidebar.order of guides/setup.md");
   mogging("import");
   mogging("export");
+  const germanSetup = parsePage(yaml, read("de/guides/setup.md")).front.sidebar;
+  check(germanSetup?.order === 3, `de/guides/setup.md does not carry sidebar.order 3:\n${read("de/guides/setup.md")}`);
+  check(germanSetup?.label === "Einrichtung" && germanSetup?.badge === "Neu", `de/guides/setup.md lost its own sidebar label or badge:\n${read("de/guides/setup.md")}`);
   const images = read("de/guides/images.md");
   check(images.includes("![Diagramm](../../guides/diagram.svg)"), `de/guides/images.md lost the reference:\n${images}`);
   const components = read("de/guides/components.mdx");
@@ -142,7 +151,7 @@ try {
   for (const [f, text] of [["images.md", images], ["components.mdx", components]]) {
     check(parsePage(yaml, text).front.sidebar?.order === 5, `de/guides/${f} does not carry sidebar.order 5:\n${text}`);
   }
-  ok("mogging import, export (rebased references exact; sidebar.order 5 reached the German files)");
+  ok("mogging import, export (rebased references exact; sidebar.order 5 reached the German files; the mixed sidebar object kept label and badge and took order 3)");
 
   // 5. Rename.
   const renamed = mogging("rename", "guides/setup", "guides/installation");
