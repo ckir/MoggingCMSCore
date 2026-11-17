@@ -17,6 +17,7 @@
     "dev": "tsx src/bin.ts"
   },
   "dependencies": {
+    "acorn": "8.19.0",
     "@mogging/ai": "workspace:*",
     "@mogging/core": "workspace:*",
     "@mogging/markdown": "workspace:*",

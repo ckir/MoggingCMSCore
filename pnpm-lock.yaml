@@ -57,6 +57,9 @@ importers:
       '@mogging/markdown':
         specifier: workspace:*
         version: link:../markdown
+      acorn:
+        specifier: 8.19.0
+        version: 8.19.0
       jiti:
         specifier: 2.7.0
         version: 2.7.0
