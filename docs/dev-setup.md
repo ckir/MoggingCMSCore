@@ -64,8 +64,15 @@ because it needs the optional `ai` configuration.
 `pnpm smoke:pack` needs network access: `npm install` fetches the registry dependencies of the tarballs (`jiti`,
 `postgres`, `ai` and the rest). Without it the step fails with an npm error, not with a test failure.
 
-Each package's `prepack` copies the root `LICENSE.md` into the package directory (`scripts/copy-licence.mjs`); these
-copies are git-ignored.
+Each package's `prepack` is `scripts/prepack.mjs`. It copies the root `LICENSE.md` into the package directory (git-ignored),
+deletes `dist`, rebuilds it with `tsc -p tsconfig.build.json` and fails unless every file the published manifest points
+at exists (a `bin` file must also keep its shebang). `pnpm pack`, `pnpm publish` and `npm publish` from a package directory
+all run it, so a tarball can never carry a stale `dist`. There is no cache on purpose: deleting `dist` first is what drops
+the output of a source file that was removed.
+
+`pnpm check:publish` (`scripts/check-publish-ready.mjs`; CI runs it) packs all five packages into a temp folder and checks
+each tarball: licence and readme present, no `src` or `test`, every manifest entry present, `workspace:*` rewritten to the
+sibling's version, `publishConfig.access` `public`. It needs no database. Releasing is in `docs/RELEASING.md`.
 
 ## Live provider test (optional)
 

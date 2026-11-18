@@ -8,11 +8,12 @@
   "exports": { ".": "./src/run.ts" },
   "files": ["dist", "README.md", "LICENSE.md"],
   "publishConfig": {
+    "access": "public",
     "exports": { ".": { "types": "./dist/run.d.ts", "import": "./dist/run.js" } },
     "bin": { "mogging": "./dist/bin.js" }
   },
   "scripts": {
-    "prepack": "node ../../scripts/copy-licence.mjs",
+    "prepack": "node ../../scripts/prepack.mjs",
     "test": "vitest run",
     "dev": "tsx src/bin.ts"
   },

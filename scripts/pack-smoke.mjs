@@ -1,4 +1,4 @@
-// Pack-and-install smoke: builds, packs the four packages, installs the tarballs into an empty project outside the
+// Pack-and-install smoke: builds, packs the five packages, installs the tarballs into an empty project outside the
 // repository and runs the installed `mogging` binary against a throwaway schema of the test database.
 // Not part of `pnpm test`. Usage: DATABASE_URL=postgres://... pnpm smoke:pack
 import { spawnSync } from "node:child_process";
@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const packages = ["core", "markdown", "ai", "cli"];
+const packages = ["core", "markdown", "ai", "cli", "starlight"];
 const baseUrl = process.env.DATABASE_URL;
 if (!baseUrl) {
   console.error("DATABASE_URL is not set: point it at the test database (docs/dev-setup.md)");
@@ -62,7 +62,7 @@ try {
 
   writeFileSync(join(project, "package.json"), JSON.stringify({ name: "smoke-project", private: true, type: "module" }));
   sh("npm", ["install", "--no-audit", "--no-fund", ...files.map((f) => join(tarballs, f))], { cwd: project });
-  ok("npm install of the four tarballs");
+  ok("npm install of the five tarballs");
 
   const bin = join(project, "node_modules", ".bin", "mogging");
   check(existsSync(bin), "node_modules/.bin/mogging was not created (no bin in the packed cli manifest)");

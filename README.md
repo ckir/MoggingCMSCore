@@ -71,7 +71,8 @@ export DATABASE_URL=postgres://mogging:mogging@localhost:5432/mogging_test
 pnpm test        # vitest across packages; needs DATABASE_URL (tests create/drop schemas)
 pnpm typecheck   # tsc --noEmit for core, markdown, ai, cli, starlight
 pnpm build       # compile each package to packages/*/dist
-pnpm smoke:pack  # pack the four tarballs, install them in a temp project, run `mogging`
+pnpm check:publish  # pack all five packages (prepack rebuilds dist), check each tarball; no database
+pnpm smoke:pack  # pack the five tarballs, install them in a temp project, run `mogging`
 ```
 
 `pnpm test` uses `withTestDb` (`packages/core/test/db.ts`): each test gets a random schema and
@@ -180,12 +181,13 @@ so a copied file has no effect until the variables are exported.
 | `pnpm test` | root | Runs every package's Vitest suite. Needs `DATABASE_URL`. |
 | `pnpm typecheck` | root | `tsc --noEmit` for each package's `tsconfig.json`. |
 | `pnpm build` | root | Compiles `src` of each package to `packages/*/dist` with declarations. |
-| `pnpm smoke:pack` | root | Builds, packs all four packages, installs the tarballs outside the repository, and exercises the installed `mogging` binary against a throwaway schema. Needs `DATABASE_URL`. |
+| `pnpm check:publish` | root | Packs all five packages (each `prepack` rebuilds `dist`) and checks every tarball: licence and readme, no `src`/`test`, entry files present, `workspace:*` rewritten, `publishConfig.access` public. No database. `--release --out DIR` is the final pre-publish check (`docs/RELEASING.md`). |
+| `pnpm smoke:pack` | root | Builds, packs all five packages, installs the tarballs outside the repository, and exercises the installed `mogging` binary against a throwaway schema. Needs `DATABASE_URL`. |
 | `pnpm accept:starlight` | root | Packs the packages, installs them into a copy of `templates/starlight` from the npm registry, runs the first session with a mocked compile and builds the site. Needs `DATABASE_URL` and network; not part of `pnpm test`. |
 | `pnpm accept:adopter` | root | The same for an existing Starlight site with hand-made translations: `init --starlight`, day-one import, rename, export, `astro build`. Needs `DATABASE_URL` and network; not part of `pnpm test`. |
 | `pnpm --filter @mogging/cli dev <command>` | repo | Runs the CLI from source with `tsx` (cwd is `packages/cli`). |
 | `pnpm --filter <pkg> test` | repo | Runs one package's tests. |
-| `prepack` | each package | Copies the repository licence into the package before packing. |
+| `prepack` | each package | `scripts/prepack.mjs`: copies the repository licence, deletes `dist`, rebuilds it and verifies the published entry files, so a pack or publish never ships a stale `dist`. |
 
 **There is no schema type-generation step.** Unlike Payload (`payload generate:types`) or Sanity
 (`sanity typegen`), MoggingCMS does not emit a generated TypeScript file from the content schema.
@@ -228,12 +230,14 @@ changes arrive as new migrations. See [docs/dev-setup.md](docs/dev-setup.md).
 │   ├── API_INTEGRATION.md        # SDK/CLI integration for frontend applications
 │   └── superpowers/              # design specs and implementation plans (design-only unless stated)
 ├── scripts/
+│   ├── prepack.mjs               # every package's `prepack`: licence copy, clean rebuild of dist, entry check
+│   ├── check-publish-ready.mjs   # the tarball checks behind `pnpm check:publish`
 │   ├── pack-smoke.mjs            # the pack/install/run check behind `pnpm smoke:pack`
 │   ├── starlight-accept.mjs      # the template acceptance run behind `pnpm accept:starlight`
 │   └── starlight-adopter.mjs     # the existing-adopter run behind `pnpm accept:adopter`
 ├── tools/
 │   └── licence/sign.ts           # offline licence-token signer (not shipped in the SDK)
-├── .github/workflows/ci.yml      # typecheck, test, smoke:pack; then both Starlight acceptance runs
+├── .github/workflows/ci.yml      # typecheck, test, check:publish, smoke:pack; then both Starlight acceptance runs
 ├── spikes/                       # isolated experiments (workspace members)
 ├── TODO.md                       # tracked debt and accepted limits
 └── package.json                  # root test/build/typecheck/smoke scripts

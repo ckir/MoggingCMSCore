@@ -9,12 +9,13 @@
   "exports": { ".": "./src/index.ts" },
   "files": ["dist", "migrations", "README.md", "LICENSE.md"],
   "publishConfig": {
+    "access": "public",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } }
   },
   "scripts": {
-    "prepack": "node ../../scripts/copy-licence.mjs",
+    "prepack": "node ../../scripts/prepack.mjs",
     "test": "vitest run"
   },
   "dependencies": {

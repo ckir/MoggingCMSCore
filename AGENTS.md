@@ -25,6 +25,7 @@ pnpm --filter @mogging/core test api -t "exactly the contract"   # one test by n
 pnpm typecheck                               # tsc --noEmit per package: the static gate (no linter/formatter exists)
 pnpm build                                   # tsc to packages/*/dist
 pnpm smoke:pack                              # pack + install tarballs outside the repo, run `mogging` (needs network)
+pnpm check:publish                           # pack all five packages (prepack rebuilds dist) and check each tarball; no database
 pnpm --filter @mogging/cli dev <command> --config /abs/path/mogging.config.ts   # CLI from source via tsx
 pnpm accept:starlight                        # acceptance run of templates/starlight against packed packages (needs DATABASE_URL and the npm registry)
 pnpm accept:adopter                          # acceptance run of the existing-adopter Starlight fixture (same needs)
@@ -47,7 +48,8 @@ preset); the CLI does not depend on it at run time, and a Starlight project's `m
 entry is a no-op Astro integration that imports nothing; the preset is the separate `@mogging/starlight/preset` entry.
 
 - In the repo, every package's `main`/`exports` point at `./src/*.ts`, so vitest and tsx run from source with no build
-  step. `publishConfig` swaps them to `dist` only at `pnpm pack`. `prepack` does not build.
+  step. `publishConfig` swaps them to `dist` only at `pnpm pack`. `prepack` (`scripts/prepack.mjs`) deletes `dist` and rebuilds
+  it, then verifies the published entry files, so a pack or publish never ships a stale `dist`.
 - `core`, `ai` and `markdown` each have `test/api.test.ts`, which pins the exact public export surface. A new export
   must be added to that test deliberately. Don't leak internals through `src/index.ts`.
 - `templates/starlight/` is the starter site; it sits outside the pnpm workspace and is exercised only by
