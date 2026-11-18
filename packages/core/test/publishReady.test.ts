@@ -96,6 +96,17 @@ describe("checkTarball", () => {
     expect(checkTarball(g)).toEqual(["dependencies.@mogging/core is 0.0.1 but @mogging/core is at 0.0.0 in this repository"]);
   });
 
+  test("peerDependencies and optionalDependencies get the same workspace and sibling-version rules as dependencies", () => {
+    const g = good();
+    g.manifest.dependencies = {};
+    g.manifest.peerDependencies = { "@mogging/core": "workspace:^" };
+    g.manifest.optionalDependencies = { "@mogging/core": "0.0.1" };
+    expect(checkTarball(g)).toEqual([
+      "peerDependencies.@mogging/core is still workspace:^ (the workspace protocol was not rewritten)",
+      "optionalDependencies.@mogging/core is 0.0.1 but @mogging/core is at 0.0.0 in this repository",
+    ]);
+  });
+
   test('a missing publishConfig.access "public" is reported, because a scoped package would publish as restricted', () => {
     const g = good();
     g.source.publishConfig = {};
@@ -183,6 +194,14 @@ describe("prepack gate", () => {
     const r = prepack(fakePackage({ publishConfig: {} }));
     expect(r.status).toBe(1);
     expect(r.err).toContain("names no dist entry file");
+  }, 60_000);
+
+  test("a plain-string bin is checked for its shebang too", () => {
+    const publishConfig = { bin: "./dist/bin.js" };
+    expect(prepack(fakePackage({ publishConfig, files: { "src/bin.ts": "#!/usr/bin/env node\nexport const y = 1;\n" } })).status).toBe(0);
+    const r = prepack(fakePackage({ publishConfig, files: { "src/bin.ts": "export const y = 1;\n" } }));
+    expect(r.status).toBe(1);
+    expect(r.err).toContain('must start with "#!/usr/bin/env node"');
   }, 60_000);
 
   test("a bin file must keep its shebang: with it the gate passes, without it the gate fails", () => {
