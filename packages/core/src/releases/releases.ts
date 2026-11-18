@@ -212,7 +212,7 @@ export async function publishRelease(ctx: Ctx, input: PublishReleaseInput): Prom
     const sharedDocIds = [...new Set(items.filter((i) => i.locale === null).map((i) => i.doc_id as string))];
     if (sharedDocIds.length > 0) {
       const cols = await tx`select distinct collection from documents where id in ${tx(sharedDocIds)}`;
-      await lockSlugs(tx, cols.map((r) => r.collection as string));
+      await lockSlugs(tx, ctx, cols.map((r) => r.collection as string));
     }
     // One ms-granular instant, read once after the locks.
     const [{ t }] = (await tx`select date_trunc('milliseconds', clock_timestamp()) as t`) as unknown as [{ t: Date }];

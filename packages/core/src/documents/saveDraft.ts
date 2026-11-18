@@ -95,7 +95,7 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
     // Shared scope only (the slug field is never localized): serialize writers of this collection's slugs, after
     // the documents row lock, then refuse a slug another live document holds (spec 8).
     if (isShared) {
-      await lockSlugs(tx, [collection.name]);
+      await lockSlugs(tx, ctx, [collection.name]);
       await assertSlugFree(tx, ctx, { collection: collection.name, docId: input.docId, data });
     }
 

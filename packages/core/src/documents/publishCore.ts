@@ -95,7 +95,7 @@ export async function publishWithinTx(tx: Tx, ctx: Ctx, input: PublishInput, sta
   // Shared scope: the slug the target would publish must still be free (spec 8). The slug lock is re-entrant and
   // comes after the documents row lock.
   if (isShared && docRow) {
-    await lockSlugs(tx, [docRow.collection as string]);
+    await lockSlugs(tx, ctx, [docRow.collection as string]);
     await assertSlugFree(tx, ctx, { collection: docRow.collection as string, docId: input.docId, data: target.data });
   }
 

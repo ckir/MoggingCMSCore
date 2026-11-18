@@ -29,8 +29,6 @@ Tracked debt promoted from local anomaly captures (see the clavity open-issues s
 
 ## Plan 6a follow-ups (Starlight engine)
 
-- [ ] `@mogging/core` the advisory slug-lock key (`hashtext('mogging_slug:' || name)`, `packages/core/src/documents/slugGuard.ts`) is not schema-scoped, so engines in different schemas of one database serialize on each other. Recorded 2026-11-17, plan 6a final review.
-- [ ] `@mogging/core` the slug lock is taken for slug-less collections too (`lockSlugs` runs before `assertSlugFree` finds no slug field). Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/core` the slugGuard test titled "unpublishing alone" has no unpublish step. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/core` an untracked save over a tracked base drops the stored source hashes (by spec, but undocumented): document it in `docs/CONTENT_ARCHITECTURE.md`. Recorded 2026-11-17, plan 6a final review.
 - [ ] `@mogging/core` the `getDocuments` and versions tests lack a deleted document and a published source-locale case (the other-collection case was closed by the plan 6a test audit). Recorded 2026-11-17, plan 6a final review.
