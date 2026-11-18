@@ -163,7 +163,7 @@ async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): P
                 ${isRejected}, ${isRejected ? "rejected by reviewer" : null},
                 ${r.warnings as string[]}, ${ack}, ${input.bulkId ?? null}, ${actor}, ${t}, ${t})`;
     }
-    // A reviewer-supplied field the AI version has no row for (a field it cannot translate): an audit row of its own.
+    // A reviewer-supplied field the AI version has no row for (a field carried over from the base, a required field the AI never drafted, or an SDK `null` edit): an audit row of its own.
     const rowPaths = new Set(rows.map((r) => r.field_path as string | null));
     for (const key of Object.keys(edits)) {
       if (rowPaths.has(key)) continue;
@@ -207,7 +207,7 @@ async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): P
  * `superseded_version`, `call_id`, `job_id`, `model_id` and `prompt_version`, but recomputes
  * `edited` / `discarded` / `discard_reason` for this call and stores this call's
  * `acknowledgedWarnings` and `bulkId`. Rejected fields restore published data, not the AI base. An edit
- * for a field the AI version has no provenance row for (one the AI cannot translate, so the draft lacks it) adds
+ * for any key the AI version has no provenance row for (a field carried over from the base, one the AI never drafted, an SDK `null` edit included) adds
  * one row: `model_id` `human:approve`, empty `prompt_version`, zero tokens and cost, `edited` true, no warnings,
  * the acknowledgements, bulk id and actor of this call.
  *

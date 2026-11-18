@@ -63,8 +63,14 @@ Contract: `order by is_head_draft desc, version desc` over the same candidate ro
 'DRAFT_AI'`), in BOTH places that carry the query: `recordAiDraft.ts:89-91` and `saveDraft.ts:121-124` (a human
 save in a target locale carries fields forward from the same base, and the two must not diverge). Measured by enumerating every writer that clears `is_head_draft` (`rejectDraft`, `approve`,
 `recordAiDraft`, `saveDraft`, the publish flip): the only non-AI row newer than the published head that is not itself
-a head is an APPROVED draft superseded and then rejected, so every other case picks the same row as today. A rejected
-AI row is still never a base. The next draft's provenance `superseded_version` stays null (the approved row was not
+a head is an APPROVED draft superseded and then rejected. The candidate filter is extended so that, while a published
+head exists, a non-head PUBLISHED row (a superseded row or a republish copy) is never a base:
+`and (is_head_draft or state <> 'DRAFT_AI') and (is_head_published or state <> 'PUBLISHED' or not exists (select 1 from
+document_localized p where p.doc_id = ... and p.locale = ... and p.is_head_published))`, with the ordering unchanged
+(`is_head_draft desc, version desc`). Without a published head the rule is what it was before: any non-AI row, newest by
+version, a draft head first. The final whole-branch review found, by measurement, that the first contract (newest non-AI
+row) also picked a republish copy after an older draft head was published; the filter excludes non-head PUBLISHED rows
+while a published head exists. A rejected AI row is still never a base. The next draft's provenance `superseded_version` stays null (the approved row was not
 a head when the new draft was built, `recordAiDraft.ts` `superseded`), so the review's `previous` falls back to the
 published value as it does today. Docs: `CONTENT_ARCHITECTURE.md` 3.4 (reject leaves the pair stale; the next draft starts
 from the superseded approved draft when one exists, spec 8.1) and design 6.3 wording.

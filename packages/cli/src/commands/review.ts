@@ -110,20 +110,22 @@ const nameOf = (err: unknown): unknown => (typeof err === "object" && err !== nu
 
 /**
  * The notice lines for the required localized fields the draft head of `docId`/`locale` still lacks, read after an
- * approval (see `missingNotice`); `[]` when none is missing or no draft head exists any more.
+ * approval (see `missingNotice`); `[]` when none is missing or no draft head exists any more (a `NotFoundError`,
+ * matched by `name`, never `instanceof`). Any other failed read yields exactly one line,
+ * `! could not check for missing required fields: <message>`, because every caller runs after `approve` has
+ * committed and a read error must never turn that success into a reported failure.
  *
  * @param ctx - The core context.
  * @param docId - The document id.
  * @param locale - The locale of the draft.
- * @returns The notice lines (empty when nothing is missing).
- * @throws Whatever `getDraftReview` throws other than a `NotFoundError` (matched by `name`, never `instanceof`).
+ * @returns The notice lines (empty when nothing is missing); never throws.
  */
 export async function missingLines(ctx: Ctx, docId: string, locale: string): Promise<string[]> {
   try {
     return missingNotice((await getDraftReview(ctx, { docId, locale })).missing);
   } catch (err) {
-    if (nameOf(err) !== "NotFoundError") throw err;
-    return [];
+    if (nameOf(err) === "NotFoundError") return [];
+    return [`! could not check for missing required fields: ${escapeControl(describeError(err).message)}`];
   }
 }
 
@@ -284,7 +286,7 @@ async function reviewPair(env: CommandEnv, reader: Reader, pair: Pair, say: (...
       if (!refusal) throw err;
       return outcome;
     }
-    // After the try, so that a failed read of the notice is never reported as a failed approval.
+    // After the try, and `missingLines` never throws, so a failed read of the notice is never reported as a failed approval.
     if (done === "approved") {
       const notice = await missingLines(ctx, pair.docId, pair.locale);
       if (notice.length > 0) say(...notice);

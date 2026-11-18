@@ -414,7 +414,7 @@ test("recordAiDraft with only non-head rows and no published head bases on the L
   expect(rows[2]!.source_hashes).toEqual({ title: hashes.title, body: hashes.body });
 }));
 
-test("recordAiDraft prefers the published head over a later superseded draft row", async () => withTestDb(async (sql) => {
+test("recordAiDraft bases on the published head when an older superseded draft row exists", async () => withTestDb(async (sql) => {
   const { ctx, docId, hashes } = await setup(sql);
   // The published head is the newest row here, so ordering by version picks it; a NEWER non-head non-AI row only
   // occurs after a rejected AI draft over an APPROVED draft (see the rejectDraft tests).

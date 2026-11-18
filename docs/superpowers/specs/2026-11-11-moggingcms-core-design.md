@@ -207,7 +207,9 @@ Rules:
   publishable itself. A `DRAFT_AI` head may also be rejected as a whole (`rejectDraft`): the head flag
   is cleared, the row stays in history, a `human:reject` provenance row records who and why, and the
   pair is stale again so a later `compile` may regenerate it. The next draft after a reject starts from
-  the newest non-AI row (the superseded `APPROVED` draft when one exists), never from a rejected AI row.
+  the draft head, else the newest row that is not a `DRAFT_AI`, ignoring a superseded or republish-copy `PUBLISHED`
+  row while a published head exists (so the live published head, or a newer `APPROVED` row left by a rejected AI
+  draft, whichever is newer), never from a rejected AI row.
 - A `DRAFT_HUMAN` snapshot may be published by its author without a separate approval; the
   publication record names them. Only `DRAFT_AI` requires the approval step.
 - Each snapshot records `published_at` and `unpublished_at`. Time-travel reads take a timestamp T and

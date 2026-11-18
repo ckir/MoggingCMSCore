@@ -237,3 +237,42 @@ test("rejectDraft refuses a reason containing U+0000 with a ValidationError and 
   const [{ n }] = await sql`select count(*)::int as n from content_provenance where model_id = 'human:reject'`;
   expect(n).toBe(0);
 }));
+
+/**
+ * A fresh document, en v1 published (Hello / World). de: v1 (B1) and v2 (B2) saved and published, v3 (B3) saved as
+ * the draft head, v1 republished (copy v4, body B1), then the draft head v3 published in place: v3 is the live
+ * published head and the republish copy v4 is a non-head PUBLISHED row with a HIGHER version.
+ */
+async function republishThenPublishOlderDraft(sql: Sql) {
+  await migrate(sql);
+  const ctx = ctxFor(sql, "reviewer");
+  const { id: docId } = await createDocument(ctx, { collection: "posts" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello", body: md("World") } });
+  await publish(ctx, { docId, locale: "en" });
+  for (const b of ["B1", "B2"]) {
+    await saveDraft(ctx, { docId, locale: "de", data: { title: "T" + b, body: md(b) } });
+    await publish(ctx, { docId, locale: "de" });
+  }
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "TB3", body: md("B3") } });
+  await publish(ctx, { docId, locale: "de", version: 1 });
+  await publish(ctx, { docId, locale: "de" });
+  return { ctx, docId };
+}
+
+test("recordAiDraft after a republish and a later publish of the older draft head builds on the live head", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await republishThenPublishOlderDraft(sql);
+  const r = await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { title: "AI" }, sourceVersion: 1, sourceHashes: { title: hashValue("Hello") }, provenance: [],
+  });
+  expect(r).toEqual({ version: 5 });
+  expect((await headData(sql, docId)).data).toEqual({ title: "AI", body: md("B3") });
+}));
+
+test("saveDraft after that republish carries the live head's hash, not the republish copy's", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await republishThenPublishOlderDraft(sql);
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Hello2", body: md("World") } });
+  await publish(ctx, { docId, locale: "en" });
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "TB3", body: md("B3") } });
+  const [h] = await sql`select source_hashes from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
+  expect(h!.source_hashes).toEqual({ title: hashValue("Hello"), body: hashValue(md("World")) });
+}));

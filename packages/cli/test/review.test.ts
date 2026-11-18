@@ -6,7 +6,7 @@ import { upsertGlossary } from "@mogging/ai";
 import { approve, hashValue, migrate, publish, recordAiDraft, saveDraft } from "@mogging/core";
 import type { Sql } from "postgres";
 import { run } from "../src/run.js";
-import { reviewSpec } from "../src/commands/review.js";
+import { missingLines, reviewSpec } from "../src/commands/review.js";
 import { withTestDb } from "./db.js";
 import { ai, aiDraft, catalogConfig, catalogDoc, coreCtx, md, publishedDoc, testDeps } from "./fixtures.js";
 
@@ -604,6 +604,26 @@ describe("a required localized field the AI never drafted", () => {
       const json = JSON.parse(r.out) as { ok: boolean; data: unknown };
       expect(json.ok).toBe(true);
       expect(json.data).toEqual({ version: expect.any(Number) });
+    });
+  });
+});
+
+describe("missingLines", () => {
+  test("missingLines reports a failed read as one line instead of throwing", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      // Core refuses "shared" with a ValidationError ("Shared drafts have no review view"): a failed read.
+      const lines = await missingLines(coreCtx(sql), docId, "shared");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^! could not check for missing required fields:/);
+      expect(lines[0]).toContain("Shared drafts");
+    });
+  });
+
+  test("missingLines returns nothing for a document without a draft head", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      expect(await missingLines(coreCtx(sql), docId, "de")).toEqual([]);
     });
   });
 });
