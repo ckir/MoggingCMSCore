@@ -9,7 +9,7 @@ import type { Sql } from "postgres";
 import { run } from "../src/run.js";
 import type { Deps } from "../src/types.js";
 import { withTestDb } from "./db.js";
-import { aiDraft, connectionOver, coreCtx, DAY, md, publishedDoc, setFirstMigration, testDeps } from "./fixtures.js";
+import { ai, aiDraft, catalogConfig, catalogDoc, connectionOver, coreCtx, DAY, md, publishedDoc, setFirstMigration, testDeps } from "./fixtures.js";
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -98,10 +98,11 @@ const edit = (from: string, to: string) => (path: string) => writeFileSync(path,
 
 function start(
   sql: Sql, args: string[],
-  opts: { editor?: Deps["editor"]; signal?: AbortSignal; onOut?: (s: string) => void; end?: () => Promise<void> } = {},
+  opts: { editor?: Deps["editor"]; loadModule?: Deps["loadModule"]; signal?: AbortSignal; onOut?: (s: string) => void; end?: () => Promise<void> } = {},
 ): Session {
   const t = testDeps(sql, {
     ...(opts.editor === undefined ? {} : { editor: opts.editor }),
+    ...(opts.loadModule === undefined ? {} : { loadModule: opts.loadModule }),
     ...(opts.signal === undefined ? {} : { signal: opts.signal }),
     connect: () => connectionOver(sql, opts.end),
   });
@@ -162,7 +163,17 @@ describe("interactive review", () => {
     });
   });
 
-  test("--locale scopes the review, with a document and without", async () => {
+  test("a on a draft that lacks a required field approves, then prints the notice for it", async () => {
+  await withDb(async (sql) => {
+    await catalogDoc(sql);
+    const s = start(sql, ["items/widget"], { loadModule: async () => ({ config: catalogConfig, ai }) });
+    await s.answer(MENU, "a");
+    expect(await s.exit).toBe(0);
+    expect(s.output()).toMatch(/approved items\/widget de v\d+\n! required, not drafted: price; publish refuses this locale until they are supplied\n/);
+  });
+});
+
+test("--locale scopes the review, with a document and without", async () => {
     await withDb(async (sql) => {
       const docId = await publishedDoc(sql);
       await draftWith(sql, docId, "de", { title: "Einleitung" });
