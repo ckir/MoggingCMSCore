@@ -206,7 +206,8 @@ Rules:
   flag per field the reviewer changed. The original AI version stays in history and is never
   publishable itself. A `DRAFT_AI` head may also be rejected as a whole (`rejectDraft`): the head flag
   is cleared, the row stays in history, a `human:reject` provenance row records who and why, and the
-  pair is stale again so a later `compile` may regenerate it.
+  pair is stale again so a later `compile` may regenerate it. The next draft after a reject starts from
+  the newest non-AI row (the superseded `APPROVED` draft when one exists), never from a rejected AI row.
 - A `DRAFT_HUMAN` snapshot may be published by its author without a separate approval; the
   publication record names them. Only `DRAFT_AI` requires the approval step.
 - Each snapshot records `published_at` and `unpublished_at`. Time-travel reads take a timestamp T and

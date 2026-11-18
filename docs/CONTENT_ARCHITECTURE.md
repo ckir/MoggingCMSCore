@@ -387,7 +387,9 @@ the "human takeover" path.
 
 `rejectDraft(ctx, { docId, locale, reason?, expectedVersion? })` clears a `DRAFT_AI` draft head
 without deleting the row, records a `human:reject` provenance row, and leaves the pair stale so a
-later compile can regenerate it. It is not licence-guarded.
+later compile can regenerate it. The next draft after a reject starts from the newest non-AI row
+(the superseded `APPROVED` draft when one exists), never from a rejected AI row. It is not
+licence-guarded.
 
 ### 3.5 Publishing, unpublishing and time travel
 

@@ -416,9 +416,11 @@ test("recordAiDraft with only non-head rows and no published head bases on the L
 
 test("recordAiDraft prefers the published head over a later superseded draft row", async () => withTestDb(async (sql) => {
   const { ctx, docId, hashes } = await setup(sql);
-  await insertPublishedLocalized(sql, docId, "de", 1, { title: "Pub" }, { title: hashes.title });
+  // The published head is the newest row here, so ordering by version picks it; a NEWER non-head non-AI row only
+  // occurs after a rejected AI draft over an APPROVED draft (see the rejectDraft tests).
+  await insertPublishedLocalized(sql, docId, "de", 2, { title: "Pub" }, { title: hashes.title });
   await sql`insert into document_localized (doc_id, locale, version, state, data, source_hashes, is_head_draft, created_by)
-    values (${docId}, 'de', 2, 'DRAFT_HUMAN', ${sql.json({ title: "Old draft", legal: "x" })}, ${sql.json({})}, false, 'fixture')`;
+    values (${docId}, 'de', 1, 'DRAFT_HUMAN', ${sql.json({ title: "Old draft", legal: "x" })}, ${sql.json({})}, false, 'fixture')`;
   const r = await recordAiDraft(ctx, {
     docId, locale: "de", fields: { body: md("Welt") }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("body")],
   });

@@ -196,6 +196,38 @@ test("saveDraft after approve, a superseding AI draft and its reject still carri
   expect(h!.source_hashes).toEqual({ title: hashes.title, body: hashValue(md("World")) });
 }));
 
+/** de: v2 PUBLISHED (title Hallo), v3 AI (title Neu, hash "h-old"), v4 APPROVED, v5 AI supersedes v4, v5 rejected. */
+async function approvedNewerThanPublished(sql: Sql) {
+  const s = await setup(sql); // v1 DRAFT_AI
+  await approve(s.ctx, { docId: s.docId, locale: "de" }); // v2 APPROVED
+  await publish(s.ctx, { docId: s.docId, locale: "de" }); // v2 PUBLISHED head
+  await recordAiDraft(s.ctx, { docId: s.docId, locale: "de", fields: { title: "Neu" }, sourceVersion: 1,
+    sourceHashes: { title: "h-old" }, provenance: [prov("title")] }); // v3
+  await approve(s.ctx, { docId: s.docId, locale: "de" }); // v4 APPROVED, newer than the published v2
+  await s.draft({ title: "AI2" }); // v5 supersedes v4
+  await rejectDraft(s.ctx, { docId: s.docId, locale: "de" }); // no draft head; v4 is a non-head APPROVED row
+  return s;
+}
+
+test("redraft after reject in a published locale starts from the approved row that is newer than the published head", async () => withTestDb(async (sql) => {
+  const { docId, draft } = await approvedNewerThanPublished(sql);
+  expect(await draft({ body: md("B2") })).toEqual({ version: 6 });
+  expect((await headData(sql, docId)).data).toEqual({ title: "Neu", body: md("B2") });
+  const [h] = await sql`select source_hashes from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
+  expect((h!.source_hashes as Record<string, string>).title).toBe("h-old");
+  const p = await sql`select superseded_version from content_provenance
+    where doc_id = ${docId} and locale = 'de' and version = 6`;
+  expect(p.length).toBeGreaterThan(0);
+  for (const row of p) expect(row.superseded_version).toBeNull();
+}));
+
+test("saveDraft after that reject carries the approved row's hash forward", async () => withTestDb(async (sql) => {
+  const { ctx, docId, hashes } = await approvedNewerThanPublished(sql);
+  await saveDraft(ctx, { docId, locale: "de", data: { title: "Neu", body: md("Welt") } });
+  const [h] = await sql`select source_hashes from document_localized where doc_id = ${docId} and locale = 'de' and is_head_draft`;
+  expect(h!.source_hashes).toEqual({ title: "h-old", body: hashes.body });
+}));
+
 test("rejectDraft refuses a reason containing U+0000 with a ValidationError and changes nothing", async () => withTestDb(async (sql) => {
   const { ctx, docId } = await setup(sql);
   const e = await rejectDraft(ctx, { docId, locale: "de", reason: "bad\u0000tone" }).catch((x: unknown) => x);
