@@ -90,9 +90,9 @@ describe("the starlight template", () => {
     expect(pkg.type).toBe("module");
     expect(pkg.engines.node).toBe(">=22.23.4");
     expect(pkg.dependencies).toEqual({
-      astro: "7.4.4",
+      astro: "7.4.7",
       "@astrojs/starlight": "0.43.0",
-      sharp: "0.35.4",
+      sharp: "0.35.5",
       "@mogging/starlight": "0.0.0",
     });
     expect(pkg.devDependencies).toEqual({
