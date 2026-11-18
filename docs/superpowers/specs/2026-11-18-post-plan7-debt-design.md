@@ -40,14 +40,15 @@ Contract:
    `review show --json` gains the additive key `missing`. `review approve` does NOT refuse while `missing` is
    non-empty (plan 7: drafts may be incomplete); it prints a notice listing the paths, because `publish` will refuse.
    In the text form an empty section for a missing field is a no-op (indistinguishable from untouched), so supplying
-   an empty string, `0` or `false` needs the JSON form (`"field": ""`). Exact file syntax: resolved in the plan.
+   an empty string needs the JSON form (`"field": ""`); a non-empty body such as `0` or `false` is a value like any
+   other. Exact file syntax: resolved in the plan.
    The plan must change every site that assumes a path is in `review.fields`: `edited()` (`editFile.ts:40`,
    `find(...)!` would throw on a missing path), `fieldNames`, `applyEdits`, the edit-file renderer, and the
    string-only check of `parseJsonEditFile` (`editFile.ts:97`).
 3. Core `publish` / `publishRelease` error (`publishCore.ts:90`) names the remedy: the AI does not draft a field it
    cannot translate; supply it with `mogging review approve --edit-file` or `saveDraft`.
 3a. (A5) Core `approve` inserts one provenance row for each edited key that has no AI row in the approved version:
-   `field_path` = the key, `model_id` `'human:approve'`, `edited` true, zero tokens and cost, and the same
+   `field_path` = the key, `model_id` `'human:approve'`, `edited` true, `prompt_version` `''` (as `rejectDraft.ts:57` and `state.ts:155`), zero tokens and cost, and the same
    approver, acknowledgements and `bulk_id` columns as the AI rows. The `human:` prefix keeps `review.ts:150` from
    mistaking it for an AI call, and `review.ts:162` then marks the field edited.
 4. Docs: `CONTENT_ARCHITECTURE.md` (review, edit files, required-on-publish), the CLI README, spec F4 note
@@ -107,4 +108,6 @@ empty-string supply (JSON form only). Every requirement above maps to one sectio
 
 ## Stand-downs
 
-None. Panel round 1 findings (five from agy, six from the driver's own seats) were all folded above.
+None. Panel rounds 1 and 2 findings (five and two from agy, six from the driver's own seats) were all folded above.
+Round 2 closed on the driver's judgment, not a clean round: its two folds are one wording correction and one column
+value, and spawn no new edge.
