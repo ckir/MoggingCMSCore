@@ -29,6 +29,16 @@ export type ReviewField = {
   sourceChanged: boolean;
 };
 
+/**
+ * A required localized field of the document's collection that the draft head lacks, with the source locale's
+ * published value for it. `source` is `undefined` when the source head has none.
+ */
+export type ReviewMissing = { path: string; source: unknown };
+
+/**
+ * The reviewer's view of one draft head: its fields, and in `missing` the required localized fields it lacks.
+ * `missing` is always present and is `[]` when nothing is missing.
+ */
 export type DraftReview = {
   docId: string;
   collection: string;
@@ -40,6 +50,8 @@ export type DraftReview = {
   sourceVersion: number | null;
   supersededVersion: number | null;
   fields: ReviewField[];
+  /** Required localized fields of the collection with no key in the draft's data, sorted by path; `[]` when none. */
+  missing: ReviewMissing[];
 };
 
 type FieldWarnings = Record<string, string[]>;
@@ -116,8 +128,16 @@ export async function listDraftHeads(
 
 /**
  * The reviewer's view of the draft head of (doc, locale): per field the draft text, the text it replaces, the
- * source text and the warnings it still carries. Unguarded read. Throws NotFoundError when the document or its
- * draft head does not exist.
+ * source text and the warnings it still carries. `missing` lists every required localized field of the document's
+ * collection that the draft lacks (an AI draft never carries a field it cannot translate, such as a number), each
+ * with the source head's value; it is `[]` when none is missing or the config no longer declares the collection, and
+ * it applies to the source locale's draft too. Unguarded read.
+ *
+ * @param ctx engine context; no licence or actor check.
+ * @param input the document and a declared, non-shared locale.
+ * @returns the review of the draft head.
+ * @throws {ValidationError} for the `shared` locale or a locale the config does not declare.
+ * @throws {NotFoundError} when the document or its draft head does not exist.
  */
 export async function getDraftReview(ctx: Ctx, input: { docId: string; locale: string }): Promise<DraftReview> {
   const { sql, config } = ctx;
@@ -185,6 +205,14 @@ export async function getDraftReview(ctx: Ctx, input: { docId: string; locale: s
     };
   });
 
+  const collection = config.collections.find((c) => c.name === doc.collection);
+  const missing: ReviewMissing[] = collection
+    ? Object.entries(collection.fields)
+        .filter(([name, f]) => f.required && f.localized && !Object.hasOwn(data, name))
+        .map(([path]): ReviewMissing => ({ path, source: Object.hasOwn(srcData, path) ? srcData[path] : undefined }))
+        .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    : [];
+
   return {
     docId: input.docId,
     collection: doc.collection as string,
@@ -196,5 +224,6 @@ export async function getDraftReview(ctx: Ctx, input: { docId: string; locale: s
     sourceVersion: source ? (source.version as number) : null,
     supersededVersion,
     fields,
+    missing,
   };
 }

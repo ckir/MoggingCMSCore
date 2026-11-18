@@ -1,9 +1,9 @@
 import { expect, test } from "vitest";
 import {
-  NotFoundError, NotPublishableError, ValidationError, createDocument, defineCollection, defineConfig, deleteDocument,
-  migrate, publish, resolve, richText, saveDraft, slug, text, unpublish,
+  NotFoundError, NotPublishableError, ValidationError, approve, createDocument, defineCollection, defineConfig, deleteDocument,
+  getDocument, hashValue, migrate, publish, recordAiDraft, resolve, richText, saveDraft, slug, text, unpublish,
 } from "../src/index.js";
-import { ctxFor, extraConnection, insertAiDraftLocalized, md } from "./fixtures.js";
+import { ctxFor, catalogCtx, extraConnection, insertAiDraftLocalized, md } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 import type { Sql } from "postgres";
 
@@ -344,4 +344,42 @@ test("a document whose collection is no longer in the config publishes without t
   await publish(retired, { docId, locale: "en" });
   const rows = await sql`select is_head_published from document_localized where doc_id = ${docId} and locale = 'en'`;
   expect(rows.map((r) => r.is_head_published)).toEqual([true]);
+}));
+
+/** A catalog document: en published with a price, and a de AI draft that carries only the title. */
+async function catalogAiDraft(sql: Sql) {
+  await migrate(sql);
+  const ctx = catalogCtx(sql, "publisher");
+  const { id: docId } = await createDocument(ctx, { collection: "items" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Intro", price: 10 } });
+  await publish(ctx, { docId, locale: "en" });
+  await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { title: "Einleitung" }, sourceVersion: 1, sourceHashes: { title: hashValue("Intro") },
+    provenance: [{ fieldPath: "title", modelId: "m1", promptVersion: "p1", promptTokens: 10, completionTokens: 20, costMicros: 300 }],
+  });
+  return { ctx, docId };
+}
+
+test("publish of a target-locale draft names the remedy for a field the AI never drafts", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await catalogAiDraft(sql);
+  await approve(ctx, { docId, locale: "de" });
+  const err = await publish(ctx, { docId, locale: "de" }).then(() => null, (e: unknown) => e);
+  expect(err).toBeInstanceOf(ValidationError);
+  expect((err as Error).message).toContain("missing required field price");
+  expect((err as Error).message).toContain("approve edit or saveDraft");
+
+  // The source locale's message keeps no remedy suffix.
+  const { ctx: nctx, docId: nid } = await setupNotes(sql);
+  await saveDraft(nctx, { docId: nid, locale: "en", data: { body: md("x") } });
+  const srcErr = await publish(nctx, { docId: nid, locale: "en" }).then(() => null, (e: unknown) => e);
+  expect((srcErr as Error).message).toContain("missing required field title");
+  expect((srcErr as Error).message).not.toContain("approve edit");
+}));
+
+test("supplying the field through approve lets the locale publish", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await catalogAiDraft(sql);
+  await approve(ctx, { docId, locale: "de", edits: { price: 12 } });
+  await publish(ctx, { docId, locale: "de" });
+  const doc = await getDocument(ctx, { collection: "items", docId });
+  expect(doc!.locales.de!.published).toMatchObject({ state: "PUBLISHED", data: { title: "Einleitung", price: 12 } });
 }));

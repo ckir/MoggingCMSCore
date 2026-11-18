@@ -163,6 +163,17 @@ async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): P
                 ${isRejected}, ${isRejected ? "rejected by reviewer" : null},
                 ${r.warnings as string[]}, ${ack}, ${input.bulkId ?? null}, ${actor}, ${t}, ${t})`;
     }
+    // A reviewer-supplied field the AI version has no row for (a field it cannot translate): an audit row of its own.
+    const rowPaths = new Set(rows.map((r) => r.field_path as string | null));
+    for (const key of Object.keys(edits)) {
+      if (rowPaths.has(key)) continue;
+      await tx`insert into content_provenance
+          (doc_id, locale, version, field_path, superseded_version, call_id, job_id, model_id, prompt_version,
+           prompt_tokens, completion_tokens, cost_micros, edited, discarded, warnings,
+           acknowledged_warnings, bulk_id, approved_by, approved_at, created_at)
+        values (${input.docId}, ${locale}, ${version}, ${key}, null, null, null, 'human:approve', '', 0, 0, 0,
+                true, false, ${[] as string[]}, ${ack}, ${input.bulkId ?? null}, ${actor}, ${t}, ${t})`;
+    }
     if (rows.length === 0 && warned.size > 0) {
       // An AI version with no provenance rows (legal) still records who acknowledged which warnings (spec 8.4).
       await tx`insert into content_provenance
@@ -195,7 +206,10 @@ async function approveImpl(ctx: Ctx, input: ApproveInput, cleanOnly: boolean): P
  * are copied to the approved version with token and cost columns zeroed. The copy keeps `warnings`,
  * `superseded_version`, `call_id`, `job_id`, `model_id` and `prompt_version`, but recomputes
  * `edited` / `discarded` / `discard_reason` for this call and stores this call's
- * `acknowledgedWarnings` and `bulkId`. Rejected fields restore published data, not the AI base.
+ * `acknowledgedWarnings` and `bulkId`. Rejected fields restore published data, not the AI base. An edit
+ * for a field the AI version has no provenance row for (one the AI cannot translate, so the draft lacks it) adds
+ * one row: `model_id` `human:approve`, empty `prompt_version`, zero tokens and cost, `edited` true, no warnings,
+ * the acknowledgements, bulk id and actor of this call.
  *
  * @param ctx engine context; licence-guarded write with a NUL-free actor.
  * @param input document, non-source locale, optional edits/rejections/acknowledgements/bulk id, and

@@ -27,6 +27,21 @@ export const md = (text: string) => ({
 
 export const ctxFor = (sql: Sql, actor = "tester"): Ctx => ({ sql, config, actor });
 
+/** A collection with a required localized number: the AI cannot translate it, so no AI draft ever carries it. */
+export const catalog = defineCollection("items", {
+  slug: slug(),
+  title: text({ localized: true }),
+  body: richText({ localized: true, body: true }),
+  price: number({ localized: true, required: true }),
+});
+
+export const catalogConfig = defineConfig({
+  collections: [catalog],
+  locales: { source: "en", chains: { de: ["en"] } },
+});
+
+export const catalogCtx = (sql: Sql, actor = "tester"): Ctx => ({ sql, config: catalogConfig, actor });
+
 /**
  * Opens an extra, independent connection bound to the same per-test schema as `sql`
  * (withTestDb pins one connection). Caller must `end()` it.

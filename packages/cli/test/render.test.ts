@@ -12,7 +12,7 @@ const field = (path: string, over: Partial<ReviewField> = {}): ReviewField => ({
 
 const review = (fields: ReviewField[], over: Partial<DraftReview> = {}): DraftReview => ({
   docId: "00000000-0000-0000-0000-000000000001", collection: "docs", slug: "intro", locale: "de", version: 3,
-  state: "DRAFT_AI", sourceLocale: "en", sourceVersion: 1, supersededVersion: null, fields, ...over,
+  state: "DRAFT_AI", sourceLocale: "en", sourceVersion: 1, supersededVersion: null, fields, missing: [], ...over,
 });
 
 const entry = (term: string, translation: string | null, doNotTranslate = false): GlossaryEntry => ({

@@ -91,7 +91,7 @@ Every field builder accepts `FieldOptions`:
 | `localized` | `false` | `true` stores the field in a per-locale snapshot; `false` stores it in the document's shared snapshot. |
 | `fallback` | none | A per-field override: an ordered array of locale tags, or `"none"` to disable fallback. Only meaningful on localized fields. |
 | `body` | `false` | Marks the collection's rich-text body. Exactly one per collection; `richText` only. |
-| `required` | `false` | Enforced at publish: `publish` and `publishRelease` refuse a head that lacks a required field of its scope (`ValidationError`). A key holding an empty value counts as present. Drafts may be incomplete. Top-level fields only. |
+| `required` | `false` | Enforced at publish: `publish` and `publishRelease` refuse a head that lacks a required field of its scope (`ValidationError`). A key holding an empty value counts as present. Drafts may be incomplete: the draft review lists a required localized field a draft lacks (`DraftReview.missing`), and an AI draft never carries a field it cannot translate, so a reviewer supplies it with an `approve` edit or `saveDraft`. Top-level fields only. |
 
 ### 1.3 Relationships
 
@@ -359,8 +359,8 @@ the "human takeover" path.
   job was based on.
 - It cancels with `DRAFT_HUMAN` if the current draft head is a human draft. It never overwrites
   human work.
-- It merges the translated fields into the base snapshot (draft head, else published head, else the
-  latest non-AI row), carries hashes and per-field warning texts, clears the old draft head, and
+- It merges the translated fields into the base snapshot (draft head, else the
+  newest non-AI row by version), carries hashes and per-field warning texts, clears the old draft head, and
   inserts a `DRAFT_AI` head.
 - It writes one `content_provenance` row per translated field.
 
@@ -401,7 +401,8 @@ licence-guarded.
   or a historical `PUBLISHED` row that is not the current published head (a **republish**). Any
   other row is refused.
 - A target that lacks a required field of its scope is refused with `ValidationError`, for a draft head
-  and for a republish alike.
+  and for a republish alike. For a target locale the refusal also names the remedy (supply the field with an `approve`
+  edit or `saveDraft`).
 - It first clears the old published head (`is_head_published = false`, `unpublished_at`,
   `unpublished_by`) because the partial unique index permits only one.
 - For a draft head, publishing **flips** the row: `state = PUBLISHED`, `is_head_published = true`,
