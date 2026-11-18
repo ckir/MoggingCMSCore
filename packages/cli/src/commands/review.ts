@@ -9,7 +9,7 @@ import type { Ctx, DraftHead, DraftReview } from "@mogging/core";
 import { intOption } from "../args.js";
 import { applyEdits, parseEditFile, parseJsonEditFile, serializeEditFile } from "../editFile.js";
 import { describeError, escapeControl, table } from "../output.js";
-import { renderDraftReview } from "../render.js";
+import { missingNotice, renderDraftReview } from "../render.js";
 import { resolveTarget } from "../target.js";
 import { UsageError } from "../types.js";
 import type { CommandEnv, CommandResult, CommandSpec, Flags, Io } from "../types.js";
@@ -107,6 +107,27 @@ function kindsOf(ctx: Ctx, collection: string): Record<string, string> {
 }
 
 const nameOf = (err: unknown): unknown => (typeof err === "object" && err !== null ? (err as { name?: unknown }).name : undefined);
+
+/**
+ * The notice lines for the required localized fields the draft head of `docId`/`locale` still lacks, read after an
+ * approval (see `missingNotice`); `[]` when none is missing or no draft head exists any more (a `NotFoundError`,
+ * matched by `name`, never `instanceof`). Any other failed read yields exactly one line,
+ * `! could not check for missing required fields: <message>`, because every caller runs after `approve` has
+ * committed and a read error must never turn that success into a reported failure.
+ *
+ * @param ctx - The core context.
+ * @param docId - The document id.
+ * @param locale - The locale of the draft.
+ * @returns The notice lines (empty when nothing is missing); never throws.
+ */
+export async function missingLines(ctx: Ctx, docId: string, locale: string): Promise<string[]> {
+  try {
+    return missingNotice((await getDraftReview(ctx, { docId, locale })).missing);
+  } catch (err) {
+    if (nameOf(err) === "NotFoundError") return [];
+    return [`! could not check for missing required fields: ${escapeControl(describeError(err).message)}`];
+  }
+}
 
 /** A returned exit 1: nothing threw, and `--json` still gets `data: null` and the `error`. */
 const failure = (err: unknown, message: string): CommandResult => ({
@@ -257,7 +278,6 @@ async function reviewPair(env: CommandEnv, reader: Reader, pair: Pair, say: (...
     try {
       const result = await call();
       say(`${done} ${label} v${result.version}`);
-      return done;
     } catch (err) {
       const refusal = isRefusal(err);
       const outcome = nameOf(err) === "ConflictError" ? "conflicted" : "failed";
@@ -266,6 +286,12 @@ async function reviewPair(env: CommandEnv, reader: Reader, pair: Pair, say: (...
       if (!refusal) throw err;
       return outcome;
     }
+    // After the try, and `missingLines` never throws, so a failed read of the notice is never reported as a failed approval.
+    if (done === "approved") {
+      const notice = await missingLines(ctx, pair.docId, pair.locale);
+      if (notice.length > 0) say(...notice);
+    }
+    return done;
   };
 
   const approveArgs = (acks: string[], edits: Record<string, unknown>) => ({
@@ -528,7 +554,10 @@ export const reviewSpec: CommandSpec = {
         ...(reject === undefined ? {} : { rejectFields: reject }),
         ...(Array.isArray(ack) ? { acknowledgedWarnings: ack } : {}),
       });
-      return { data: result, lines: [`approved ${label} ${locale} v${result.version}`] };
+      return {
+        data: result,
+        lines: [`approved ${label} ${locale} v${result.version}`, ...(await missingLines(ctx, resolved.docId, locale))],
+      };
     } catch (err) {
       const stale = staleResult(err);
       if (stale === undefined) throw err;

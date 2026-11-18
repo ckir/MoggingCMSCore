@@ -86,8 +86,12 @@ export async function publishWithinTx(tx: Tx, ctx: Ctx, input: PublishInput, sta
       .filter(([name, f]) => f.required && f.localized !== isShared && (!Object.hasOwn(target!.data, name) || target!.data[name] === null))
       .map(([name]) => name);
     if (missing.length > 0) {
+      // A target locale's AI draft never carries a field the AI cannot translate: point at the way to supply it.
+      const remedy = !isShared && locale !== ctx.config.locales.source
+        ? " (an AI draft never carries a field it cannot translate; supply it with an approve edit or saveDraft)"
+        : "";
       throw new ValidationError(
-        `Cannot publish version ${target.version} of ${label}: missing required field${missing.length === 1 ? "" : "s"} ${missing.join(", ")}`,
+        `Cannot publish version ${target.version} of ${label}: missing required field${missing.length === 1 ? "" : "s"} ${missing.join(", ")}${remedy}`,
       );
     }
   }
@@ -95,7 +99,7 @@ export async function publishWithinTx(tx: Tx, ctx: Ctx, input: PublishInput, sta
   // Shared scope: the slug the target would publish must still be free (spec 8). The slug lock is re-entrant and
   // comes after the documents row lock.
   if (isShared && docRow) {
-    await lockSlugs(tx, [docRow.collection as string]);
+    await lockSlugs(tx, ctx, [docRow.collection as string]);
     await assertSlugFree(tx, ctx, { collection: docRow.collection as string, docId: input.docId, data: target.data });
   }
 

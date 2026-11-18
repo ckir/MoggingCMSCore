@@ -4,7 +4,7 @@ import {
   ConflictError, NotPublishableError, ValidationError, approve, approveClean, createDocument, getDocument, getDraftReview,
   getSyncState, hashValue, listDraftHeads, migrate, publish, recordAiDraft, rejectDraft, saveDraft, trackFields, unpublish,
 } from "../src/index.js";
-import { md, ctxFor, extraConnection, insertPublishedLocalized } from "./fixtures.js";
+import { md, ctxFor, catalogCtx, extraConnection, insertPublishedLocalized } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 const prov = (fieldPath: string, extra: { warnings?: string[]; jobId?: number; callId?: string } = {}) => ({
@@ -414,11 +414,13 @@ test("recordAiDraft with only non-head rows and no published head bases on the L
   expect(rows[2]!.source_hashes).toEqual({ title: hashes.title, body: hashes.body });
 }));
 
-test("recordAiDraft prefers the published head over a later superseded draft row", async () => withTestDb(async (sql) => {
+test("recordAiDraft bases on the published head when an older superseded draft row exists", async () => withTestDb(async (sql) => {
   const { ctx, docId, hashes } = await setup(sql);
-  await insertPublishedLocalized(sql, docId, "de", 1, { title: "Pub" }, { title: hashes.title });
+  // The published head is the newest row here, so ordering by version picks it; a NEWER non-head non-AI row only
+  // occurs after a rejected AI draft over an APPROVED draft (see the rejectDraft tests).
+  await insertPublishedLocalized(sql, docId, "de", 2, { title: "Pub" }, { title: hashes.title });
   await sql`insert into document_localized (doc_id, locale, version, state, data, source_hashes, is_head_draft, created_by)
-    values (${docId}, 'de', 2, 'DRAFT_HUMAN', ${sql.json({ title: "Old draft", legal: "x" })}, ${sql.json({})}, false, 'fixture')`;
+    values (${docId}, 'de', 1, 'DRAFT_HUMAN', ${sql.json({ title: "Old draft", legal: "x" })}, ${sql.json({})}, false, 'fixture')`;
   const r = await recordAiDraft(ctx, {
     docId, locale: "de", fields: { body: md("Welt") }, sourceVersion: 1, sourceHashes: hashes, provenance: [prov("body")],
   });
@@ -787,4 +789,51 @@ test("approve with an acknowledged warning containing U+0000 is a ValidationErro
   await expect(approve(ctx, { docId, locale: "de", acknowledgedWarnings: ["tone\u0000"] })).rejects.toThrow(ValidationError);
   const [{ n }] = await sql`select count(*)::int as n from document_localized where doc_id = ${docId} and locale = 'de' and state = 'APPROVED'`;
   expect(n).toBe(0);
+}));
+
+/** A catalog document whose source (en) is published and a de AI draft with only a title (the price is never drafted). */
+async function catalogAiDraft(sql: Sql) {
+  await migrate(sql);
+  const ctx = catalogCtx(sql, "reviewer");
+  const { id: docId } = await createDocument(ctx, { collection: "items" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Intro", price: 10 } });
+  await publish(ctx, { docId, locale: "en" });
+  await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { title: "Einleitung" }, sourceVersion: 1, sourceHashes: { title: hashValue("Intro") },
+    provenance: [prov("title")],
+  });
+  return { ctx, docId };
+}
+
+test("approve with an edit for a field the draft lacks writes an edited human:approve provenance row", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await catalogAiDraft(sql);
+  const { version } = await approve(ctx, { docId, locale: "de", edits: { price: 12 } });
+  const [head] = await heads(sql, docId, "de").then((r) => r.filter((x) => x.is_head_draft));
+  expect(head).toMatchObject({ version, state: "APPROVED" });
+  expect((head!.data as Record<string, unknown>).price).toBe(12);
+
+  const rows = await sql`select * from content_provenance
+    where doc_id = ${docId} and locale = 'de' and version = ${version} order by field_path`;
+  const priceRows = rows.filter((r) => r.field_path === "price");
+  expect(priceRows).toHaveLength(1);
+  expect(priceRows[0]).toMatchObject({
+    model_id: "human:approve", prompt_version: "", prompt_tokens: 0, completion_tokens: 0, cost_micros: "0",
+    edited: true, approved_by: "reviewer", bulk_id: null,
+  });
+  const titleRows = rows.filter((r) => r.field_path === "title");
+  expect(titleRows).toHaveLength(1);
+  expect(titleRows[0]).toMatchObject({ edited: false });
+
+  const review = await getDraftReview(ctx, { docId, locale: "de" });
+  expect(review.missing).toEqual([]);
+  expect(review.fields.find((f) => f.path === "price")!.edited).toBe(true);
+}));
+
+test("approve edits an AI-drafted field without an extra row", async () => withTestDb(async (sql) => {
+  const { ctx, docId } = await catalogAiDraft(sql);
+  const { version } = await approve(ctx, { docId, locale: "de", edits: { title: "Einführung" } });
+  const rows = await sql`select field_path, edited from content_provenance
+    where doc_id = ${docId} and locale = 'de' and version = ${version}`;
+  expect(rows.map((r) => r.field_path)).toEqual(["title"]);
+  expect(rows[0]).toMatchObject({ edited: true });
 }));

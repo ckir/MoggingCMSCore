@@ -6,9 +6,9 @@ import { upsertGlossary } from "@mogging/ai";
 import { approve, hashValue, migrate, publish, recordAiDraft, saveDraft } from "@mogging/core";
 import type { Sql } from "postgres";
 import { run } from "../src/run.js";
-import { reviewSpec } from "../src/commands/review.js";
+import { missingLines, reviewSpec } from "../src/commands/review.js";
 import { withTestDb } from "./db.js";
-import { aiDraft, coreCtx, md, publishedDoc, testDeps } from "./fixtures.js";
+import { ai, aiDraft, catalogConfig, catalogDoc, coreCtx, md, publishedDoc, testDeps } from "./fixtures.js";
 
 /** A per-test schema with the migrations applied. */
 const withDb = (fn: (sql: Sql) => Promise<void>) =>
@@ -531,6 +531,99 @@ describe("review --approve-clean", () => {
     await withDb(async (sql) => {
       expect((await cli(sql, "review", "--approve-clean", "--collection", "nope")).code).toBe(2);
       expect((await cli(sql, "review", "--approve-clean", "--locale", "xx")).code).toBe(2);
+    });
+  });
+});
+
+describe("a required localized field the AI never drafted", () => {
+  const NOTICE = "! required, not drafted: price; publish refuses this locale until they are supplied";
+
+  async function catalogCli(sql: Sql, ...args: string[]) {
+    const t = testDeps(sql, { loadModule: async () => ({ config: catalogConfig, ai }) });
+    const code = await run(args, t);
+    return { code, out: t.stdout(), err: t.stderr() };
+  }
+
+  const showJson = async (sql: Sql) =>
+    (JSON.parse((await catalogCli(sql, "review", "show", "items/widget", "--locale", "de", "--json")).out) as {
+      data: { version: number; missing: unknown };
+    }).data;
+
+  test("review show lists it in the output and --json gives data.missing", async () => {
+    await withDb(async (sql) => {
+      await catalogDoc(sql);
+      const r = await catalogCli(sql, "review", "show", "items/widget", "--locale", "de");
+      expect(r.out).toContain("! required, not drafted: price (source: 10)");
+      expect((await showJson(sql)).missing).toEqual([{ path: "price", source: 10 }]);
+    });
+  });
+
+  test("approve --edit-file supplies it: no notice, and publish then succeeds", async () => {
+    await withDb(async (sql) => {
+      const docId = await catalogDoc(sql);
+      const v = (await showJson(sql)).version;
+      const file = tempFile("price.json", '{"price":12}');
+      const r = await catalogCli(sql, "review", "approve", "items/widget", "--locale", "de", "--version", String(v), "--edit-file", file);
+      expect(r.err).not.toContain("error:");
+      expect(r.code).toBe(0);
+      expect(r.out).toMatch(/^approved items\/widget de v\d+\n$/);
+      expect(r.out).not.toContain("required, not drafted");
+      await publish({ sql, config: catalogConfig, actor: "test" }, { docId, locale: "de" });
+    });
+  });
+
+  test("approve --edit-file in the text form supplies it from an empty section", async () => {
+    await withDb(async (sql) => {
+      const docId = await catalogDoc(sql);
+      const v = (await showJson(sql)).version;
+      const file = tempFile("price.txt", "=== title ===\nEinleitung\n\n=== price ===\n12\n");
+      const r = await catalogCli(sql, "review", "approve", "items/widget", "--locale", "de", "--version", String(v), "--edit-file", file);
+      expect(r.code).toBe(0);
+      expect(r.out).not.toContain("required, not drafted");
+      await publish({ sql, config: catalogConfig, actor: "test" }, { docId, locale: "de" });
+    });
+  });
+
+  test("approve with no edit approves and then prints the notice for it; --json data stays { version }", async () => {
+    await withDb(async (sql) => {
+      await catalogDoc(sql);
+      const v = (await showJson(sql)).version;
+      const r = await catalogCli(sql, "review", "approve", "items/widget", "--locale", "de", "--version", String(v));
+      expect(r.code).toBe(0);
+      const lines = r.out.split("\n");
+      expect(lines[0]).toMatch(/^approved items\/widget de v\d+$/);
+      expect(lines[1]).toBe(NOTICE);
+    });
+  });
+
+  test("--json keeps data as { version } and carries no notice line", async () => {
+    await withDb(async (sql) => {
+      await catalogDoc(sql);
+      const v = (await showJson(sql)).version;
+      const r = await catalogCli(sql, "review", "approve", "items/widget", "--locale", "de", "--version", String(v), "--json");
+      const json = JSON.parse(r.out) as { ok: boolean; data: unknown };
+      expect(json.ok).toBe(true);
+      expect(json.data).toEqual({ version: expect.any(Number) });
+    });
+  });
+});
+
+describe("missingLines", () => {
+  test("missingLines reports a failed read as one line instead of throwing", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      // Core refuses "shared" with a ValidationError ("Shared drafts have no review view"): a failed read.
+      const lines = await missingLines(coreCtx(sql), docId, "shared");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^! could not check for missing required fields:/);
+      expect(lines[0]).toContain("Shared drafts");
+    });
+  });
+
+  test("missingLines returns nothing for a document without a draft head", async () => {
+    await withDb(async (sql) => {
+      const docId = await publishedDoc(sql);
+      expect(await missingLines(coreCtx(sql), docId, "de")).toEqual([]);
     });
   });
 });

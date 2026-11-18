@@ -204,10 +204,12 @@ const heads = await listDraftHeads(ctx, { collection: "posts", locale: "de", lim
 
 const review = await getDraftReview(ctx, { docId, locale: "de" });
 // per-field: source, previous, previousFrom, draft, warnings, edited, sourceChanged
+// review.missing: ReviewMissing[] = { path, source }, required localized fields the draft lacks
 ```
 
 Both are unguarded reads. `listDraftHeads` supports `state: "DRAFT_AI" | "APPROVED" | "DRAFT_HUMAN"`,
 `limit` 1–200 (default 50), and an opaque `after` cursor (`next` from the previous page).
+`review.missing` lists each required localized field of the collection that the draft lacks (an AI draft never carries a field it cannot translate, such as a number), with the source value; it is `[]` when none is missing and also applies to a source-locale draft. A reviewer supplies such a field with an `approve` edit (which records a `human:approve` provenance row) or `saveDraft`.
 `getDraftReview` throws `NotFoundError` if there is no draft head and refuses `locale: "shared"`.
 
 ## 3. Rendering rich text

@@ -35,7 +35,7 @@ export type { ResolveInput, ResolvedDocument, Snapshot, HeadPair, DocumentRecord
 export { listPublishedVersions, listLocaleRows } from "./read/versions.js";
 export type { PublishedVersion } from "./read/versions.js";
 export { listDraftHeads, getDraftReview } from "./read/review.js";
-export type { DraftHead, DraftReview, ReviewField } from "./read/review.js";
+export type { DraftHead, DraftReview, ReviewField, ReviewMissing } from "./read/review.js";
 
 export { getSyncState, trackFields } from "./sync/state.js";
 export type { SyncStateKind, SyncStateRow, SyncStateInput, TrackFieldsInput } from "./sync/state.js";

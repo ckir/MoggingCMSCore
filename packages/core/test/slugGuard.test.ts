@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import postgres from "postgres";
 import type { Sql } from "postgres";
 import {
   ValidationError, addToRelease, createDocument, createRelease, defineCollection, defineConfig, deleteDocument,
@@ -234,7 +235,7 @@ test("publishRelease takes every shared collection's slug lock up front, in sort
 
     // advisory key of hashtext() as pg_locks shows it: classid = high 32 bits, objid = low 32 bits, objsubid 1
     const keyOf = async (name: string) => {
-      const [{ h }] = (await sql`select hashtext('mogging_slug:' || ${name}::text)::bigint as h`) as unknown as [{ h: string }];
+      const [{ h }] = (await sql`select hashtext('mogging_slug:' || 'documents'::regclass::oid::text || ':' || ${name}::text)::bigint as h`) as unknown as [{ h: string }];
       return h;
     };
     const lockState = async (pid: number, name: string): Promise<boolean | undefined> => {
@@ -251,7 +252,7 @@ test("publishRelease takes every shared collection's slug lock up front, in sort
     let held!: () => void;
     const holding = new Promise<void>((resolve) => { held = resolve; });
     const holderTx = holder.begin(async (tx) => {
-      await tx`select pg_advisory_xact_lock(hashtext('mogging_slug:' || ${"B"}::text))`;
+      await tx`select pg_advisory_xact_lock(hashtext('mogging_slug:' || 'documents'::regclass::oid::text || ':' || ${"B"}::text))`;
       held();
       await gate;
     });
@@ -339,4 +340,125 @@ test("getDocument by slug uses the slug index condition", async () => withTestDb
     expect(found?.id).toBe(s7);
     expectSlugIndexUsed(before, after);
   });
+}));
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** "blocked" while `p` is still pending after `ms`, else "done". */
+const settled = (p: Promise<unknown>, ms: number) =>
+  Promise.race([p.then(() => "done" as const), sleep(ms).then(() => "blocked" as const)]);
+const LOCK = (name: string) =>
+  `select pg_advisory_xact_lock(hashtext('mogging_slug:' || 'documents'::regclass::oid::text || ':' || '${name}'))`;
+/** Holds the slug lock of `name` on `conn` until `release()`; resolves once it is held. */
+async function hold(
+  conn: Sql, name: string, lockSql: string = LOCK(name),
+): Promise<{ release: () => void; done: Promise<unknown> }> {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => { release = r; });
+  let held!: () => void;
+  const holding = new Promise<void>((r) => { held = r; });
+  const done = conn.begin(async (tx) => { await tx.unsafe(lockSql); held(); await gate; });
+  await holding;
+  return { release, done };
+}
+
+/**
+ * Whether backend `pid` holds (`true`) or waits for (`false`) the slug lock of `name`, keyed by the table `sql`
+ * resolves `documents` to; `undefined` when it has no such lock.
+ */
+async function lockWaiting(sql: Sql, pid: number, name: string): Promise<boolean | undefined> {
+  const [{ h }] = (await sql`select hashtext('mogging_slug:' || 'documents'::regclass::oid::text || ':' || ${name}::text)::bigint as h`) as unknown as [{ h: string }];
+  const [row] = await sql`select granted from pg_locks
+    where pid = ${pid} and locktype = 'advisory' and objsubid = 1
+      and classid::text::bigint = ((${h}::bigint >> 32) & 4294967295)
+      and objid::text::bigint = (${h}::bigint & 4294967295)`;
+  return row === undefined ? undefined : (row.granted as boolean);
+}
+
+test("the slug lock key follows the table a search_path resolves, not current_schema()", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const [{ s }] = (await sql`select current_schema() as s`) as unknown as [{ s: string }];
+  const empty = `${s}_e`;
+  await sql.unsafe(`create schema ${empty}`);
+  // current_schema() is the empty schema here, but `documents` resolves to the engine's table in `s`
+  const holderConn = postgres(process.env.DATABASE_URL!, {
+    max: 1, onnotice: () => {}, connection: { search_path: `${empty},${s}` },
+  });
+  const saver = await extraConnection(sql);
+  let release: () => void = () => {};
+  try {
+    const docOfA = await newDoc(ctx, "A");
+    const held = await hold(holderConn, "A");
+    release = held.release;
+    const [{ pid }] = (await saver`select pg_backend_pid() as pid`) as unknown as [{ pid: number }];
+    const saving = saveSlug(ctxFor(saver, "saver"), docOfA, "x");
+    let state: boolean | undefined;
+    for (let i = 0; i < 100; i++) {
+      state = await lockWaiting(sql, pid, "A");
+      if (state === false) break;
+      await sleep(50);
+    }
+    expect(state).toBe(false);
+    held.release();
+    await held.done;
+    await saving;
+  } finally {
+    release();
+    await holderConn.end();
+    await saver.end();
+    await sql.unsafe(`drop schema if exists ${empty} cascade`);
+  }
+}));
+
+test("the engine no longer takes the old schema-agnostic key", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const extra = await extraConnection(sql);
+  let release: () => void = () => {};
+  try {
+    const docOfA = await newDoc(ctx, "A");
+    // the pre-fix key, which did not embed the documents table oid
+    const held = await hold(extra, "A", `select pg_advisory_xact_lock(hashtext('mogging_slug:' || 'A'))`);
+    release = held.release;
+    expect(await settled(saveSlug(ctx, docOfA, "x"), 10000)).toBe("done");
+    held.release();
+    await held.done;
+  } finally {
+    release();
+    await extra.end();
+  }
+}));
+
+test("a collection with no slug field takes no slug lock", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const extra = await extraConnection(sql);
+  let release: () => void = () => {};
+  try {
+    const plainDoc = await newDoc(ctx, "plain");
+    const held = await hold(extra, "plain");
+    release = held.release;
+    const saving = saveDraft(ctx, { docId: plainDoc, locale: "shared", data: { code: "c" } });
+    expect(await settled(saving, 10000)).toBe("done");
+    held.release();
+    await held.done;
+  } finally {
+    release();
+    await extra.end();
+  }
+}));
+
+test("a collection the config does not declare takes no slug lock", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
+  const extra = await extraConnection(sql);
+  let release: () => void = () => {};
+  try {
+    await rawDraft(sql, uid(9, 1), "gone", "g");
+    const held = await hold(extra, "gone");
+    release = held.release;
+    const publishing = publish(ctx, { docId: uid(9, 1), locale: "shared" });
+    expect(await settled(publishing, 10000)).toBe("done");
+    held.release();
+    await held.done;
+  } finally {
+    release();
+    await extra.end();
+  }
 }));

@@ -85,7 +85,9 @@ function previousLabel(review: DraftReview, field: ReviewField): string {
 /**
  * The review of one draft as lines: per field its source text, then the previous text and the draft in two columns
  * of `(width - 3) / 2` characters around a `|` gutter, then the source-changed flag, the warnings and the glossary
- * entries whose term occurs in the source text.
+ * entries whose term occurs in the source text. After the fields, each required localized field the draft lacks
+ * (`review.missing`) gets a blank line and `! required, not drafted: <path> (source: <text>)`, the source text on one
+ * line (`(none)` when the source has no value).
  */
 export function renderDraftReview(
   review: DraftReview,
@@ -118,5 +120,22 @@ export function renderDraftReview(
       lines.push(`glossary: ${escapeControl(entry.term)} -> ${escapeControl(shown)}`);
     }
   }
+  for (const { path, source } of review.missing) {
+    const shown = valueText(source, kindOf(kinds, path)).replace(/\s+/g, " ").trim();
+    lines.push("", `! required, not drafted: ${escapeControl(path)} (source: ${escapeControl(shown)})`);
+  }
   return lines;
+}
+
+/**
+ * The notice printed after an approval that left required localized fields undrafted: `[]` when `missing` is empty,
+ * else one line naming every path.
+ *
+ * @param missing - The paths still missing (`DraftReview.missing`).
+ * @returns The notice lines.
+ */
+export function missingNotice(missing: ReadonlyArray<{ path: string }>): string[] {
+  if (missing.length === 0) return [];
+  const paths = missing.map((m) => escapeControl(m.path)).join(", ");
+  return [`! required, not drafted: ${paths}; publish refuses this locale until they are supplied`];
 }

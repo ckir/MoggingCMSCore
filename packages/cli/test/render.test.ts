@@ -3,7 +3,7 @@ import type { GlossaryEntry } from "@mogging/ai";
 import type { DraftReview, ReviewField } from "@mogging/core";
 import { markdownToTree } from "@mogging/markdown";
 import { escapeControl } from "../src/output.js";
-import { renderDraftReview, valueText } from "../src/render.js";
+import { missingNotice, renderDraftReview, valueText } from "../src/render.js";
 
 const field = (path: string, over: Partial<ReviewField> = {}): ReviewField => ({
   path, source: undefined, previous: undefined, previousFrom: null, draft: undefined, warnings: [], edited: false,
@@ -12,7 +12,7 @@ const field = (path: string, over: Partial<ReviewField> = {}): ReviewField => ({
 
 const review = (fields: ReviewField[], over: Partial<DraftReview> = {}): DraftReview => ({
   docId: "00000000-0000-0000-0000-000000000001", collection: "docs", slug: "intro", locale: "de", version: 3,
-  state: "DRAFT_AI", sourceLocale: "en", sourceVersion: 1, supersededVersion: null, fields, ...over,
+  state: "DRAFT_AI", sourceLocale: "en", sourceVersion: 1, supersededVersion: null, fields, missing: [], ...over,
 });
 
 const entry = (term: string, translation: string | null, doNotTranslate = false): GlossaryEntry => ({
@@ -182,5 +182,38 @@ describe("escapeControl", () => {
     expect(escapeControl("\u007f")).toBe("\\x7f");
     expect(escapeControl("\u0080\u0085\u009f")).toBe("\\u0080\\u0085\\u009f");
     expect(escapeControl("Einführung \u00a0 ünï \u00a0 日本")).toBe("Einführung \u00a0 ünï \u00a0 日本");
+  });
+});
+
+describe("missing required fields", () => {
+  test("renderDraftReview prints one line per missing path with its source text, (none) when absent", () => {
+    const lines = renderDraftReview(
+      review([field("title", { draft: "Hallo" })], { missing: [{ path: "price", source: 10 }, { path: "sku", source: undefined }] }),
+      { title: "text", price: "number" },
+      plain,
+    );
+    expect(lines).toContain("! required, not drafted: price (source: 10)");
+    expect(lines).toContain("! required, not drafted: sku (source: (none))");
+    expect(lines.slice(-4)).toEqual(["", "! required, not drafted: price (source: 10)", "", "! required, not drafted: sku (source: (none))"]);
+  });
+
+  test("a multi-line or control-character source is collapsed to one escaped line", () => {
+    const lines = renderDraftReview(
+      review([], { missing: [{ path: "note", source: "a\n\n  b\u001b[8mc" }] }),
+      { note: "text" },
+      plain,
+    );
+    expect(lines.at(-1)).toBe("! required, not drafted: note (source: a b\\x1b[8mc)");
+  });
+
+  test("a review with nothing missing renders no required line", () => {
+    expect(renderDraftReview(review([field("title", { draft: "x" })]), { title: "text" }, plain).join("\n")).not.toContain("required");
+  });
+
+  test("missingNotice is [] for nothing missing, else one line naming every path", () => {
+    expect(missingNotice([])).toEqual([]);
+    expect(missingNotice([{ path: "price" }, { path: "sku" }])).toEqual([
+      "! required, not drafted: price, sku; publish refuses this locale until they are supplied",
+    ]);
   });
 });

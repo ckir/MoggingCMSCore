@@ -115,8 +115,10 @@ after the slash, and splits at the first `/`, so a nested slug (`docs/guide/setu
 
 ### The edit file
 
-`review approve --edit-file <path>` replaces the text of fields before approving. Only `text` and `richText`
-fields can be edited, and only fields whose text differs from the draft count as edits.
+`review approve --edit-file <path>` replaces the text of fields before approving. A field the draft already has can be
+edited only if it is `text` or `richText`, and only fields whose text differs from the draft count as edits. A
+`required` localized field the draft lacks (listed by `review show` as `! required, not drafted`, below) can be
+supplied in any kind.
 
 A file with any other extension is the text form: one section per field, each starting with the line
 `=== <field> ===`, followed by the field's text (a `richText` field as Markdown, or MDX if the draft is MDX):
@@ -133,13 +135,22 @@ Text before the first header, no header at all, a section repeated, or a header 
 error. Any other `=== ... ===` line is ordinary text. A value that itself contains a line that looks like a section
 header of the draft cannot be written to a text file: use the JSON form.
 
-A path ending in `.json` is the JSON form, an object of field to string:
+A localized field that is `required` but that the AI never drafted (for example a `number`) is listed by
+`review show` as `! required, not drafted: <field> (source: <text>)` and appears in the text file as a last, empty
+section `=== <field> ===`. Supply it there: an empty or whitespace-only section is no change, a `text` field takes the
+body as it is, a `richText` field takes it as Markdown, and any other kind takes a JSON value (`12`, `false`, `["a"]`;
+a number or a boolean is JSON, so write it bare). An empty string needs the JSON form (`{ "<field>": "" }`), and `null`
+is refused. `review approve` and the interactive review print a `! required, not drafted: ...` notice after approving
+a draft that still lacks one, because `publish` refuses that locale until it is supplied.
+
+A path ending in `.json` is the JSON form, an object of field to value. The value is a string for a `text` or
+`richText` field; a missing field of another kind takes any JSON value except `null`:
 
 ```json
 { "title": "Einleitung", "body": "Hallo zusammen, willkommen." }
 ```
 
-Unknown or non-editable fields and non-string values are errors.
+Unknown or non-editable fields, a non-string value for a `text` or `richText` field, and `null` are errors.
 
 ## Output and exit codes
 
@@ -180,7 +191,7 @@ With `--json` stdout is exactly one JSON document, with these members:
 `data` for the commands: `init` `{ configCreated, applied }` (with `--starlight` also `starlight`: `{ source, targets, sourceDir, docsDir, pasteBlock }`, or `null` when a config already existed); `migrate` `{ applied }`; `import` and `export` the
 importer's or exporter's report; `status` `{ rows }`; `compile` `{ enqueue, worker, pendingJobs }`; `worker` the final
 worker report; `jobs` `{ jobs, budgets }` (with `--retry` or `--cancel`, the result of that call); `provenance` the row
-array; `review list` `{ items, next: null }`; `review show` the draft review; `review approve` and `review reject`
+array; `review list` `{ items, next: null }`; `review show` the draft review (its `missing` member lists the required fields the draft lacks as `[{ path, source }]`); `review approve` and `review reject`
 `{ version }`; `review --approve-clean` `{ approved, skipped }`; `publish`, `unpublish`, `release add` and `release remove`
 `{ items: [{ target, locale, outcome, version?, message? }] }`; `release create` `{ id }`, the new release's id; `release list` the
 array of releases; `release publish` and `publish --release` `null`, except a stale release, which is exit `1` with

@@ -11,7 +11,7 @@ const field = (path: string, draft: unknown, over: Partial<ReviewField> = {}): R
 
 const review = (fields: ReviewField[]): DraftReview => ({
   docId: "00000000-0000-0000-0000-000000000001", collection: "docs", slug: "intro", locale: "de", version: 3,
-  state: "DRAFT_AI", sourceLocale: "en", sourceVersion: 1, supersededVersion: null, fields,
+  state: "DRAFT_AI", sourceLocale: "en", sourceVersion: 1, supersededVersion: null, fields, missing: [],
 });
 
 const kinds = { title: "text", body: "richText", count: "number", tags: "list" };
@@ -149,5 +149,88 @@ describe("applyEdits", () => {
     expect(after.fields.find((f) => f.path === "count")).toMatchObject({ draft: 3, edited: false });
     expect(before.fields.find((f) => f.path === "title")).toMatchObject({ draft: "Einleitung", edited: false });
     expect(after).not.toBe(before);
+  });
+});
+
+describe("missing required fields", () => {
+  const missingKinds = { title: "text", price: "number", note: "richText" };
+  const withMissing = (missing: DraftReview["missing"], fields: ReviewField[] = [field("body", markdownToTree("x"))]) => ({
+    ...review(fields),
+    missing,
+  });
+  const noPrice = () => withMissing([{ path: "price", source: 10 }]);
+  /** The serialized file of `noPrice()` with `body` written after the `=== price ===` header. */
+  const priceFile = (body: string) => `${serializeEditFile(noPrice(), missingKinds)}${body}\n`;
+
+  test("serializeEditFile ends with an empty section per missing path, and an untouched file is no edit", () => {
+    const file = serializeEditFile(noPrice(), missingKinds);
+    expect(file.endsWith("=== price ===\n")).toBe(true);
+    expect(parseEditFile(file, noPrice(), missingKinds)).toEqual({});
+  });
+
+  test("the missing sections follow the editable ones in review.missing order and are never prefilled", () => {
+    const r = withMissing([{ path: "price", source: 10 }, { path: "sku", source: "A-1" }], [field("title", "Einleitung")]);
+    expect(serializeEditFile(r, missingKinds)).toBe("=== title ===\nEinleitung\n\n=== price ===\n\n=== sku ===\n");
+  });
+
+  test("a non-text missing path is JSON: 12, 0 and false are values, anything unparseable is a UsageError", () => {
+    expect(parseEditFile(priceFile("12"), noPrice(), missingKinds)).toEqual({ price: 12 });
+    expect(parseEditFile(priceFile("0"), noPrice(), missingKinds)).toEqual({ price: 0 });
+    expect(parseEditFile(priceFile("false"), noPrice(), missingKinds)).toEqual({ price: false });
+    expect(() => parseEditFile(priceFile("abc"), noPrice(), missingKinds)).toThrow(UsageError);
+    expect(() => parseEditFile(priceFile("abc"), noPrice(), missingKinds)).toThrow(/field price.*JSON/);
+  });
+
+  test("a null body for a missing path is refused, as in the JSON form", () => {
+    expect(() => parseEditFile(priceFile("null"), noPrice(), missingKinds)).toThrow(/must not be null/);
+  });
+
+  test("a whitespace-only body is no edit", () => {
+    expect(parseEditFile(priceFile("  "), noPrice(), missingKinds)).toEqual({});
+  });
+
+  test("a missing text path takes the body as a string, a missing richText path as a Markdown tree", () => {
+    const title = withMissing([{ path: "title", source: "Intro" }]);
+    expect(parseEditFile(`${serializeEditFile(title, missingKinds)}Hallo\n`, title, missingKinds)).toEqual({ title: "Hallo" });
+    const note = withMissing([{ path: "note", source: "Hi" }]);
+    expect(parseEditFile(`${serializeEditFile(note, missingKinds)}Hi\n`, note, missingKinds)).toEqual({
+      note: markdownToTree("Hi", { mode: "md" }),
+    });
+  });
+
+  test("a missing header appearing twice is a UsageError", () => {
+    expect(() => parseEditFile(`${priceFile("1")}\n=== price ===\n2\n`, noPrice(), missingKinds)).toThrow(/more than once/);
+  });
+
+  test("JSON form: a number, 0 and false are values, an empty string is a value for a text path", () => {
+    expect(parseJsonEditFile('{"price":12}', noPrice(), missingKinds)).toEqual({ price: 12 });
+    expect(parseJsonEditFile('{"price":0}', noPrice(), missingKinds)).toEqual({ price: 0 });
+    expect(parseJsonEditFile('{"price":false}', noPrice(), missingKinds)).toEqual({ price: false });
+    const title = withMissing([{ path: "title", source: "Intro" }]);
+    expect(parseJsonEditFile('{"title":""}', title, missingKinds)).toEqual({ title: "" });
+  });
+
+  test("JSON form: null, a non-string for a text path, or a path that is neither missing nor editable is a UsageError", () => {
+    const title = withMissing([{ path: "title", source: "Intro" }]);
+    expect(() => parseJsonEditFile('{"price":null}', noPrice(), missingKinds)).toThrow(UsageError);
+    expect(() => parseJsonEditFile('{"title":5}', title, missingKinds)).toThrow(UsageError);
+    expect(() => parseJsonEditFile('{"price":12}', withMissing([]), missingKinds)).toThrow(/not an editable field/);
+  });
+
+  test("a header lookalike for a missing path inside a value is refused when the file is written", () => {
+    const r = withMissing([{ path: "price", source: 10 }], [field("title", "a\n=== price ===\nb")]);
+    expect(() => serializeEditFile(r, missingKinds)).toThrow(UsageError);
+  });
+
+  test("applyEdits moves a supplied missing path into fields (edited, source kept) and keeps fields sorted", () => {
+    const before = withMissing([{ path: "price", source: 10 }, { path: "sku", source: "A-1" }], [field("body", "x"), field("title", "T")]);
+    const after = applyEdits(before, { price: 12 });
+    expect(after.missing).toEqual([{ path: "sku", source: "A-1" }]);
+    expect(after.fields.map((f) => f.path)).toEqual(["body", "price", "title"]);
+    expect(after.fields.find((f) => f.path === "price")).toEqual({
+      path: "price", source: 10, previous: undefined, previousFrom: null, draft: 12, warnings: [], edited: true,
+      sourceChanged: false,
+    });
+    expect(before.missing).toHaveLength(2);
   });
 });

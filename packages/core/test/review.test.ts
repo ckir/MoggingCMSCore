@@ -5,7 +5,7 @@ import {
   migrate, publish, recordAiDraft, rejectDraft, saveDraft,
 } from "../src/index.js";
 import type { Ctx } from "../src/index.js";
-import { md, ctxFor } from "./fixtures.js";
+import { md, ctxFor, config, catalogCtx } from "./fixtures.js";
 import { withTestDb } from "./db.js";
 
 const W = 'glossary: "cat" expected "gata"';
@@ -176,4 +176,50 @@ test("getDraftReview throws NotFoundError with no draft head, an unknown documen
   await expect(getDraftReview(ctx, { docId, locale: "shared" })).rejects.toThrow(ValidationError);
   await expect(getDraftReview(ctx, { docId, locale: "fr" })).rejects.toThrow(ValidationError);
   expect((await getDocument(ctx, { collection: "posts", docId }))!.locales.de?.draft ?? null).toBeNull();
+}));
+
+/** A catalog document whose source (en) is published with title and price, and a de AI draft carrying `fields`. */
+async function catalogDraft(ctx: Ctx, fields: Record<string, unknown>): Promise<string> {
+  const { id: docId } = await createDocument(ctx, { collection: "items" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Intro", price: 10 } });
+  await publish(ctx, { docId, locale: "en" });
+  await recordAiDraft(ctx, {
+    docId, locale: "de", fields, sourceVersion: 1, sourceHashes: { title: hashValue("Intro") },
+    provenance: Object.keys(fields).map((k) => prov(k)),
+  });
+  return docId;
+}
+
+test("getDraftReview lists a required localized field the draft lacks, with its source value", async () => withTestDb(async (sql: Sql) => {
+  await migrate(sql);
+  const ctx = catalogCtx(sql, "reviewer");
+  const docId = await catalogDraft(ctx, { title: "Einleitung" });
+  const review = await getDraftReview(ctx, { docId, locale: "de" });
+  expect(review.missing).toEqual([{ path: "price", source: 10 }]);
+  expect(review.fields.map((f) => f.path)).toEqual(["title"]);
+}));
+
+test("missing is empty once the field is in the draft", async () => withTestDb(async (sql: Sql) => {
+  await migrate(sql);
+  const ctx = catalogCtx(sql, "reviewer");
+  const docId = await catalogDraft(ctx, { title: "Einleitung", price: 12 });
+  const review = await getDraftReview(ctx, { docId, locale: "de" });
+  expect(review.missing).toEqual([]);
+}));
+
+test("a source-locale draft head lists its missing required field, source undefined", async () => withTestDb(async (sql: Sql) => {
+  await migrate(sql);
+  const ctx = catalogCtx(sql, "reviewer");
+  const { id: docId } = await createDocument(ctx, { collection: "items" });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Intro" } });
+  const review = await getDraftReview(ctx, { docId, locale: "en" });
+  expect(review.missing).toEqual([{ path: "price", source: undefined }]);
+}));
+
+test("a collection the config no longer declares has no missing list", async () => withTestDb(async (sql: Sql) => {
+  await migrate(sql);
+  const ctx = catalogCtx(sql, "reviewer");
+  const docId = await catalogDraft(ctx, { title: "Einleitung" });
+  const review = await getDraftReview({ ...ctx, config }, { docId, locale: "de" });
+  expect(review.missing).toEqual([]);
 }));

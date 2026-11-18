@@ -95,7 +95,7 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
     // Shared scope only (the slug field is never localized): serialize writers of this collection's slugs, after
     // the documents row lock, then refuse a slug another live document holds (spec 8).
     if (isShared) {
-      await lockSlugs(tx, [collection.name]);
+      await lockSlugs(tx, ctx, [collection.name]);
       await assertSlugFree(tx, ctx, { collection: collection.name, docId: input.docId, data });
     }
 
@@ -116,12 +116,17 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
     const version = (heads!.max_version as number) + 1;
 
     // Base head for the carry-forward below, read BEFORE the draft head is cleared: this locale's draft head,
-    // else its published head, else its latest row by version in any state (e.g. after unpublish), else none.
-    // A non-head DRAFT_AI row (rejected, or superseded) is never the base, as in recordAiDraft.
+    // else the newest row that is not a DRAFT_AI by version (a draft head wins), so a published and a
+    // never-published locale behave alike (spec 8.1), else none. A non-head DRAFT_AI row (rejected, or
+    // superseded) is never the base, and while a published head exists neither is a non-head PUBLISHED row (a
+    // superseded row or a republish copy), as in recordAiDraft.
     const base = isShared || locale === config.locales.source ? undefined : (await tx`
       select data, source_hashes from document_localized
       where doc_id = ${input.docId} and locale = ${locale} and (is_head_draft or state <> 'DRAFT_AI')
-      order by is_head_draft desc, is_head_published desc, version desc limit 1`)[0];
+        and (is_head_published or state <> 'PUBLISHED' or not exists (
+          select 1 from document_localized p
+          where p.doc_id = ${input.docId} and p.locale = ${locale} and p.is_head_published))
+      order by is_head_draft desc, version desc limit 1`)[0];
 
     await tx`update ${table} set is_head_draft = false
       where doc_id = ${input.docId} ${scope} and is_head_draft`;
@@ -134,7 +139,8 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
 
     // Hash vector (spec 6.4): source locale hashes its own values. A target records the hash of the source
     // locale's current published value for each CHANGED or NEW field (none if the source has no value); a
-    // field whose value is unchanged against this locale's base head (draft head, else published head)
+    // field whose value is unchanged against this locale's base (the draft head, else the newest non-AI row,
+    // ignoring a superseded or republish-copy PUBLISHED row while a published head exists: the base query above)
     // carries the base's stored hash forward, so a re-save never asserts sync (only trackFields does).
     const sourceHashes: Record<string, string> = {};
     if (locale === config.locales.source) {

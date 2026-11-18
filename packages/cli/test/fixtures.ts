@@ -9,7 +9,7 @@ import type { LanguageModel } from "ai";
 import { defineAiConfig } from "@mogging/ai";
 import type { AiConfigInput, AiCtx } from "@mogging/ai";
 import {
-  createDocument, defineCollection, defineConfig, hashValue, publish, recordAiDraft, richText, saveDraft, slug, text,
+  createDocument, defineCollection, defineConfig, hashValue, number, publish, recordAiDraft, richText, saveDraft, slug, text,
 } from "@mogging/core";
 import type { Ctx } from "@mogging/core";
 import type { Deps, Io } from "../src/types.js";
@@ -29,6 +29,19 @@ export const docs = defineCollection("docs", {
 export const config = defineConfig({
   collections: [docs],
   locales: { source: "en", chains: { de: ["en"], fr: ["en"] } },
+});
+
+/** `items`: a required localized number the AI never drafts (copy of `catalogConfig` in packages/core/test/fixtures.ts). */
+export const catalogConfig = defineConfig({
+  collections: [
+    defineCollection("items", {
+      slug: slug(),
+      title: text({ localized: true }),
+      body: richText({ localized: true, body: true }),
+      price: number({ localized: true, required: true }),
+    }),
+  ],
+  locales: { source: "en", chains: { de: ["en"] } },
 });
 
 export const ai = defineAiConfig({
@@ -90,6 +103,25 @@ export async function aiDraft(sql: Sql, docId: string, locale: string, title: st
   });
   if (!("version" in result)) throw new Error(`setup: the AI draft was cancelled (${result.cancelled})`);
   return result.version;
+}
+
+/**
+ * An `items/<slug>` document of `catalogConfig` whose shared and `en` heads are published (en v1: title "Intro",
+ * price 10) and whose `de` head is a `DRAFT_AI` carrying only the title; returns the document id.
+ */
+export async function catalogDoc(sql: Sql, slugText = "widget"): Promise<string> {
+  const ctx: Ctx = { sql, config: structuredClone(catalogConfig), actor: "test" };
+  const { id: docId } = await createDocument(ctx, { collection: "items" });
+  await saveDraft(ctx, { docId, locale: "shared", data: { slug: slugText } });
+  await saveDraft(ctx, { docId, locale: "en", data: { title: "Intro", price: 10 } });
+  await publish(ctx, { docId, locale: "shared" });
+  await publish(ctx, { docId, locale: "en" });
+  const result = await recordAiDraft(ctx, {
+    docId, locale: "de", fields: { title: "Einleitung" }, sourceVersion: 1,
+    sourceHashes: { title: hashValue("Intro") }, provenance: [],
+  });
+  if (!("version" in result)) throw new Error(`setup: the AI draft was cancelled (${result.cancelled})`);
+  return docId;
 }
 
 export type TestDeps = Deps & {

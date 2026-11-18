@@ -91,7 +91,7 @@ Every field builder accepts `FieldOptions`:
 | `localized` | `false` | `true` stores the field in a per-locale snapshot; `false` stores it in the document's shared snapshot. |
 | `fallback` | none | A per-field override: an ordered array of locale tags, or `"none"` to disable fallback. Only meaningful on localized fields. |
 | `body` | `false` | Marks the collection's rich-text body. Exactly one per collection; `richText` only. |
-| `required` | `false` | Enforced at publish: `publish` and `publishRelease` refuse a head that lacks a required field of its scope (`ValidationError`). A key holding an empty value counts as present. Drafts may be incomplete. Top-level fields only. |
+| `required` | `false` | Enforced at publish: `publish` and `publishRelease` refuse a head that lacks a required field of its scope (`ValidationError`). A key holding an empty value counts as present. Drafts may be incomplete: the draft review lists a required localized field a draft lacks (`DraftReview.missing`), and an AI draft never carries a field it cannot translate, so a reviewer supplies it with an `approve` edit or `saveDraft`. Top-level fields only. |
 
 ### 1.3 Relationships
 
@@ -359,8 +359,10 @@ the "human takeover" path.
   job was based on.
 - It cancels with `DRAFT_HUMAN` if the current draft head is a human draft. It never overwrites
   human work.
-- It merges the translated fields into the base snapshot (draft head, else published head, else the
-  latest non-AI row), carries hashes and per-field warning texts, clears the old draft head, and
+- It merges the translated fields into the base snapshot (the draft head, else the
+  newest row that is not a `DRAFT_AI`; while a published head exists a superseded or republish-copy
+  `PUBLISHED` row is ignored, so the base is the live published head or a newer `APPROVED` row, whichever
+  is newer), carries hashes and per-field warning texts, clears the old draft head, and
   inserts a `DRAFT_AI` head.
 - It writes one `content_provenance` row per translated field.
 
@@ -380,14 +382,19 @@ the "human takeover" path.
   token/cost columns zeroed; the copy keeps warnings, `superseded_version`, `call_id`, `job_id`,
   `model_id` and `prompt_version`, while `edited` / `discarded` / `discard_reason`, the acknowledged
   warnings and `bulk_id` describe the approval call. A `human:approve` marker row is added when an AI
-  version has no provenance rows but carries warnings.
+  version has no provenance rows but carries warnings. A further `human:approve` row (`edited` true, zero tokens
+  and cost) is added for each reviewer-edited field that has no AI provenance row.
 - `approveClean` scans every warning-free `DRAFT_AI` head in scope and approves each under one
   generated `bulkId`. A head that changed between scan and lock is skipped, not fatal. It does not
   approve warning-carrying drafts; there is no "approve everything" operation.
 
 `rejectDraft(ctx, { docId, locale, reason?, expectedVersion? })` clears a `DRAFT_AI` draft head
 without deleting the row, records a `human:reject` provenance row, and leaves the pair stale so a
-later compile can regenerate it. It is not licence-guarded.
+later compile can regenerate it. The next draft after a reject starts from the draft head, else the newest
+row that is not a `DRAFT_AI`, ignoring a superseded or republish-copy `PUBLISHED` row while a published head exists
+(so the live published head, or a newer `APPROVED` row left by a rejected AI draft, whichever is newer), never from a
+rejected AI row. It is not
+licence-guarded.
 
 ### 3.5 Publishing, unpublishing and time travel
 
@@ -399,7 +406,8 @@ later compile can regenerate it. It is not licence-guarded.
   or a historical `PUBLISHED` row that is not the current published head (a **republish**). Any
   other row is refused.
 - A target that lacks a required field of its scope is refused with `ValidationError`, for a draft head
-  and for a republish alike.
+  and for a republish alike. For a target locale the refusal also names the remedy (supply the field with an `approve`
+  edit or `saveDraft`).
 - It first clears the old published head (`is_head_published = false`, `unpublished_at`,
   `unpublished_by`) because the partial unique index permits only one.
 - For a draft head, publishing **flips** the row: `state = PUBLISHED`, `is_head_published = true`,
