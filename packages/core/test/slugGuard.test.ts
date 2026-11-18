@@ -349,12 +349,14 @@ const settled = (p: Promise<unknown>, ms: number) =>
 const LOCK = (name: string) =>
   `select pg_advisory_xact_lock(hashtext('mogging_slug:' || 'documents'::regclass::oid::text || ':' || '${name}'))`;
 /** Holds the slug lock of `name` on `conn` until `release()`; resolves once it is held. */
-async function hold(conn: Sql, name: string): Promise<{ release: () => void; done: Promise<unknown> }> {
+async function hold(
+  conn: Sql, name: string, lockSql: string = LOCK(name),
+): Promise<{ release: () => void; done: Promise<unknown> }> {
   let release: () => void = () => {};
   const gate = new Promise<void>((r) => { release = r; });
   let held!: () => void;
   const holding = new Promise<void>((r) => { held = r; });
-  const done = conn.begin(async (tx) => { await tx.unsafe(LOCK(name)); held(); await gate; });
+  const done = conn.begin(async (tx) => { await tx.unsafe(lockSql); held(); await gate; });
   await holding;
   return { release, done };
 }
@@ -407,29 +409,21 @@ test("the slug lock key follows the table a search_path resolves, not current_sc
   }
 }));
 
-test("engines in different schemas do not wait on each other", async () => withTestDb(async (sql) => {
-  await setup(sql);
-  const [{ s }] = (await sql`select current_schema() as s`) as unknown as [{ s: string }];
-  const otherSchema = `${s}_o`;
-  await sql.unsafe(`create schema ${otherSchema}`);
-  const otherConn = postgres(process.env.DATABASE_URL!, {
-    max: 1, onnotice: () => {}, connection: { search_path: otherSchema },
-  });
+test("the engine no longer takes the old schema-agnostic key", async () => withTestDb(async (sql) => {
+  const ctx = await setup(sql);
   const extra = await extraConnection(sql);
   let release: () => void = () => {};
   try {
-    const otherCtx = await setup(otherConn);
-    const otherDoc = await newDoc(otherCtx, "A");
-    const held = await hold(extra, "A");
+    const docOfA = await newDoc(ctx, "A");
+    // the pre-fix key, which did not embed the documents table oid
+    const held = await hold(extra, "A", `select pg_advisory_xact_lock(hashtext('mogging_slug:' || 'A'))`);
     release = held.release;
-    expect(await settled(saveSlug(otherCtx, otherDoc, "x"), 10000)).toBe("done");
+    expect(await settled(saveSlug(ctx, docOfA, "x"), 10000)).toBe("done");
     held.release();
     await held.done;
   } finally {
     release();
-    await otherConn.end();
     await extra.end();
-    await sql.unsafe(`drop schema if exists ${otherSchema} cascade`);
   }
 }));
 
