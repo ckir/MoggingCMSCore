@@ -1,6 +1,23 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { expect, test } from "vitest";
 import { migrate } from "../src/migrate.js";
 import { withTestDb } from "./db.js";
+
+// Migration 0001 is FROZEN (v0.1 ship step 3, 2026-11-18). Any in-place edit fails this test; a schema change is a new
+// migration (0002_*.sql). Line endings are normalized so a CRLF checkout of identical content passes (`.gitattributes`
+// also forces LF for *.sql). The history gate scripts/check-0001-frozen.mjs closes the loophole of updating this hash in
+// the same commit as the edit. Never "fix" a failure here by changing the hash: add 0002 instead.
+const FROZEN_0001_SHA256 = "a77665b74dd46a6663ca87f96bff3eebd85ba5daae02d655b9db0d1c921fd338";
+
+test("migration 0001 is frozen: its content never changes, schema changes go in a new migration", async () => {
+  const body = (await readFile(new URL("../migrations/0001_engine.sql", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
+  const actual = createHash("sha256").update(body).digest("hex");
+  expect(
+    actual,
+    `0001_engine.sql is frozen (v0.1) but its content changed (sha256 ${actual}). Revert the edit and put the schema change in a new migration 0002_*.sql. Do not update the pinned hash.`,
+  ).toBe(FROZEN_0001_SHA256);
+});
 
 test("migrate applies 0001 once and is idempotent", async () => withTestDb(async (sql) => {
   expect(await migrate(sql)).toEqual(["0001_engine.sql"]);

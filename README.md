@@ -196,8 +196,8 @@ is the only schema-related command, and it applies the bundled SQL in
 `packages/core/migrations/`.
 
 If the database was created before plan 7, recreate it rather than reusing it: migration `0001` was
-edited in place and the runner tracks migrations by name only. See
-[docs/dev-setup.md](docs/dev-setup.md).
+edited in place until then and the runner tracks migrations by name only. From v0.1 on `0001` is frozen and schema
+changes arrive as new migrations. See [docs/dev-setup.md](docs/dev-setup.md).
 
 ## Project structure
 

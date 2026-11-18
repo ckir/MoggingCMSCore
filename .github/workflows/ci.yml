@@ -25,6 +25,9 @@ jobs:
       DATABASE_URL: postgres://mogging:mogging@localhost:5432/mogging_test
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The frozen-migration gate reads history back to the freeze commit.
+          fetch-depth: 0
       - uses: pnpm/action-setup@v6
         with:
           version: 12.8.1
@@ -35,6 +38,8 @@ jobs:
           cache: pnpm
       - name: Node version
         run: node -v
+      - name: Migration 0001 is frozen
+        run: node scripts/check-0001-frozen.mjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test

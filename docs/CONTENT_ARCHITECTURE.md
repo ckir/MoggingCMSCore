@@ -721,8 +721,9 @@ These are properties of the current implementation, not bugs to discover:
 - No scheduling, webhooks, cache invalidation, search indexing, or notification side effects.
 - No media upload, storage adapter, or image transformation.
 - No referential integrity for `reference` fields.
-- Migration `0001` was edited in place before v0.1; databases created before plan 7 must be
-  recreated because the runner tracks applied migrations by name only.
+- Migration `0001` was edited in place until it was frozen (v0.1 ship step 3, 2026-11-18); databases created before
+  plan 7 must be recreated because the runner tracks applied migrations by name only. Schema changes are new migrations
+  from now on.
 - `content_provenance.version` and `release_items.draft_version` are conventional references without
   foreign keys; tooling must handle a missing or superseded target.
 - `getDocument` can return a soft-deleted document (always by id, and by slug when no live match

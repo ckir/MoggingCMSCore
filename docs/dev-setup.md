@@ -27,8 +27,15 @@ Each test uses `withTestDb` (`packages/core/test/db.ts`), which creates a schema
 runs the test inside it and drops it afterwards.
 
 Databases created before plan 7 must be recreated (drop and create the database, then run `migrate` again): migration
-`0001` was edited in place (the `field_warnings` column and the unique release name), and `migrate` tracks applied
-migrations by name only. An old database therefore reports "up to date", and `approve` then fails on the missing column.
+`0001` was edited in place until then (the `field_warnings` column and the unique release name), and `migrate` tracks
+applied migrations by name only. An old database therefore reports "up to date", and `approve` then fails on the missing
+column.
+
+Migration `0001` is frozen from v0.1 on (ship step 3, 2026-11-18): it never changes again, and a schema change is a new
+migration file `packages/core/migrations/0002_*.sql`, which `migrate` applies to existing databases. Two checks enforce
+it: the hash pin in `packages/core/test/migrate.test.ts` and `pnpm check:frozen` (`scripts/check-0001-frozen.mjs`, which
+fails on any commit after the freeze base that touches the file; CI runs it with full history). Do not satisfy either by
+changing the pin or the freeze base.
 
 ## Running one test file
 

@@ -21,8 +21,8 @@ costly-later defect and so that the only measurement that matters (do people pay
 ## Constraints
 
 - Nothing is pushed or published without the owner's explicit word.
-- Migration 0001 may still be edited in place until it is frozen (dev-setup.md); after the freeze, schema
-  changes need migration 0002.
+- Migration 0001 was editable in place until it was frozen (ship step 3, done 2026-11-18; dev-setup.md); since the
+  freeze, schema changes need migration 0002.
 - Admission rule for the pre-ship tranche: an item is in only if it (a) corrupts or loses content, (b) changes
   the public SDK surface or the migration, (c) a buyer would hit it in the first hour with no workaround, or
   (d) fixing it later would change an error or behaviour contract adopters will depend on (a thrown error
@@ -63,6 +63,11 @@ patch release).
    Freeze trigger (my proposal, the owner may change it): the starter template builds and its acceptance flow
    passes against the SDK without a schema change, and no schema item is open. If step 2 turns up a change
    that is larger than a TODO-class fix, stop and bring it to the owner instead of extending step 2.
+   DONE 2026-11-18 on main f27ac6c (sha256 of 0001 `a77665b7...`, last edit 787d9bb, plan 7): trigger verified
+   (`accept:starlight` and `accept:adopter` passed, no schema item open); frozen by a content pin test
+   (`packages/core/test/migrate.test.ts`), a history gate (`scripts/check-0001-frozen.mjs`, freeze base f27ac6c, run in
+   CI), `.gitattributes` (`*.sql text eol=lf`) and the AGENTS.md / dev-setup.md policy. Runner checksums were
+   considered and left out of v0.1 (no adopter database exists; TODO.md).
 4. Self-serve checkout and key delivery, v0.1 operations (key re-issue, refund policy, support address,
    evaluation/purchase/CI docs, enterprise contact form), owner-written gate numbers (roadmap section 10), then
    the `prepack` build gate (today `prepack` only runs `copy-licence.mjs`, it never builds; `pnpm smoke:pack`

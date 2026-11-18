@@ -58,9 +58,12 @@ entry is a no-op Astro integration that imports nothing; the preset is the separ
 
 ## Engine model (spans many files; read before changing core)
 
-- **Schema:** the whole schema is `packages/core/migrations/0001_engine.sql`. The migration runner tracks files by
-  name only, and `0001` has been edited in place while unreleased. A database created before such an edit reports
-  "up to date" and then fails, so recreate it.
+- **Schema:** the whole schema is `packages/core/migrations/0001_engine.sql`, FROZEN since v0.1 ship step 3 (2026-11-18,
+  sha256 `a77665b7...`). Never edit it: a schema change is a new migration `0002_*.sql`. The runner applies files in name
+  order and tracks them by name only. Two guards fail on an edit: the content pin in `packages/core/test/migrate.test.ts`
+  and `pnpm check:frozen` (any commit after the freeze base that touches the file; CI runs it). Do not "fix" either by
+  updating the pin or the freeze base: add `0002` instead. A database created before plan 7 (when `0001` was still
+  edited in place) must be recreated once.
 - **Snapshots and heads:** a document's content is immutable, full (never delta) snapshot rows per scope. There is one
   `shared` scope (`document_shared`, non-localized fields) and one scope per locale (`document_localized`). Each scope
   has at most one published head and one draft head, enforced by partial unique indexes. `state` records how a row
