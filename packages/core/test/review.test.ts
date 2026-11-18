@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import type { Sql } from "postgres";
 import {
-  NotFoundError, ValidationError, approve, createDocument, getDocument, getDraftReview, hashValue, listDraftHeads,
+  NotFoundError, ValidationError, approve, createDocument, defineCollection, defineConfig, number, richText, text, getDocument, getDraftReview, hashValue, listDraftHeads,
   migrate, publish, recordAiDraft, rejectDraft, saveDraft,
 } from "../src/index.js";
 import type { Ctx } from "../src/index.js";
@@ -222,4 +222,40 @@ test("a collection the config no longer declares has no missing list", async () 
   const docId = await catalogDraft(ctx, { title: "Einleitung" });
   const review = await getDraftReview({ ...ctx, config }, { docId, locale: "de" });
   expect(review.missing).toEqual([]);
+}));
+
+// `missing` is derived from the declared fields, so these two tests use their own collections: one with a required
+// SHARED field beside a required localized one, one whose required localized fields are declared out of path order.
+const sharedRequired = defineCollection("sharedreq", {
+  code: text({ required: true }),
+  price: number({ localized: true, required: true }),
+  note: text({ localized: true }),
+  body: richText({ localized: true, body: true }),
+});
+const outOfOrder = defineCollection("ooo", {
+  zeta: number({ localized: true, required: true }),
+  alpha: text({ localized: true, required: true }),
+  mid: number({ localized: true, required: true }),
+  note: text({ localized: true }),
+  body: richText({ localized: true, body: true }),
+});
+const missingConfig = defineConfig({ collections: [sharedRequired, outOfOrder], locales: { source: "en", chains: { de: ["en"] } } });
+const missingCtx = (sql: Sql): Ctx => ({ sql, config: missingConfig, actor: "reviewer" });
+
+test("missing never lists a required shared field: only required localized fields are fillable in a locale draft", async () => withTestDb(async (sql: Sql) => {
+  await migrate(sql);
+  const ctx = missingCtx(sql);
+  const { id: docId } = await createDocument(ctx, { collection: "sharedreq" });
+  await saveDraft(ctx, { docId, locale: "en", data: { note: "Intro" } });
+  const review = await getDraftReview(ctx, { docId, locale: "en" });
+  expect(review.missing).toEqual([{ path: "price", source: undefined }]);
+}));
+
+test("missing is sorted by path ascending, whatever order the fields are declared in", async () => withTestDb(async (sql: Sql) => {
+  await migrate(sql);
+  const ctx = missingCtx(sql);
+  const { id: docId } = await createDocument(ctx, { collection: "ooo" });
+  await saveDraft(ctx, { docId, locale: "en", data: { note: "Intro" } });
+  const review = await getDraftReview(ctx, { docId, locale: "en" });
+  expect(review.missing.map((m) => m.path)).toEqual(["alpha", "mid", "zeta"]);
 }));
