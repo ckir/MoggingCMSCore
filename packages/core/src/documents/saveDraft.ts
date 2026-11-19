@@ -230,5 +230,4 @@ async function writeDraft(
     values (${input.docId}, ${locale}, ${version}, 'DRAFT_HUMAN', ${tx.json(data as Json)},
             ${tx.json(sourceHashes as Json)}, true, ${actor})`;
   return { version };
-
 }

@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import type { Sql } from "postgres";
 import postgres from "postgres";
 import {
-  ValidationError, createDocument, defineCollection, defineConfig, migrate, publish, richText, saveDraft, slug,
+  ValidationError, createDocument, defineCollection, defineConfig, migrate, publish, richText, saveDraft, slug, text,
 } from "../src/index.js";
 import type { Ctx } from "../src/index.js";
 import { publishWithinTx } from "../src/documents/publishCore.js";
@@ -10,8 +10,10 @@ import { withTestDb } from "./db.js";
 
 const posts = defineCollection("posts", { slug: slug(), body: richText({ localized: true, body: true }) });
 const pages = defineCollection("pages", { slug: slug(), body: richText({ localized: true, body: true }) });
+// A collection whose shared `code` field is required: neither `posts` nor `pages` requires anything.
+const strict = defineCollection("strict", { slug: slug(), code: text({ required: true }), body: richText({ localized: true, body: true }) });
 const config = defineConfig({
-  collections: [posts, pages],
+  collections: [posts, pages, strict],
   locales: { source: "en", chains: { de: ["en"] } },
 });
 const ctxFor = (sql: Sql): Ctx => ({ sql, config, actor: "tester" });
@@ -26,6 +28,7 @@ async function rawDraft(sql: Sql, docId: string, collection: string, value: stri
 
 const D2 = "00000001-0000-4000-8000-000000000002";
 const D3 = "00000001-0000-4000-8000-000000000003";
+const D4 = "00000001-0000-4000-8000-000000000004";
 
 /** A connection on the test schema that records every statement text with its bound parameters. */
 async function recordingConnection(sql: Sql, log: Array<{ text: string; params: unknown[] }>): Promise<Sql> {
@@ -98,4 +101,30 @@ test("a hinted shared publish takes the advisory slug lock on the hinted collect
   expect(locks).toHaveLength(1);
   expect(locks[0]!.params).toContain("posts");
   expect(log.some((q) => /select collection from documents/.test(q.text))).toBe(false);
+}));
+
+test("the required-field check is keyed on the hinted collection, not the documents row's", async () => withTestDb(async (sql) => {
+  await migrate(sql);
+  const ctx = ctxFor(sql);
+  const stamp = () => new Date().toISOString();
+
+  // The row says "posts" (nothing required), the hint says "strict" (shared `code` required): the draft lacks `code`.
+  await rawDraft(sql, D2, "posts", "no-code");
+  const err = await sql.begin(async (tx) => {
+    await tx`select id from documents where id = ${D2} for update`;
+    await publishWithinTx(tx, ctx, { docId: D2, locale: "shared" }, stamp(), { collection: "strict" });
+  }).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(ValidationError);
+  expect((err as Error).message).toMatch(/missing required field code/);
+  const [kept] = await sql`select state, is_head_draft, is_head_published from document_shared where doc_id = ${D2}`;
+  expect(kept).toMatchObject({ state: "DRAFT_HUMAN", is_head_draft: true, is_head_published: false });
+
+  // The reverse: the row says "strict" (would refuse), the hint says "posts" (requires nothing): the publish succeeds.
+  await rawDraft(sql, D4, "strict", "no-code-either");
+  await sql.begin(async (tx) => {
+    await tx`select id from documents where id = ${D4} for update`;
+    await publishWithinTx(tx, ctx, { docId: D4, locale: "shared" }, stamp(), { collection: "posts" });
+  });
+  const [done] = await sql`select state, is_head_published from document_shared where doc_id = ${D4}`;
+  expect(done).toMatchObject({ state: "PUBLISHED", is_head_published: true });
 }));
