@@ -6,7 +6,7 @@ import { getDocument, migrate, publish, saveDraft } from "@mogging/core";
 import type { Sql } from "postgres";
 import { run } from "../src/run.js";
 import { withTestDb } from "./db.js";
-import { testDeps } from "./fixtures.js";
+import { connectionOver, testDeps } from "./fixtures.js";
 import { ASTRO_ROOT_DE_ZH, page, starlightConfig, starlightDeps, starlightProject } from "./starlightFixtures.js";
 
 /** A per-test schema with the migrations applied. */
@@ -417,6 +417,122 @@ export default defineConfig({ integrations: [starlight({ title: "Docs", locales:
       const r = await go(sql, root, ["import", "--config", join(root, "mogging.config.ts")], join(root, "src"));
       expect(r.code).toBe(0);
       expect(lines(r.out)).toContain(`created ${D}/a.md`);
+    });
+  });
+});
+
+describe("mogging import --concurrency", () => {
+  const CLAMP = "concurrency: 1 of 4 (the pool allows 1)";
+
+  test("0, 9 and x are exit 2 with a usage message and connect nothing", async () => {
+    await withDb(async (sql) => {
+      const root = starlightProject({ [`${D}/a.md`]: page("A"), "astro.config.mjs": ASTRO_ROOT_DE_ZH });
+      const expected: Record<string, string> = {
+        "0": "--concurrency must be at least 1, got 0",
+        "9": "--concurrency must be at most 8, got 9",
+        x: '--concurrency must be a whole number, got "x"',
+      };
+      for (const [value, message] of Object.entries(expected)) {
+        let connected = false;
+        const t = starlightDeps(sql, root, {
+          connect: () => {
+            connected = true;
+            throw new Error("connected");
+          },
+        });
+        expect(await run(["import", "--concurrency", value], t)).toBe(2);
+        expect(t.stderr()).toContain(message);
+        expect(connected).toBe(false);
+      }
+    });
+  });
+
+  test("a generic project is told --concurrency needs a Starlight project, like --prune", async () => {
+    await withDb(async (sql) => {
+      const dir = mkdtempSync(join(tmpdir(), "mogging-cli-generic-"));
+      dirs.push(dir);
+      const errs: string[] = [];
+      for (const flag of [["--prune"], ["--concurrency", "3"]]) {
+        const t = testDeps(sql);
+        expect(await run(["import", dir, ...flag], t)).toBe(2);
+        errs.push(t.stderr().replace(/ in \S+mogging\.config\.ts\)/, " in <config>)"));
+      }
+      expect(errs[1]).toContain("import: --concurrency needs a Starlight project (an `export const starlight` in ");
+      expect(errs[1]!.replace("--concurrency", "--prune")).toBe(errs[0]);
+    });
+  });
+
+  test("the default 4 on the test pool (max 1) prints the clamp line as the first line", async () => {
+    await withDb(async (sql) => {
+      const root = starlightProject({ [`${D}/a.md`]: page("A"), "astro.config.mjs": ASTRO_ROOT_DE_ZH });
+      const r = await go(sql, root, ["import"]);
+      expect(r.code).toBe(0);
+      expect(lines(r.out)).toEqual([CLAMP, `created ${D}/a.md`]);
+    });
+  });
+
+  test("--dry-run prints the clamp line directly after the dry-run line", async () => {
+    await withDb(async (sql) => {
+      const root = starlightProject({ [`${D}/a.md`]: page("A"), "astro.config.mjs": ASTRO_ROOT_DE_ZH });
+      const r = await go(sql, root, ["import", "--dry-run"]);
+      expect(r.code).toBe(0);
+      expect(lines(r.out)).toEqual(["dry run: nothing was written", CLAMP, `created ${D}/a.md`]);
+    });
+  });
+
+  test("--concurrency 1 prints no clamp line", async () => {
+    await withDb(async (sql) => {
+      const root = starlightProject({ [`${D}/a.md`]: page("A"), "astro.config.mjs": ASTRO_ROOT_DE_ZH });
+      const r = await go(sql, root, ["import", "--concurrency", "1"]);
+      expect(r.code).toBe(0);
+      expect(r.out).not.toContain("concurrency:");
+      expect(lines(r.out)).toEqual([`created ${D}/a.md`]);
+    });
+  });
+
+  test("a pool that allows the request prints no clamp line", async () => {
+    await withDb(async (sql) => {
+      const root = starlightProject({ [`${D}/a.md`]: page("A"), [`${D}/b.md`]: page("B"), "astro.config.mjs": ASTRO_ROOT_DE_ZH });
+      const wide = new Proxy(connectionOver(sql), {
+        get: (target, prop, receiver) =>
+          prop === "options" ? { ...(target as unknown as { options: object }).options, max: 8 } : Reflect.get(target, prop, receiver),
+      });
+      const t = starlightDeps(sql, root, { connect: () => wide });
+      expect(await run(["import", "--concurrency", "3"], t)).toBe(0);
+      expect(t.stdout()).not.toContain("concurrency:");
+    });
+  });
+
+  test("a pool of unknown size prints the unknown reason", async () => {
+    await withDb(async (sql) => {
+      const root = starlightProject({ [`${D}/a.md`]: page("A"), "astro.config.mjs": ASTRO_ROOT_DE_ZH });
+      const unknown = new Proxy(connectionOver(sql), {
+        get: (target, prop, receiver) => (prop === "options" ? {} : Reflect.get(target, prop, receiver)),
+      });
+      const t = starlightDeps(sql, root, { connect: () => unknown });
+      expect(await run(["import", "--concurrency", "2"], t)).toBe(0);
+      expect(lines(t.stdout())[0]).toBe("concurrency: 1 of 2 (the pool size is unknown)");
+    });
+  });
+
+  test("--json carries starlight.concurrency", async () => {
+    await withDb(async (sql) => {
+      const root = starlightProject({ [`${D}/a.md`]: page("A"), "astro.config.mjs": ASTRO_ROOT_DE_ZH });
+      const r = await go(sql, root, ["import", "--json"]);
+      expect(r.code).toBe(0);
+      expect(JSON.parse(r.out).data.starlight.concurrency).toEqual({
+        requested: 4,
+        effective: 1,
+        limit: "pool",
+        poolMax: 1,
+      });
+      const one = await go(sql, root, ["import", "--json", "--concurrency", "1"]);
+      expect(JSON.parse(one.out).data.starlight.concurrency).toEqual({
+        requested: 1,
+        effective: 1,
+        limit: "pool",
+        poolMax: 1,
+      });
     });
   });
 });

@@ -18,7 +18,7 @@ import type { Tx } from "./publishCore.js";
  * @param collections collection names; duplicates are collapsed.
  * @returns resolves once every lock that applies is held by `tx`.
  */
-export async function lockSlugs(tx: Tx, ctx: Ctx, collections: string[]): Promise<void> {
+export async function lockSlugs(tx: Tx, ctx: Pick<Ctx, "config">, collections: string[]): Promise<void> {
   for (const name of [...new Set(collections)].sort()) {
     const collection = ctx.config.collections.find((c) => c.name === name);
     if (!collection || !Object.hasOwn(collection.fields, "slug")) continue;
@@ -41,7 +41,7 @@ export async function lockSlugs(tx: Tx, ctx: Ctx, collections: string[]): Promis
  */
 export async function assertSlugFree(
   tx: Tx,
-  ctx: Ctx,
+  ctx: Pick<Ctx, "config">,
   input: { collection: string; docId: string; data: Record<string, unknown> },
 ): Promise<void> {
   const collection = ctx.config.collections.find((c) => c.name === input.collection);

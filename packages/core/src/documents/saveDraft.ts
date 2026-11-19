@@ -6,6 +6,7 @@ import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
 import { assertLicensed } from "../licence/guard.js";
 import { normalizeLocale } from "../schema/locale.js";
 import { hashValue } from "../values/hash.js";
+import type { Tx } from "./publishCore.js";
 import { assertSlugFree, lockSlugs } from "./slugGuard.js";
 import { normalizeValue, stripTopLevelNulls } from "../values/normalize.js";
 
@@ -55,7 +56,56 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ version: number }> {
   await assertLicensed(ctx);
   assertActor(ctx);
-  const { config, sql, actor } = ctx;
+  const { config, sql } = ctx;
+  const { isShared, locale } = validateScope(config, input);
+
+  // Validation that needs no database access happens after the collection is known, but before any write.
+  const [docProbe] = await sql`select collection from documents where id = ${input.docId} and deleted_at is null`;
+  if (!docProbe) throw new NotFoundError(`Document "${input.docId}" not found`);
+  const collection = findCollection(config, docProbe.collection as string);
+  const data = normalizeSnapshot(collection, isShared, input.data);
+
+  return sql.begin((tx) => writeDraft(tx, ctx, input, collection, isShared, locale, data));
+}
+
+/**
+ * The same write as {@link saveDraft}, run on the caller's transaction: the same validation in the same order (locale
+ * and `untracked` checks, document id shape, then normalization against the named collection), then the
+ * transactional body from the `documents ... for update` select to the insert. There is no savepoint, no licence
+ * read, no actor check and no collection probe: the caller has already run `assertLicensed` and `assertActor` (once
+ * per run, not per call) and passes the collection it knows. The `documents` row is still locked here, and that
+ * select is also the existence and soft-delete check. A shared save then takes the collection's advisory slug lock.
+ *
+ * @param tx transaction handle from `sql.begin`; this function never commits or rolls back.
+ * @param run the config and actor only (a full engine context also fits); never a root pool.
+ * @param input document id, scope, complete field data, and optional expected head version.
+ * @param collection name of the document's collection, as the caller knows it.
+ * @returns the new version number allocated for the scope.
+ * @throws {ValidationError} for a malformed or undeclared locale, an undeclared or wrongly-scoped field, an
+ * invalid value, U+0000, `untracked` on a shared or source-locale save, or (shared scope) a slug that another
+ * live document of the collection already holds.
+ * @throws {NotFoundError} for a malformed, unknown or deleted document, or a collection absent from the config.
+ * @throws {ConflictError} when `expectedVersion` does not match the current head.
+ * @remarks Precedence caveat: this function trusts the caller's collection and document id, so a document that
+ * is invalid in two ways, or is deleted concurrently, can report a different first error than {@link saveDraft}
+ * (which reads the document's real collection first and so reports a missing document before a field error).
+ */
+export async function saveDraftWithinTx(
+  tx: Tx,
+  run: Pick<Ctx, "config" | "actor">,
+  input: SaveDraftInput,
+  collection: string,
+): Promise<{ version: number }> {
+  const { isShared, locale } = validateScope(run.config, input);
+  const def = findCollection(run.config, collection);
+  const data = normalizeSnapshot(def, isShared, input.data);
+  return writeDraft(tx, run, input, def, isShared, locale, data);
+}
+
+type CollectionDef = Ctx["config"]["collections"][number];
+
+/** Locale, `untracked` and document-id checks that need no database access; returns the resolved scope. */
+function validateScope(config: Ctx["config"], input: SaveDraftInput): { isShared: boolean; locale: string } {
   const isShared = input.locale === "shared";
   const locale = isShared ? "shared" : normalizeLocale(input.locale);
   if (!isShared) {
@@ -66,15 +116,20 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
     throw new ValidationError("untracked applies to a target locale only");
   }
   if (!UUID.test(input.docId)) throw new NotFoundError(`Document "${input.docId}" not found`);
+  return { isShared, locale };
+}
 
-  // Validation that needs no database access happens after the collection is known, but before any write.
-  const [docProbe] = await sql`select collection from documents where id = ${input.docId} and deleted_at is null`;
-  if (!docProbe) throw new NotFoundError(`Document "${input.docId}" not found`);
-  const collection = config.collections.find((c) => c.name === docProbe.collection);
-  if (!collection) throw new NotFoundError(`Unknown collection "${String(docProbe.collection)}"`);
+/** The collection named `name` in the config, or a `NotFoundError`. */
+function findCollection(config: Ctx["config"], name: string): CollectionDef {
+  const collection = config.collections.find((c) => c.name === name);
+  if (!collection) throw new NotFoundError(`Unknown collection "${name}"`);
+  return collection;
+}
 
+/** Validates and normalizes every field of `data` against the collection, then strips top-level nulls. */
+function normalizeSnapshot(collection: CollectionDef, isShared: boolean, raw: Record<string, unknown>): Record<string, unknown> {
   const normalized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input.data)) {
+  for (const [key, value] of Object.entries(raw)) {
     const field = Object.hasOwn(collection.fields, key) ? collection.fields[key] : undefined;
     if (!field) throw new ValidationError(`${collection.name}.${key}: undeclared field`);
     if (field.localized === isShared) {
@@ -86,83 +141,93 @@ export async function saveDraft(ctx: Ctx, input: SaveDraftInput): Promise<{ vers
     }
     normalized[key] = value === null ? null : normalizeValue(field, value, key);
   }
-  const data = stripTopLevelNulls(normalized);
+  return stripTopLevelNulls(normalized);
+}
 
-  return sql.begin(async (tx) => {
-    const [doc] = await tx`select id from documents where id = ${input.docId} and deleted_at is null for update`;
-    if (!doc) throw new NotFoundError(`Document "${input.docId}" not found`);
+/** The transactional body shared by `saveDraft` and `saveDraftWithinTx`: row lock, slug guard, head read, insert. */
+async function writeDraft(
+  tx: Tx,
+  run: Pick<Ctx, "config" | "actor">,
+  input: SaveDraftInput,
+  collection: CollectionDef,
+  isShared: boolean,
+  locale: string,
+  data: Record<string, unknown>,
+): Promise<{ version: number }> {
+  const { config, actor } = run;
+  const [doc] = await tx`select id from documents where id = ${input.docId} and deleted_at is null for update`;
+  if (!doc) throw new NotFoundError(`Document "${input.docId}" not found`);
 
-    // Shared scope only (the slug field is never localized): serialize writers of this collection's slugs, after
-    // the documents row lock, then refuse a slug another live document holds (spec 8).
-    if (isShared) {
-      await lockSlugs(tx, ctx, [collection.name]);
-      await assertSlugFree(tx, ctx, { collection: collection.name, docId: input.docId, data });
-    }
+  // Shared scope only (the slug field is never localized): serialize writers of this collection's slugs, after
+  // the documents row lock, then refuse a slug another live document holds (spec 8).
+  if (isShared) {
+    await lockSlugs(tx, run, [collection.name]);
+    await assertSlugFree(tx, run, { collection: collection.name, docId: input.docId, data });
+  }
 
-    const table = isShared ? tx`document_shared` : tx`document_localized`;
-    const scope = isShared ? tx`` : tx`and locale = ${locale}`;
+  const table = isShared ? tx`document_shared` : tx`document_localized`;
+  const scope = isShared ? tx`` : tx`and locale = ${locale}`;
 
-    const [heads] = await tx`
-      select coalesce(max(version), 0) as max_version,
-             max(version) filter (where is_head_draft) as draft_version,
-             max(version) filter (where is_head_published) as published_version
-      from ${table} where doc_id = ${input.docId} ${scope}`;
-    const current = (heads!.draft_version ?? heads!.published_version ?? 0) as number;
-    if (input.expectedVersion !== undefined && input.expectedVersion !== current) {
-      throw new ConflictError(
-        `Expected version ${input.expectedVersion} of ${input.docId}/${locale} but the head is ${current}`,
-      );
-    }
-    const version = (heads!.max_version as number) + 1;
+  const [heads] = await tx`
+    select coalesce(max(version), 0) as max_version,
+           max(version) filter (where is_head_draft) as draft_version,
+           max(version) filter (where is_head_published) as published_version
+    from ${table} where doc_id = ${input.docId} ${scope}`;
+  const current = (heads!.draft_version ?? heads!.published_version ?? 0) as number;
+  if (input.expectedVersion !== undefined && input.expectedVersion !== current) {
+    throw new ConflictError(
+      `Expected version ${input.expectedVersion} of ${input.docId}/${locale} but the head is ${current}`,
+    );
+  }
+  const version = (heads!.max_version as number) + 1;
 
-    // Base head for the carry-forward below, read BEFORE the draft head is cleared: this locale's draft head,
-    // else the newest row that is not a DRAFT_AI by version (a draft head wins), so a published and a
-    // never-published locale behave alike (spec 8.1), else none. A non-head DRAFT_AI row (rejected, or
-    // superseded) is never the base, and while a published head exists neither is a non-head PUBLISHED row (a
-    // superseded row or a republish copy), as in recordAiDraft.
-    const base = isShared || locale === config.locales.source ? undefined : (await tx`
-      select data, source_hashes from document_localized
-      where doc_id = ${input.docId} and locale = ${locale} and (is_head_draft or state <> 'DRAFT_AI')
-        and (is_head_published or state <> 'PUBLISHED' or not exists (
-          select 1 from document_localized p
-          where p.doc_id = ${input.docId} and p.locale = ${locale} and p.is_head_published))
-      order by is_head_draft desc, version desc limit 1`)[0];
+  // Base head for the carry-forward below, read BEFORE the draft head is cleared: this locale's draft head,
+  // else the newest row that is not a DRAFT_AI by version (a draft head wins), so a published and a
+  // never-published locale behave alike (spec 8.1), else none. A non-head DRAFT_AI row (rejected, or
+  // superseded) is never the base, and while a published head exists neither is a non-head PUBLISHED row (a
+  // superseded row or a republish copy), as in recordAiDraft.
+  const base = isShared || locale === config.locales.source ? undefined : (await tx`
+    select data, source_hashes from document_localized
+    where doc_id = ${input.docId} and locale = ${locale} and (is_head_draft or state <> 'DRAFT_AI')
+      and (is_head_published or state <> 'PUBLISHED' or not exists (
+        select 1 from document_localized p
+        where p.doc_id = ${input.docId} and p.locale = ${locale} and p.is_head_published))
+    order by is_head_draft desc, version desc limit 1`)[0];
 
-    await tx`update ${table} set is_head_draft = false
-      where doc_id = ${input.docId} ${scope} and is_head_draft`;
+  await tx`update ${table} set is_head_draft = false
+    where doc_id = ${input.docId} ${scope} and is_head_draft`;
 
-    if (isShared) {
-      await tx`insert into document_shared (doc_id, version, state, data, is_head_draft, created_by)
-        values (${input.docId}, ${version}, 'DRAFT_HUMAN', ${tx.json(data as Json)}, true, ${actor})`;
-      return { version };
-    }
+  if (isShared) {
+    await tx`insert into document_shared (doc_id, version, state, data, is_head_draft, created_by)
+      values (${input.docId}, ${version}, 'DRAFT_HUMAN', ${tx.json(data as Json)}, true, ${actor})`;
+    return { version };
+  }
 
-    // Hash vector (spec 6.4): source locale hashes its own values. A target records the hash of the source
-    // locale's current published value for each CHANGED or NEW field (none if the source has no value); a
-    // field whose value is unchanged against this locale's base (the draft head, else the newest non-AI row,
-    // ignoring a superseded or republish-copy PUBLISHED row while a published head exists: the base query above)
-    // carries the base's stored hash forward, so a re-save never asserts sync (only trackFields does).
-    const sourceHashes: Record<string, string> = {};
-    if (locale === config.locales.source) {
-      for (const [k, v] of Object.entries(data)) sourceHashes[k] = hashValue(v);
-    } else if (input.untracked !== true) {
-      const baseData = (base?.data ?? {}) as Record<string, unknown>;
-      const baseHashes = (base?.source_hashes ?? {}) as Record<string, string>;
-      const [src] = await tx`select data from document_localized
-        where doc_id = ${input.docId} and locale = ${config.locales.source} and is_head_published`;
-      const srcData = (src?.data ?? {}) as Record<string, unknown>;
-      for (const [k, v] of Object.entries(data)) {
-        if (base && Object.hasOwn(baseData, k) && hashValue(v) === hashValue(baseData[k])) {
-          if (Object.hasOwn(baseHashes, k)) sourceHashes[k] = baseHashes[k]!;
-        } else if (Object.hasOwn(srcData, k)) {
-          sourceHashes[k] = hashValue(srcData[k]);
-        }
+  // Hash vector (spec 6.4): source locale hashes its own values. A target records the hash of the source
+  // locale's current published value for each CHANGED or NEW field (none if the source has no value); a
+  // field whose value is unchanged against this locale's base (the draft head, else the newest non-AI row,
+  // ignoring a superseded or republish-copy PUBLISHED row while a published head exists: the base query above)
+  // carries the base's stored hash forward, so a re-save never asserts sync (only trackFields does).
+  const sourceHashes: Record<string, string> = {};
+  if (locale === config.locales.source) {
+    for (const [k, v] of Object.entries(data)) sourceHashes[k] = hashValue(v);
+  } else if (input.untracked !== true) {
+    const baseData = (base?.data ?? {}) as Record<string, unknown>;
+    const baseHashes = (base?.source_hashes ?? {}) as Record<string, string>;
+    const [src] = await tx`select data from document_localized
+      where doc_id = ${input.docId} and locale = ${config.locales.source} and is_head_published`;
+    const srcData = (src?.data ?? {}) as Record<string, unknown>;
+    for (const [k, v] of Object.entries(data)) {
+      if (base && Object.hasOwn(baseData, k) && hashValue(v) === hashValue(baseData[k])) {
+        if (Object.hasOwn(baseHashes, k)) sourceHashes[k] = baseHashes[k]!;
+      } else if (Object.hasOwn(srcData, k)) {
+        sourceHashes[k] = hashValue(srcData[k]);
       }
     }
-    await tx`insert into document_localized
-        (doc_id, locale, version, state, data, source_hashes, is_head_draft, created_by)
-      values (${input.docId}, ${locale}, ${version}, 'DRAFT_HUMAN', ${tx.json(data as Json)},
-              ${tx.json(sourceHashes as Json)}, true, ${actor})`;
-    return { version };
-  });
+  }
+  await tx`insert into document_localized
+      (doc_id, locale, version, state, data, source_hashes, is_head_draft, created_by)
+    values (${input.docId}, ${locale}, ${version}, 'DRAFT_HUMAN', ${tx.json(data as Json)},
+            ${tx.json(sourceHashes as Json)}, true, ${actor})`;
+  return { version };
 }

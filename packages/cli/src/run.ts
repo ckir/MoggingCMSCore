@@ -7,6 +7,7 @@ import { commands as registry } from "./commands/index.js";
 import { rootUsage } from "./commands/help.js";
 import { VERSION } from "./commands/version.js";
 import { describeError, jsonDocument, licenceInfo, licenceLines, maskSecrets } from "./output.js";
+import { CLI_POOL_MAX } from "./pool.js";
 import { loadProject } from "./project.js";
 import { UsageError } from "./types.js";
 import type { CommandEnv, CommandResult, Deps, Io, LicenceInfo, Project } from "./types.js";
@@ -42,7 +43,7 @@ function defaultDeps(): Deps {
     env: process.env,
     cwd: process.cwd(),
     loadModule: async (path) => (await createJiti(import.meta.url).import(path)) as Record<string, unknown>,
-    connect: (url) => postgres(url, { max: 4, onnotice: () => {} }),
+    connect: (url) => postgres(url, { max: CLI_POOL_MAX, onnotice: () => {} }),
     now: () => new Date(),
     editor: openEditor,
     exit: (code) => process.exit(code),

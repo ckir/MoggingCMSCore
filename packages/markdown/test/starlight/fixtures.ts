@@ -109,3 +109,21 @@ export async function countingSql(sql: Sql): Promise<{ sql: Sql; count(): number
   });
   return { sql: counting, count: () => n, reset: () => { n = 0; } };
 }
+
+/**
+ * An `extraConnection` that records the text of every statement it runs (postgres.js `debug` callback, whose
+ * second argument is the statement text).
+ *
+ * @param sql - Connection on the test schema; the new connection uses the same schema.
+ * @returns The connection (caller must `end()` it), `statements()` a copy of the statement texts since the last
+ *   `reset()`, and `reset()`.
+ */
+export async function capturingSql(sql: Sql): Promise<{ sql: Sql; statements(): string[]; reset(): void }> {
+  const [{ s }] = (await sql`select current_schema() as s`) as unknown as [{ s: string }];
+  let log: string[] = [];
+  const capturing = postgres(process.env.DATABASE_URL!, {
+    max: 1, onnotice: () => {}, connection: { search_path: s },
+    debug: (_connection, query) => { log.push(query); },
+  });
+  return { sql: capturing, statements: () => [...log], reset: () => { log = []; } };
+}

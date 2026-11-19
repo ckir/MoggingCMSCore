@@ -5,7 +5,7 @@ import type { Ctx } from "@mogging/core";
 import { exportFolder } from "../../src/export.js";
 import { importFolder } from "../../src/import.js";
 import { defineStarlightLayout } from "../../src/index.js";
-import { withTestDb } from "../db.js";
+import { withPooledTestDb, withTestDb } from "../db.js";
 import { countingSql, docs, layoutInput, project, writeTree } from "./fixtures.js";
 
 // The measurement of spec section 6 (performance): 2,000 pages x 6 locales through the Starlight import and export,
@@ -24,16 +24,22 @@ const perfConfig = defineConfig({
 });
 const perfLayout = defineStarlightLayout({ ...layoutInput, otherLocaleDirs: [] }, perfConfig);
 
+/** The 2,000-page, 6-locale file tree both perf tests write to disk. */
+function perfFiles(): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < PAGES; i++) {
+    files[`${D}/p${i}.md`] = `---\ntitle: Page ${i}\ndescription: About page ${i}\n---\nBody of page ${i}.\n`;
+    for (const [locale, folder] of Object.entries(perfLayout.localeDirs)) {
+      files[`${D}/${folder}/p${i}.md`] = `---\ntitle: ${locale} ${i}\ndescription: ${locale} about ${i}\n---\n${locale} body ${i}.\n`;
+    }
+  }
+  return files;
+}
+
 test.skipIf(!process.env.MOGGING_PERF)(
   `perf: ${PAGES} pages x 6 locales, import and export twice each`,
   async () => {
-    const files: Record<string, string> = {};
-    for (let i = 0; i < PAGES; i++) {
-      files[`${D}/p${i}.md`] = `---\ntitle: Page ${i}\ndescription: About page ${i}\n---\nBody of page ${i}.\n`;
-      for (const [locale, folder] of Object.entries(perfLayout.localeDirs)) {
-        files[`${D}/${folder}/p${i}.md`] = `---\ntitle: ${locale} ${i}\ndescription: ${locale} about ${i}\n---\n${locale} body ${i}.\n`;
-      }
-    }
+    const files = perfFiles();
     const root = project({});
     try {
       writeTree(root, files);
@@ -68,6 +74,37 @@ test.skipIf(!process.env.MOGGING_PERF)(
         } finally {
           await counting.sql.end();
         }
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+  3_600_000,
+);
+
+// The concurrent arm: the same first import on a pool of 8 with `concurrency: 8`. `countingSql` counts on its own
+// max-1 connection and cannot count a pool, so the count here hooks the pool's own postgres.js `debug` option,
+// which every pooled connection reads per query (`sql.options` is the object the connections share).
+test.skipIf(!process.env.MOGGING_PERF)(
+  `perf: ${PAGES} pages x 6 locales, first import at concurrency 8`,
+  async () => {
+    const files = perfFiles();
+    const root = project({});
+    try {
+      writeTree(root, files);
+      await withPooledTestDb(8, async (sql) => {
+        await migrate(sql);
+        let queries = 0;
+        sql.options.debug = () => { queries++; };
+        const ctx: Ctx = { sql, config: perfConfig, actor: "perf" };
+        const input = { dir: root, starlight: { layout: perfLayout, concurrency: 8 } };
+        queries = 0;
+        const t0 = performance.now();
+        const r = await importFolder(ctx, input);
+        const wall = performance.now() - t0;
+        console.log(`PERF import 1 (concurrency 8): wall ${(wall / 1000).toFixed(1)} s, queries ${queries}`);
+        expect(r.errors).toEqual([]);
+        expect(r.files).toHaveLength(PAGES * 6);
       });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
