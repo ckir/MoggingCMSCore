@@ -48,8 +48,7 @@ describe("statement counts per transaction kind", () => {
         }
         // Counted over the raw log: the licence read happens before `begin`, outside every transaction. One per import.
         const licenceReads = raw.filter((x) => /from migrations/i.test(x)).length;
-        expect(licenceReads, "licence reads in three imports").toBeLessThanOrEqual(IMPORTS);
-        expect(licenceReads, "a licence read happened").toBeGreaterThanOrEqual(1);
+        expect(licenceReads, "one licence read per import: phases A, B and C all write").toBe(IMPORTS);
       } finally {
         await cap.sql.end();
       }

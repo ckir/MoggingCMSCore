@@ -81,16 +81,22 @@ type Plan = {
 
 /**
  * The write run of this import: runs the licence and actor guards on the first call and returns the same promise
- * afterwards, so one import makes at most one licence read. Never called for a dry run, an all-unchanged run or a
- * prune-only run, and never from inside a per-file loop's transaction.
+ * afterwards, so one import makes at most one successful licence read. A `LicenceError` stays cached (the import
+ * aborts on it); any other failure (a database error on the licence read, a NUL actor) is not cached, so the next
+ * call runs the guards again and one failed read costs one file. Never called for a dry run, an all-unchanged run
+ * or a prune-only run, and never from inside a per-file loop's transaction.
  *
  * @param plan the plan whose context the guards read.
  * @returns the run handle (config and actor only).
  * @throws {LicenceError} when the evaluation has ended without a key.
  * @throws {ValidationError} for an actor containing U+0000.
+ * @throws {Error} a database error from the licence read.
  */
 function writeRun(plan: Plan): Promise<WriteRun> {
-  plan.run ??= beginWriteRun(plan.ctx);
+  plan.run ??= beginWriteRun(plan.ctx).catch((e: unknown) => {
+    if (!isNamed(e, "LicenceError")) plan.run = null;
+    throw e;
+  });
   return plan.run;
 }
 
@@ -635,8 +641,13 @@ async function planLocales(
 
 /**
  * Phase 2 for the locale files: one transaction per file (the save, then the publish), after the source pages are
- * written, so a new page's document exists. A file that fails becomes an `error` outcome and the run goes on; a
- * licence error aborts it.
+ * written, so a new page's document exists. The write run is created once, before the first file, and only when some
+ * file will write. A `LicenceError` from creating it propagates and nothing is written for the locale files. Any
+ * other guard failure (a database error on the licence read, a NUL actor) is held and thrown inside each writing
+ * file's own try, so each such file becomes an `error` outcome and the import still returns its report. A file whose
+ * write fails becomes an `error` outcome and the run goes on.
+ *
+ * @throws {LicenceError} when the evaluation has ended without a key.
  */
 async function applyLocales(plan: Plan, lp: LocalePlan): Promise<void> {
   const { ctx } = plan;
@@ -651,7 +662,16 @@ async function applyLocales(plan: Plan, lp: LocalePlan): Promise<void> {
     const source = plan.outcomes.get(i.pageFile!);
     return source !== undefined && source.outcome !== "error" && source.docId !== null;
   };
-  const run = lp.items.some(writes) ? await writeRun(plan) : null;
+  let run: WriteRun | null = null;
+  let runError: unknown = null;
+  if (lp.items.some(writes)) {
+    try {
+      run = await writeRun(plan);
+    } catch (e) {
+      if (isNamed(e, "LicenceError")) throw e;
+      runError = e;
+    }
+  }
 
   for (const item of lp.items) {
     const path_ = item.file.path;
@@ -670,6 +690,7 @@ async function applyLocales(plan: Plan, lp: LocalePlan): Promise<void> {
     if (act.kind === "none") continue;
     const locale = item.file.locale;
     try {
+      if (runError !== null) throw runError;
       await inTx(async (tx) => {
         const collection = plan.col.name;
         if (act.kind === "save") {
@@ -701,7 +722,11 @@ async function applyLocales(plan: Plan, lp: LocalePlan): Promise<void> {
  * @returns the per-file outcomes, warnings and errors, and the Starlight details (stop, pruned, unsupported).
  * @throws {ValidationError} when the directory is missing, the run found no source file at all, or `prune` is set
  * while a source entry could not be read.
- * @throws {LicenceError} when the evaluation has ended without a key (the run aborts at the first write).
+ * @throws {LicenceError} when the evaluation has ended without a key (the run aborts at the first write, before any
+ * transaction opens).
+ * @throws {Error} a database error in the planning reads, or in the prune. A guard failure other than a
+ * `LicenceError` (a database error on the licence read, an actor containing U+0000) does not escape: it costs the
+ * files it hits, which come back as `error` outcomes.
  */
 export async function importStarlight(
   ctx: Ctx, input: ImportInput & { starlight: StarlightImportOptions },

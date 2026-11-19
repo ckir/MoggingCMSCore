@@ -132,4 +132,84 @@ describe("the licence guard of a Starlight import", () => {
       if (saved !== undefined) process.env.MOGGING_LICENSE_KEY = saved;
     }
   });
+
+  it("a locale-only import with an expired licence rejects with LicenceError and writes no locale row", async () => {
+    const saved = process.env.MOGGING_LICENSE_KEY;
+    delete process.env.MOGGING_LICENSE_KEY;
+    try {
+      await withTestDb(async (sql) => {
+        await migrate(sql);
+        const root = project({});
+        put(root, "a.md", page("A", "English a"));
+        put(root, "de/a.md", page("a-de", "Deutsch a"));
+        expect((await importWith(sql, root)).errors).toEqual([]);
+        const rows = async (): Promise<number> => Number((await sql`select count(*)::int as n from document_localized`)[0]!["n"]);
+        const before = await rows();
+        await sql`update migrations set applied_at = now() - interval '31 days'`;
+        put(root, "de/a.md", page("a-de-2", "Deutsch a zwei"));
+        await expect(importWith(sql, root)).rejects.toBeInstanceOf(LicenceError);
+        expect(await rows()).toBe(before);
+      });
+    } finally {
+      if (saved !== undefined) process.env.MOGGING_LICENSE_KEY = saved;
+    }
+  });
+
+  it("a one-off failure of the licence read costs one file, and the guard is retried by the next", async () => {
+    const saved = process.env.MOGGING_LICENSE_KEY;
+    delete process.env.MOGGING_LICENSE_KEY;
+    try {
+      await withTestDb(async (sql) => {
+        await migrate(sql);
+        let reads = 0;
+        // Intercepts only the tagged-template call; `begin` and the rest pass through to the real connection.
+        const flaky = new Proxy(sql, {
+          apply(target, thisArg, args) {
+            const strings = args[0] as unknown;
+            const text = Array.isArray(strings) ? (strings as string[]).join("?") : "";
+            if (/from migrations/i.test(text)) {
+              reads++;
+              if (reads === 1) throw new Error("boom");
+            }
+            return Reflect.apply(target, thisArg, args);
+          },
+        });
+        const root = project({});
+        for (const s of ["a", "b", "c"]) put(root, `${s}.md`, page(s.toUpperCase(), `English ${s}`));
+        const r = await importFolder(ctxFor(flaky), { dir: root, publish: true, starlight: { layout } });
+        const byOutcome = (o: string) => r.files.filter((f) => f.outcome === o).map((f) => f.file);
+        expect(byOutcome("error")).toEqual([`${D}/a.md`]);
+        expect(r.errors.map((e) => e.message)).toEqual([expect.stringContaining("boom")]);
+        expect(byOutcome("created")).toEqual([`${D}/b.md`, `${D}/c.md`]);
+        expect(reads, "one failed read, one successful read").toBe(2);
+      });
+    } finally {
+      if (saved !== undefined) process.env.MOGGING_LICENSE_KEY = saved;
+    }
+  });
+
+  it("an actor with U+0000 on a locale-only import makes each changed locale file an error and writes nothing", async () => {
+    const saved = process.env.MOGGING_LICENSE_KEY;
+    delete process.env.MOGGING_LICENSE_KEY;
+    try {
+      await withTestDb(async (sql) => {
+        await migrate(sql);
+        const root = project({});
+        for (const s of ["a", "b"]) {
+          put(root, `${s}.md`, page(s.toUpperCase(), `English ${s}`));
+          put(root, `de/${s}.md`, page(`${s}-de`, `Deutsch ${s}`));
+        }
+        expect((await importWith(sql, root)).errors).toEqual([]);
+        const rows = async (): Promise<number> => Number((await sql`select count(*)::int as n from document_localized`)[0]!["n"]);
+        const before = await rows();
+        for (const s of ["a", "b"]) put(root, `de/${s}.md`, page(`${s}-de-2`, `Deutsch ${s} zwei`));
+        const r = await importFolder(ctxFor(sql, "bad\u0000actor"), { dir: root, publish: true, starlight: { layout } });
+        expect(r.files.filter((f) => f.outcome === "error").map((f) => f.file)).toEqual([`${D}/de/a.md`, `${D}/de/b.md`]);
+        expect(r.errors).toHaveLength(2);
+        expect(await rows()).toBe(before);
+      });
+    } finally {
+      if (saved !== undefined) process.env.MOGGING_LICENSE_KEY = saved;
+    }
+  });
 });
