@@ -1,5 +1,5 @@
 {
-  "generatedFromCommit": "801221f07c20dbcc7348f24115b63cdbec1a05b4",
+  "generatedFromCommit": "ba11efc0149fa7b558c02159f27712ae544d38f0",
   "phases": [
     {
       "name": "A: day one, save only",
@@ -70,6 +70,7 @@
         "documents": [
           {
             "slug": "a",
+            "createdBy": "tester",
             "scopes": [
               {
                 "scope": "de",
@@ -100,6 +101,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -135,6 +137,7 @@
                 },
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -150,6 +153,7 @@
                 "sourceHashes": null,
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -182,6 +186,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               }
@@ -189,6 +194,7 @@
           },
           {
             "slug": "b",
+            "createdBy": "tester",
             "scopes": [
               {
                 "scope": "de",
@@ -219,6 +225,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -254,6 +261,7 @@
                 },
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -269,6 +277,7 @@
                 "sourceHashes": null,
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -301,6 +310,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               }
@@ -308,6 +318,7 @@
           },
           {
             "slug": "c",
+            "createdBy": "tester",
             "scopes": [
               {
                 "scope": "de",
@@ -337,6 +348,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": null,
+                "unpublishedBy": null,
                 "hasPublishedAt": false,
                 "hasUnpublishedAt": false
               },
@@ -372,6 +384,7 @@
                 },
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -387,6 +400,7 @@
                 "sourceHashes": null,
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -419,6 +433,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               }
@@ -491,6 +506,7 @@
         "documents": [
           {
             "slug": "a",
+            "createdBy": "tester",
             "scopes": [
               {
                 "scope": "de",
@@ -521,6 +537,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -556,6 +573,7 @@
                 },
                 "createdBy": "tester",
                 "publishedBy": null,
+                "unpublishedBy": null,
                 "hasPublishedAt": false,
                 "hasUnpublishedAt": false
               },
@@ -591,6 +609,7 @@
                 },
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -606,6 +625,7 @@
                 "sourceHashes": null,
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -638,6 +658,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               }
@@ -645,6 +666,7 @@
           },
           {
             "slug": "b",
+            "createdBy": "tester",
             "scopes": [
               {
                 "scope": "de",
@@ -675,6 +697,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -710,6 +733,7 @@
                 },
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -725,6 +749,7 @@
                 "sourceHashes": null,
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -757,6 +782,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               }
@@ -764,6 +790,7 @@
           },
           {
             "slug": "c",
+            "createdBy": "tester",
             "scopes": [
               {
                 "scope": "de",
@@ -793,6 +820,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": null,
+                "unpublishedBy": null,
                 "hasPublishedAt": false,
                 "hasUnpublishedAt": false
               },
@@ -828,6 +856,7 @@
                 },
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -843,6 +872,7 @@
                 "sourceHashes": null,
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -875,6 +905,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               }
@@ -952,6 +983,7 @@
         "documents": [
           {
             "slug": "a",
+            "createdBy": "tester",
             "scopes": [
               {
                 "scope": "de",
@@ -982,6 +1014,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": "tester",
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": true
               },
@@ -1017,6 +1050,7 @@
                 },
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -1052,6 +1086,7 @@
                 },
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -1067,6 +1102,7 @@
                 "sourceHashes": null,
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -1099,6 +1135,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               }
@@ -1106,6 +1143,7 @@
           },
           {
             "slug": "b",
+            "createdBy": "tester",
             "scopes": [
               {
                 "scope": "de",
@@ -1136,6 +1174,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": "tester",
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": true
               },
@@ -1171,6 +1210,7 @@
                 },
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -1206,6 +1246,7 @@
                 },
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -1221,6 +1262,7 @@
                 "sourceHashes": null,
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -1253,6 +1295,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               }
@@ -1260,6 +1303,7 @@
           },
           {
             "slug": "c",
+            "createdBy": "tester",
             "scopes": [
               {
                 "scope": "de",
@@ -1289,6 +1333,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": null,
+                "unpublishedBy": null,
                 "hasPublishedAt": false,
                 "hasUnpublishedAt": false
               },
@@ -1324,6 +1369,7 @@
                 },
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -1339,6 +1385,7 @@
                 "sourceHashes": null,
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               },
@@ -1371,6 +1418,7 @@
                 "sourceHashes": {},
                 "createdBy": "tester",
                 "publishedBy": "tester",
+                "unpublishedBy": null,
                 "hasPublishedAt": true,
                 "hasUnpublishedAt": false
               }

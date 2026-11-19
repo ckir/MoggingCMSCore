@@ -21,12 +21,13 @@ export type EndStateScope = {
   sourceHashes: unknown;
   createdBy: string;
   publishedBy: string | null;
+  unpublishedBy: string | null;
   hasPublishedAt: boolean;
   hasUnpublishedAt: boolean;
 };
 
 /** The stored end state of the `docs` collection: documents sorted by slug, scopes by scope then version. */
-export type EndState = { documents: Array<{ slug: string; scopes: EndStateScope[] }> };
+export type EndState = { documents: Array<{ slug: string; createdBy: string; scopes: EndStateScope[] }> };
 
 /** An `ImportReport` with ids removed, files, warnings and errors sorted by path, and `starlight.concurrency` left out. */
 export type NormalizedReport = {
@@ -45,21 +46,23 @@ export type NormalizedReport = {
  */
 export async function dumpEndState(sql: Sql): Promise<EndState> {
   const shared = await sql`
-    select s.doc_id, s.version, s.state, s.data, s.is_head_draft, s.is_head_published, s.created_by, s.published_by,
+    select d.created_by as doc_created_by, s.doc_id, s.version, s.state, s.data, s.is_head_draft, s.is_head_published, s.created_by, s.published_by, s.unpublished_by,
            s.published_at is not null as has_published_at, s.unpublished_at is not null as has_unpublished_at
       from document_shared s join documents d on d.id = s.doc_id where d.collection = 'docs'`;
   const localized = await sql`
-    select l.doc_id, l.locale, l.version, l.state, l.data, l.source_hashes, l.is_head_draft, l.is_head_published,
-           l.created_by, l.published_by,
+    select d.created_by as doc_created_by, l.doc_id, l.locale, l.version, l.state, l.data, l.source_hashes, l.is_head_draft, l.is_head_published,
+           l.created_by, l.published_by, l.unpublished_by,
            l.published_at is not null as has_published_at, l.unpublished_at is not null as has_unpublished_at
       from document_localized l join documents d on d.id = l.doc_id where d.collection = 'docs'`;
   const byDoc = new Map<string, EndStateScope[]>();
   const slugOf = new Map<string, string>();
+  const creatorOf = new Map<string, string>();
   const push = (docId: string, scope: EndStateScope): void => {
     const list = byDoc.get(docId) ?? [];
     list.push(scope);
     byDoc.set(docId, list);
   };
+  for (const r of [...shared, ...localized]) creatorOf.set(r["doc_id"] as string, r["doc_created_by"] as string);
   for (const r of shared) {
     const data = r["data"] as Record<string, unknown>;
     if (typeof data["slug"] === "string" && !slugOf.has(r["doc_id"] as string)) slugOf.set(r["doc_id"] as string, data["slug"]);
@@ -67,6 +70,7 @@ export async function dumpEndState(sql: Sql): Promise<EndState> {
       scope: "shared", version: r["version"] as number, state: r["state"] as string,
       headDraft: r["is_head_draft"] as boolean, headPublished: r["is_head_published"] as boolean,
       data, sourceHashes: null, createdBy: r["created_by"] as string, publishedBy: (r["published_by"] as string | null) ?? null,
+      unpublishedBy: (r["unpublished_by"] as string | null) ?? null,
       hasPublishedAt: r["has_published_at"] as boolean, hasUnpublishedAt: r["has_unpublished_at"] as boolean,
     });
   }
@@ -76,12 +80,14 @@ export async function dumpEndState(sql: Sql): Promise<EndState> {
       headDraft: r["is_head_draft"] as boolean, headPublished: r["is_head_published"] as boolean,
       data: r["data"], sourceHashes: r["source_hashes"], createdBy: r["created_by"] as string,
       publishedBy: (r["published_by"] as string | null) ?? null,
+      unpublishedBy: (r["unpublished_by"] as string | null) ?? null,
       hasPublishedAt: r["has_published_at"] as boolean, hasUnpublishedAt: r["has_unpublished_at"] as boolean,
     });
   }
   const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
   const documents = [...byDoc.entries()].map(([docId, scopes]) => ({
     slug: slugOf.get(docId) ?? `?${docId}`,
+    createdBy: creatorOf.get(docId)!,
     scopes: scopes.sort((a, b) => cmp(a.scope, b.scope) || a.version - b.version),
   }));
   documents.sort((a, b) => cmp(a.slug, b.slug));
