@@ -1,6 +1,8 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { importFolder } from "@mogging/markdown";
 import type { ImportReport } from "@mogging/markdown";
+import { intOption } from "../args.js";
+import { CLI_POOL_MAX } from "../pool.js";
 import { astroConfigWarnings } from "../starlight/astroConfig.js";
 import { UsageError } from "../types.js";
 import type { CommandResult, CommandSpec, Flags } from "../types.js";
@@ -8,10 +10,10 @@ import type { CommandResult, CommandSpec, Flags } from "../types.js";
 const SUCCEEDED = new Set(["created", "updated", "unchanged"]);
 
 const USAGE =
-  "mogging import [<dir>] [--publish] [--prune] [--accept-new-and-gone] [--restore <file>]... [--dry-run] [--json] [--config <path>] [--database-url <url>]";
+  "mogging import [<dir>] [--publish] [--prune] [--accept-new-and-gone] [--restore <file>]... [--dry-run] [--concurrency <n>] [--json] [--config <path>] [--database-url <url>]";
 
 /** The Starlight-only flags, in the order a generic project is told about them. */
-const STARLIGHT_FLAGS = ["prune", "accept-new-and-gone", "restore", "dry-run"] as const;
+const STARLIGHT_FLAGS = ["prune", "accept-new-and-gone", "restore", "dry-run", "concurrency"] as const;
 
 /** The `--restore` values as given, or `[]` when the flag was not used. */
 function restoreValues(flags: Flags): string[] {
@@ -19,9 +21,36 @@ function restoreValues(flags: Flags): string[] {
   return Array.isArray(v) ? v : [];
 }
 
-/** Whether a Starlight-only flag was given (a `multiple` option is an array, so an empty one is not given). */
+/** The write concurrency the CLI requests when `--concurrency` is not given. */
+const DEFAULT_CONCURRENCY = 4;
+
+/**
+ * Whether a Starlight-only flag was given (a `multiple` option is an array, so an empty one is not given; a string
+ * option is given when it is a string).
+ */
 function given(flags: Flags, name: (typeof STARLIGHT_FLAGS)[number]): boolean {
-  return name === "restore" ? restoreValues(flags).length > 0 : flags[name] === true;
+  if (name === "restore") return restoreValues(flags).length > 0;
+  if (name === "concurrency") return typeof flags.concurrency === "string";
+  return flags[name] === true;
+}
+
+/**
+ * The validated `--concurrency` value.
+ *
+ * @param flags the parsed flags.
+ * @returns the whole number of 1 to the pool size, or `undefined` when the flag was not given.
+ * @throws {UsageError} when the value is not a whole number from 1 to `CLI_POOL_MAX`.
+ */
+function concurrencyFlag(flags: Flags): number | undefined {
+  const v = flags.concurrency;
+  return intOption("concurrency", typeof v === "string" ? v : undefined, 1, CLI_POOL_MAX);
+}
+
+/** The reason the import ran fewer writes at once than requested, from the report's `limit`. */
+function clampReason(c: { limit: "pool" | "transaction" | "unknown"; poolMax?: number }): string {
+  if (c.limit === "pool") return `the pool allows ${c.poolMax}`;
+  if (c.limit === "transaction") return "a transaction handle runs one write at a time";
+  return "the pool size is unknown";
 }
 
 /**
@@ -51,6 +80,10 @@ function starlightLines(report: ImportReport): string[] {
   const details = report.starlight;
   const lines: string[] = [];
   if (details?.dryRun === true) lines.push("dry run: nothing was written");
+  const c = details?.concurrency;
+  if (c !== undefined && c.effective < c.requested) {
+    lines.push(`concurrency: ${c.effective} of ${c.requested} (${clampReason(c)})`);
+  }
   for (const f of report.files) lines.push(`${f.outcome} ${f.file}`);
   for (const slug of details?.pruned ?? []) lines.push(`pruned ${slug}`);
   const stop = details?.stop ?? null;
@@ -87,6 +120,7 @@ export const importSpec: CommandSpec = {
     "accept-new-and-gone": { type: "boolean" },
     restore: { type: "string", multiple: true },
     "dry-run": { type: "boolean" },
+    concurrency: { type: "string" },
   },
   project: "full",
   arity: [0, 1],
@@ -109,6 +143,7 @@ export const importSpec: CommandSpec = {
       );
     }
     restorePaths(flags, loaded.root, loaded.cwd);
+    concurrencyFlag(flags);
   },
   async run(env) {
     const layout = env.project.starlight;
@@ -129,6 +164,7 @@ export const importSpec: CommandSpec = {
           acceptNewAndGone: env.flags["accept-new-and-gone"] === true,
           restore: restorePaths(env.flags, root, env.deps.cwd),
           dryRun: env.flags["dry-run"] === true,
+          concurrency: concurrencyFlag(env.flags) ?? DEFAULT_CONCURRENCY,
         },
       });
       // The astro.config drift warnings come first, and ride in `data.warnings` so `--json` carries them.
