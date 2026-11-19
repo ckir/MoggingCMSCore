@@ -9,6 +9,7 @@ import type { Collection, Ctx, DocumentRecord, Field, HeadPair } from "@mogging/
 import { mapFile, splitFrontMatter } from "./contentFile.js";
 import type { RefPlaceholder } from "./contentFile.js";
 import { isSafeSlug } from "./slug.js";
+import type { ConcurrencyDetails } from "./starlight/concurrency.js";
 import { importStarlight } from "./starlight/importStarlight.js";
 import type { StarlightLayout } from "./starlight/layout.js";
 
@@ -27,6 +28,16 @@ export type StarlightImportOptions = {
   restore?: string[];
   /** Compute and report every outcome, write nothing. */
   dryRun?: boolean;
+  /**
+   * How many locale files to write at once, an integer of at least 1 (default 1, which writes them one after the
+   * other). The files of one document are always written in order, by one worker; files of different documents may
+   * interleave. Each worker holds one connection at a time, so the run uses at most `min(concurrency, pool max)`
+   * workers: a transaction handle, or a connection whose pool size is unknown, runs at 1. The source (English) pages
+   * are always written one at a time. The outcome does not depend on the value; `StarlightImportDetails.concurrency`
+   * reports what was used. A value that is not an integer of at least 1 throws a `ValidationError` before any
+   * statement runs.
+   */
+  concurrency?: number;
 };
 
 /**
@@ -68,6 +79,8 @@ export type StarlightImportDetails = {
   behind: string[];
   /** Files with a Starlight extension Mogging does not import. */
   unsupported: string[];
+  /** The write concurrency requested and the one used, and what limited it; present for a dry run too. */
+  concurrency: ConcurrencyDetails;
 };
 
 /**

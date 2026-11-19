@@ -19,6 +19,7 @@ import { readStarlightFile, splitPage } from "./frontMatter.js";
 import { scanDocs } from "./scan.js";
 import type { Scan, ScannedFile } from "./scan.js";
 import type { RichTextRoot } from "../tree.js";
+import { resolveConcurrency, runGroups } from "./concurrency.js";
 
 type Rec = Record<string, unknown>;
 
@@ -639,40 +640,34 @@ async function planLocales(
   return { items, behind: behind.sort(byText) };
 }
 
+/** A locale item that will write, with the document it writes to (resolved) and what it does. */
+type WorkItem = { item: LocaleItem; docId: string; act: Exclude<LocaleAct, { kind: "none" }> };
+
 /**
  * Phase 2 for the locale files: one transaction per file (the save, then the publish), after the source pages are
- * written, so a new page's document exists. The write run is created once, before the first file, and only when some
- * file will write. A `LicenceError` from creating it propagates and nothing is written for the locale files. Any
- * other guard failure (a database error on the licence read, a NUL actor) is held and thrown inside each writing
- * file's own try, so each such file becomes an `error` outcome and the import still returns its report. A file whose
- * write fails becomes an `error` outcome and the run goes on.
+ * written, so a new page's document exists. A sequential pre-pass walks the items in plan order, resolves each
+ * file's document (a page this run created is read from its outcome), reports and skips a file whose English page
+ * was not imported, and keeps the files that write. The write run is then created once, and only when some file
+ * writes. A `LicenceError` from creating it propagates and nothing is written for the locale files. Any other guard
+ * failure (a database error on the licence read, a NUL actor) is held and thrown inside each writing file's own try,
+ * so each such file becomes an `error` outcome and the import still returns its report. The writing files are then
+ * grouped by document (first-appearance order) and written by up to `effective` workers: the files of one document
+ * run in order on one worker, different documents may interleave, and every worker has settled before this returns.
+ * A file whose write fails becomes an `error` outcome and the run goes on. The report's order never depends on
+ * timing: the pre-pass fixes the warnings and the outcome entries, and the workers only update existing entries and
+ * the errors map.
  *
+ * @param plan the plan, with the outcomes the source pass filled.
+ * @param lp the locale plan.
+ * @param effective the number of concurrent workers, from `resolveConcurrency`.
  * @throws {LicenceError} when the evaluation has ended without a key.
  */
-async function applyLocales(plan: Plan, lp: LocalePlan): Promise<void> {
+async function applyLocales(plan: Plan, lp: LocalePlan, effective: number): Promise<void> {
   const { ctx } = plan;
   const inTx = <T>(fn: (tx: Tx) => Promise<T>): Promise<T> =>
     ctx.sql.begin(async (tx) => fn(tx)) as Promise<T>;
-  // The run is created before any item, and only when at least one item will write: it has something to do and its
-  // document exists (a record, or a page this run created). An all-unchanged run never reads the licence, and a
-  // refusal aborts the import here, before any locale file is written.
-  const writes = (i: LocaleItem): boolean => {
-    if (i.act.kind === "none") return false;
-    if (i.record !== null) return true;
-    const source = plan.outcomes.get(i.pageFile!);
-    return source !== undefined && source.outcome !== "error" && source.docId !== null;
-  };
-  let run: WriteRun | null = null;
-  let runError: unknown = null;
-  if (lp.items.some(writes)) {
-    try {
-      run = await writeRun(plan);
-    } catch (e) {
-      if (isNamed(e, "LicenceError")) throw e;
-      runError = e;
-    }
-  }
 
+  const work: WorkItem[] = [];
   for (const item of lp.items) {
     const path_ = item.file.path;
     let docId = item.record?.id ?? null;
@@ -686,25 +681,52 @@ async function applyLocales(plan: Plan, lp: LocalePlan): Promise<void> {
       }
       plan.outcomes.get(path_)!.docId = docId;
     }
-    const act = item.act;
-    if (act.kind === "none") continue;
+    if (item.act.kind === "none") continue;
+    work.push({ item, docId, act: item.act });
+  }
+
+  // The run is created once, before any file is written, and only when some file will write: an all-unchanged run
+  // never reads the licence, and a refusal aborts the import here, before any locale file is written.
+  let run: WriteRun | null = null;
+  let runError: unknown = null;
+  if (work.length > 0) {
+    try {
+      run = await writeRun(plan);
+    } catch (e) {
+      if (isNamed(e, "LicenceError")) throw e;
+      runError = e;
+    }
+  }
+
+  const groups = new Map<string, WorkItem[]>();
+  for (const w of work) {
+    const group = groups.get(w.docId);
+    if (group === undefined) groups.set(w.docId, [w]);
+    else group.push(w);
+  }
+
+  // Never rejects: a failure is recorded as the file's `error` outcome. Each call holds one connection (one
+  // transaction), so `effective` workers never wait on one another for a connection.
+  const writeOne = async ({ item, docId, act }: WorkItem): Promise<void> => {
+    const path_ = item.file.path;
     const locale = item.file.locale;
     try {
       if (runError !== null) throw runError;
       await inTx(async (tx) => {
         const collection = plan.col.name;
         if (act.kind === "save") {
-          await saveDraftWithinTx(tx, run!, { docId: docId!, locale, data: item.data, ...(act.untracked ? { untracked: true } : {}) }, collection);
-          if (act.publish) await publishWithinRun(tx, run!, { docId: docId!, locale }, { collection, alreadyLocked: true });
+          await saveDraftWithinTx(tx, run!, { docId, locale, data: item.data, ...(act.untracked ? { untracked: true } : {}) }, collection);
+          if (act.publish) await publishWithinRun(tx, run!, { docId, locale }, { collection, alreadyLocked: true });
         } else {
-          await publishWithinRun(tx, run!, { docId: docId!, locale }, { collection, alreadyLocked: false });
+          await publishWithinRun(tx, run!, { docId, locale }, { collection, alreadyLocked: false });
         }
       });
     } catch (e) {
       plan.errors.set(path_, msg(e));
       plan.outcomes.set(path_, { file: path_, docId, outcome: "error", published: false });
     }
-  }
+  };
+  await runGroups([...groups.values()], effective, writeOne);
 }
 
 /**
@@ -720,8 +742,9 @@ async function applyLocales(plan: Plan, lp: LocalePlan): Promise<void> {
  * @param ctx engine context; the licence-guarded writes check the licence and the actor.
  * @param input `dir` is the project root; `starlight` carries the layout and the flags.
  * @returns the per-file outcomes, warnings and errors, and the Starlight details (stop, pruned, unsupported).
- * @throws {ValidationError} when the directory is missing, the run found no source file at all, or `prune` is set
- * while a source entry could not be read.
+ * @throws {ValidationError} when the directory is missing, the run found no source file at all, `prune` is set
+ * while a source entry could not be read, or `starlight.concurrency` is not an integer of at least 1 (checked first,
+ * before any statement).
  * @throws {LicenceError} when the evaluation has ended without a key (the run aborts at the first write, before any
  * transaction opens).
  * @throws {Error} a database error in the planning reads, or in the prune. A guard failure other than a
@@ -731,11 +754,12 @@ async function applyLocales(plan: Plan, lp: LocalePlan): Promise<void> {
 export async function importStarlight(
   ctx: Ctx, input: ImportInput & { starlight: StarlightImportOptions },
 ): Promise<ImportReport> {
+  const concurrency = resolveConcurrency(ctx.sql, input.starlight.concurrency);
   const plan = await planSource(ctx, input);
   const locales = await planLocales(plan, input);
   if (input.starlight.dryRun !== true) {
     await applySource(plan);
-    await applyLocales(plan, locales);
+    await applyLocales(plan, locales, concurrency.effective);
   }
   const files = [...plan.outcomes.values()].sort((a, b) => byText(a.file, b.file));
   const errors: FileMessage[] = [...plan.errors].map(([file, message]) => ({ file, message })).sort((a, b) => byText(a.file, b.file));
@@ -749,6 +773,7 @@ export async function importStarlight(
       pruned: plan.prune.map((p) => p.slug),
       behind: locales.behind,
       unsupported: plan.unsupported,
+      concurrency,
     },
   };
 }
