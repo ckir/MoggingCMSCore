@@ -1,0 +1,1383 @@
+{
+  "generatedFromCommit": "801221f07c20dbcc7348f24115b63cdbec1a05b4",
+  "phases": [
+    {
+      "name": "A: day one, save only",
+      "report": {
+        "files": [
+          {
+            "file": "src/content/docs/a.md",
+            "outcome": "created",
+            "published": true
+          },
+          {
+            "file": "src/content/docs/b.md",
+            "outcome": "created",
+            "published": true
+          },
+          {
+            "file": "src/content/docs/c.md",
+            "outcome": "created",
+            "published": true
+          },
+          {
+            "file": "src/content/docs/de/a.md",
+            "outcome": "updated",
+            "published": true
+          },
+          {
+            "file": "src/content/docs/de/b.md",
+            "outcome": "updated",
+            "published": true
+          },
+          {
+            "file": "src/content/docs/de/c.md",
+            "outcome": "updated",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/zh-cn/a.md",
+            "outcome": "updated",
+            "published": true
+          },
+          {
+            "file": "src/content/docs/zh-cn/b.md",
+            "outcome": "updated",
+            "published": true
+          },
+          {
+            "file": "src/content/docs/zh-cn/c.md",
+            "outcome": "updated",
+            "published": true
+          }
+        ],
+        "warnings": [
+          {
+            "file": "src/content/docs/de/c.md",
+            "message": "incomplete translation (missing title); saved as an unpublished draft"
+          }
+        ],
+        "errors": [],
+        "starlight": {
+          "dryRun": false,
+          "stop": null,
+          "pruned": [],
+          "behind": [],
+          "unsupported": []
+        }
+      },
+      "state": {
+        "documents": [
+          {
+            "slug": "a",
+            "scopes": [
+              {
+                "scope": "de",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Deutsch a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "a-de"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "en",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "English a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "A"
+                },
+                "sourceHashes": {
+                  "body": "4362ec2f929b51db6318243261cfcaffb8e631e16a72598983b23981ccb9f00b",
+                  "title": "798640599597df7a8daa32b1132f07850a68b5e71bd295650399a38074f52804"
+                },
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "shared",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "slug": "a"
+                },
+                "sourceHashes": null,
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "zh-CN",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Chinese a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "a-zh"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              }
+            ]
+          },
+          {
+            "slug": "b",
+            "scopes": [
+              {
+                "scope": "de",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Deutsch b"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "b-de"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "en",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "English b"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "B"
+                },
+                "sourceHashes": {
+                  "body": "69eb31e74101fc4bddf47074f1cb10836514dc71a4ce1f68fa50aee52f6c5264",
+                  "title": "955cca1ceba45052d85984d3a2565f4ce25b7488602c60a165598bf80b26e472"
+                },
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "shared",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "slug": "b"
+                },
+                "sourceHashes": null,
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "zh-CN",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Chinese b"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "b-zh"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              }
+            ]
+          },
+          {
+            "slug": "c",
+            "scopes": [
+              {
+                "scope": "de",
+                "version": 1,
+                "state": "DRAFT_HUMAN",
+                "headDraft": true,
+                "headPublished": false,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Deutsch c"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": null,
+                "hasPublishedAt": false,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "en",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "English c"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "C"
+                },
+                "sourceHashes": {
+                  "body": "8c0a1dec8d9ae510c81530cd3a5f320a344905c5a648aebbaef23ed5fb733d0c",
+                  "title": "c2e8c0cc2e73b9bd1ba9ef1979e73169b471e25b0e9909efe98fde462c0bf55f"
+                },
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "shared",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "slug": "c"
+                },
+                "sourceHashes": null,
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "zh-CN",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Chinese c"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "c-zh"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "B: tracked save only",
+      "report": {
+        "files": [
+          {
+            "file": "src/content/docs/a.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/b.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/c.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/de/a.md",
+            "outcome": "updated",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/de/b.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/de/c.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/zh-cn/a.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/zh-cn/b.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/zh-cn/c.md",
+            "outcome": "unchanged",
+            "published": false
+          }
+        ],
+        "warnings": [],
+        "errors": [],
+        "starlight": {
+          "dryRun": false,
+          "stop": null,
+          "pruned": [],
+          "behind": [],
+          "unsupported": []
+        }
+      },
+      "state": {
+        "documents": [
+          {
+            "slug": "a",
+            "scopes": [
+              {
+                "scope": "de",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Deutsch a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "a-de"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "de",
+                "version": 2,
+                "state": "DRAFT_HUMAN",
+                "headDraft": true,
+                "headPublished": false,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Deutsch a zwei"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "a-de-2"
+                },
+                "sourceHashes": {
+                  "body": "4362ec2f929b51db6318243261cfcaffb8e631e16a72598983b23981ccb9f00b",
+                  "title": "798640599597df7a8daa32b1132f07850a68b5e71bd295650399a38074f52804"
+                },
+                "createdBy": "tester",
+                "publishedBy": null,
+                "hasPublishedAt": false,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "en",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "English a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "A"
+                },
+                "sourceHashes": {
+                  "body": "4362ec2f929b51db6318243261cfcaffb8e631e16a72598983b23981ccb9f00b",
+                  "title": "798640599597df7a8daa32b1132f07850a68b5e71bd295650399a38074f52804"
+                },
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "shared",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "slug": "a"
+                },
+                "sourceHashes": null,
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "zh-CN",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Chinese a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "a-zh"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              }
+            ]
+          },
+          {
+            "slug": "b",
+            "scopes": [
+              {
+                "scope": "de",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Deutsch b"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "b-de"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "en",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "English b"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "B"
+                },
+                "sourceHashes": {
+                  "body": "69eb31e74101fc4bddf47074f1cb10836514dc71a4ce1f68fa50aee52f6c5264",
+                  "title": "955cca1ceba45052d85984d3a2565f4ce25b7488602c60a165598bf80b26e472"
+                },
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "shared",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "slug": "b"
+                },
+                "sourceHashes": null,
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "zh-CN",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Chinese b"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "b-zh"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              }
+            ]
+          },
+          {
+            "slug": "c",
+            "scopes": [
+              {
+                "scope": "de",
+                "version": 1,
+                "state": "DRAFT_HUMAN",
+                "headDraft": true,
+                "headPublished": false,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Deutsch c"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": null,
+                "hasPublishedAt": false,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "en",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "English c"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "C"
+                },
+                "sourceHashes": {
+                  "body": "8c0a1dec8d9ae510c81530cd3a5f320a344905c5a648aebbaef23ed5fb733d0c",
+                  "title": "c2e8c0cc2e73b9bd1ba9ef1979e73169b471e25b0e9909efe98fde462c0bf55f"
+                },
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "shared",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "slug": "c"
+                },
+                "sourceHashes": null,
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "zh-CN",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Chinese c"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "c-zh"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "C: tracked save and publish, plus a publish-only draft",
+      "report": {
+        "files": [
+          {
+            "file": "src/content/docs/a.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/b.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/c.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/de/a.md",
+            "outcome": "updated",
+            "published": true
+          },
+          {
+            "file": "src/content/docs/de/b.md",
+            "outcome": "updated",
+            "published": true
+          },
+          {
+            "file": "src/content/docs/de/c.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/zh-cn/a.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/zh-cn/b.md",
+            "outcome": "unchanged",
+            "published": false
+          },
+          {
+            "file": "src/content/docs/zh-cn/c.md",
+            "outcome": "unchanged",
+            "published": false
+          }
+        ],
+        "warnings": [
+          {
+            "file": "src/content/docs/de/c.md",
+            "message": "incomplete translation (missing title); the pending draft is not published"
+          }
+        ],
+        "errors": [],
+        "starlight": {
+          "dryRun": false,
+          "stop": null,
+          "pruned": [],
+          "behind": [],
+          "unsupported": []
+        }
+      },
+      "state": {
+        "documents": [
+          {
+            "slug": "a",
+            "scopes": [
+              {
+                "scope": "de",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": false,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Deutsch a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "a-de"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": true
+              },
+              {
+                "scope": "de",
+                "version": 2,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Deutsch a zwei"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "a-de-2"
+                },
+                "sourceHashes": {
+                  "body": "4362ec2f929b51db6318243261cfcaffb8e631e16a72598983b23981ccb9f00b",
+                  "title": "798640599597df7a8daa32b1132f07850a68b5e71bd295650399a38074f52804"
+                },
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "en",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "English a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "A"
+                },
+                "sourceHashes": {
+                  "body": "4362ec2f929b51db6318243261cfcaffb8e631e16a72598983b23981ccb9f00b",
+                  "title": "798640599597df7a8daa32b1132f07850a68b5e71bd295650399a38074f52804"
+                },
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "shared",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "slug": "a"
+                },
+                "sourceHashes": null,
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "zh-CN",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Chinese a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "a-zh"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              }
+            ]
+          },
+          {
+            "slug": "b",
+            "scopes": [
+              {
+                "scope": "de",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": false,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Deutsch b"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "b-de"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": true
+              },
+              {
+                "scope": "de",
+                "version": 2,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Deutsch b zwei"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "b-de-2"
+                },
+                "sourceHashes": {
+                  "body": "69eb31e74101fc4bddf47074f1cb10836514dc71a4ce1f68fa50aee52f6c5264",
+                  "title": "955cca1ceba45052d85984d3a2565f4ce25b7488602c60a165598bf80b26e472"
+                },
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "en",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "English b"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "B"
+                },
+                "sourceHashes": {
+                  "body": "69eb31e74101fc4bddf47074f1cb10836514dc71a4ce1f68fa50aee52f6c5264",
+                  "title": "955cca1ceba45052d85984d3a2565f4ce25b7488602c60a165598bf80b26e472"
+                },
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "shared",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "slug": "b"
+                },
+                "sourceHashes": null,
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "zh-CN",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Chinese b"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "b-zh"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              }
+            ]
+          },
+          {
+            "slug": "c",
+            "scopes": [
+              {
+                "scope": "de",
+                "version": 1,
+                "state": "DRAFT_HUMAN",
+                "headDraft": true,
+                "headPublished": false,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Deutsch c"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": null,
+                "hasPublishedAt": false,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "en",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "English c"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "C"
+                },
+                "sourceHashes": {
+                  "body": "8c0a1dec8d9ae510c81530cd3a5f320a344905c5a648aebbaef23ed5fb733d0c",
+                  "title": "c2e8c0cc2e73b9bd1ba9ef1979e73169b471e25b0e9909efe98fde462c0bf55f"
+                },
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "shared",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "slug": "c"
+                },
+                "sourceHashes": null,
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              },
+              {
+                "scope": "zh-CN",
+                "version": 1,
+                "state": "PUBLISHED",
+                "headDraft": false,
+                "headPublished": true,
+                "data": {
+                  "body": {
+                    "mode": "md",
+                    "type": "root",
+                    "version": 1,
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "marks": [],
+                            "value": "Chinese c"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "title": "c-zh"
+                },
+                "sourceHashes": {},
+                "createdBy": "tester",
+                "publishedBy": "tester",
+                "hasPublishedAt": true,
+                "hasUnpublishedAt": false
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
