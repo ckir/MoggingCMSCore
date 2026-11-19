@@ -206,6 +206,9 @@ describe("the licence guard of a Starlight import", () => {
         const r = await importFolder(ctxFor(sql, "bad\u0000actor"), { dir: root, publish: true, starlight: { layout } });
         expect(r.files.filter((f) => f.outcome === "error").map((f) => f.file)).toEqual([`${D}/de/a.md`, `${D}/de/b.md`]);
         expect(r.errors).toHaveLength(2);
+        // The captured guard failure itself is rethrown inside each file's try: the message names the actor, it is not a
+        // TypeError from a null run.
+        for (const e of r.errors) expect(e.message).toContain("actor: contains U+0000");
         expect(await rows()).toBe(before);
       });
     } finally {

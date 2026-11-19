@@ -621,6 +621,27 @@ describe("importFolder, Starlight mode, locale files", () => {
     });
   });
 
+  test("a new English page whose write fails leaves its locale file a skipped warning, not a second error", async () => {
+    await setup(async (sql, ctx) => {
+      // The page classifies as a create, so it reaches the write pass; the trigger then fails its first save. Its
+      // locale file has no live document to attach to and is reported through the English page's error outcome.
+      await sql.unsafe(`create function boom_guard() returns trigger language plpgsql as $$
+        begin raise exception 'boom-source'; end $$`);
+      await sql.unsafe(`create trigger boom before insert on document_localized for each row
+        when (new.data->>'title' = 'Boom') execute function boom_guard()`);
+      const root = docsProject({ "a.md": page("Boom"), "b.md": page("B"), "de/a.md": page("Hallo"), "de/b.md": page("Hallo B") });
+      const r = await run(ctx, root);
+      expect(fileOf(r, "a.md")).toMatchObject({ outcome: "error", docId: null });
+      expect(r.errors.map((e) => e.file)).toEqual([`${D}/a.md`]);
+      expect(r.errors[0]!.message).toContain("boom-source");
+      expect(fileOf(r, "de/a.md")).toEqual({ file: `${D}/de/a.md`, docId: null, outcome: "skipped", published: false });
+      expect(warningsOf(r, "de/a.md")).toEqual(["its English page was not imported; the file is not imported"]);
+      expect(await bySlug(ctx, "a")).toBeNull();
+      expect(fileOf(r, "b.md")).toMatchObject({ outcome: "created" });
+      expect(fileOf(r, "de/b.md")).toMatchObject({ outcome: "updated", published: true });
+    });
+  });
+
   test("classification is batched: the query count does not grow with the number of diverging files", async () => {
     await setup(async (sql, ctx) => {
       const files: Record<string, string> = {};
