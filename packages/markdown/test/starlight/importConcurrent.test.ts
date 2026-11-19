@@ -10,9 +10,11 @@ import { withPooledTestDb, withTestDb } from "../db.js";
 import { countingSql, ctxFor, layout, project } from "./fixtures.js";
 import { dumpEndState, runScenario } from "./endState.js";
 
-// Records `report.starlight.concurrency` of every import, including the ones `runScenario` makes (it calls the
-// module's `importFolder` and returns the normalized report, which leaves the concurrency out).
+// Records `report.starlight.concurrency` and the raw (unsorted, as returned) `report.warnings` of every import,
+// including the ones `runScenario` makes (it calls the module's `importFolder` and returns the normalized report,
+// which leaves the concurrency out and sorts the warnings).
 const seen = vi.hoisted(() => [] as unknown[]);
+const seenWarnings = vi.hoisted(() => [] as unknown[]);
 vi.mock("../../src/import.js", async (importOriginal) => {
   const m = await importOriginal<typeof import("../../src/import.js")>();
   return {
@@ -20,6 +22,7 @@ vi.mock("../../src/import.js", async (importOriginal) => {
     importFolder: async (...args: Parameters<typeof m.importFolder>) => {
       const r = await m.importFolder(...args);
       seen.push(r.starlight?.concurrency);
+      seenWarnings.push(r.warnings.map((w) => ({ file: w.file, message: w.message })));
       return r;
     },
   };
@@ -55,8 +58,10 @@ describe("importFolder, Starlight mode, concurrent locale writes", () => {
   test("(a) concurrency 1 and 4 leave the end state and report of the golden", async () => {
     const golden = JSON.parse(fs.readFileSync(goldenPath, "utf8")) as { phases: unknown };
     const results: unknown[] = [];
+    const rawWarnings: unknown[][] = [];
     for (const concurrency of [1, 4]) {
       seen.length = 0;
+      seenWarnings.length = 0;
       await withPooledTestDb(8, async (sql) => {
         await migrate(sql);
         results.push(await runScenario(sql, ctxFor(sql), { concurrency }));
@@ -64,10 +69,35 @@ describe("importFolder, Starlight mode, concurrent locale writes", () => {
       expect(seen, `concurrency ${concurrency}`).toEqual(
         Array.from({ length: 3 }, () => ({ requested: concurrency, effective: concurrency, limit: "pool", poolMax: 8 })),
       );
+      rawWarnings.push([...seenWarnings]);
     }
     expect(results[1]).toEqual(results[0]);
     expect(results[0]).toEqual(golden.phases);
+    // `endState.ts` sorts the warnings, so the order `report.warnings` comes back in is compared here, raw.
+    expect(rawWarnings[0]).toHaveLength(3);
+    expect(rawWarnings[0]!.flat().length, "the scenario reports at least one warning").toBeGreaterThan(0);
+    expect(rawWarnings[1]).toEqual(rawWarnings[0]);
   });
+
+  test("(a2) several warnings from different documents come back in the same order at 1 and 4", async () => {
+    // Locale files whose English page does not exist: one warning each, from the locale phase's planning loop.
+    const raw: unknown[][] = [];
+    for (const concurrency of [1, 4]) {
+      seenWarnings.length = 0;
+      await withPooledTestDb(8, async (sql) => {
+        await migrate(sql);
+        const root = sixPages();
+        for (const rel of ["de/m.md", "de/n.md", "zh-cn/n.md", "de/o.md"]) put(root, rel, page(rel, `orphan ${rel}`));
+        const r = await run(sql, root, { concurrency });
+        expect(r.errors).toEqual([]);
+        expect(r.warnings.length, "warnings from at least three documents").toBeGreaterThanOrEqual(3);
+      });
+      raw.push([...seenWarnings]);
+    }
+    expect(raw[0]).toHaveLength(1);
+    expect((raw[0]![0] as unknown[]).length).toBeGreaterThanOrEqual(3);
+    expect(raw[1]).toEqual(raw[0]);
+  }, 20_000);
 
   test("(b) a pool of 2 clamps a request of 8 to 2 and finishes", async () => {
     await withPooledTestDb(2, async (sql) => {

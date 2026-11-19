@@ -26,6 +26,7 @@ export async function withTestDb(fn: (sql: Sql) => Promise<void>): Promise<void>
  *
  * @param max - The pool size.
  * @param fn - The test body, given the pool.
+ * @returns A promise that settles after the pool is ended and the schema dropped.
  */
 export async function withPooledTestDb(max: number, fn: (sql: Sql) => Promise<void>): Promise<void> {
   const url = process.env.DATABASE_URL;
