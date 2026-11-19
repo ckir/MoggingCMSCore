@@ -649,7 +649,9 @@ access-control system:
   operations.
   Markdown import (Starlight mode) is guarded once per run, lazily at its first write, so a dry run or an
   import that writes nothing needs no licence and a run that started licensed finishes; a licence refusal
-  aborts the import before any write, and any other guard failure is reported per file.
+  aborts the import before any guarded write (no save or publish of the run lands), and any other guard failure
+  is reported per file. The prune runs at the end of the source phase and `deleteDocument` is not guarded, so a
+  run whose source pages are all unchanged can prune before its first locale write meets the refusal.
 - Reads keep working after expiry, including `resolve`, `getDocument`, `listDocuments`, review
   reads, `listJobs`, provenance and licence state.
 

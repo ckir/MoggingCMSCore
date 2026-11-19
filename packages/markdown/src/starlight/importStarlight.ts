@@ -84,7 +84,9 @@ type Plan = {
  * The write run of this import: runs the licence and actor guards on the first call and returns the same promise
  * afterwards, so one import makes at most one successful licence read. A `LicenceError` stays cached (the import
  * aborts on it); any other failure (a database error on the licence read, a NUL actor) is not cached, so the next
- * call runs the guards again and one failed read costs one file. Never called for a dry run, an all-unchanged run
+ * call runs the guards again. In the source phase a failed read costs the page being written (the next page
+ * retries); in the locale phase the error is captured once and thrown to every file that writes in that run, so
+ * it costs every changed locale file of the run. Never called for a dry run, an all-unchanged run
  * or a prune-only run, and never from inside a per-file loop's transaction.
  *
  * @param plan the plan whose context the guards read.

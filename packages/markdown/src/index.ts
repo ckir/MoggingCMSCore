@@ -19,3 +19,4 @@ export { defineStarlightLayout } from "./starlight/layout.js";
 export type { StarlightPathEntry, StarlightLayoutInput, StarlightLayout, LayoutEntry } from "./starlight/layout.js";
 export { renamePage } from "./starlight/rename.js";
 export type { RenameInput, RenameReport } from "./starlight/rename.js";
+export type { ConcurrencyDetails } from "./starlight/concurrency.js";
