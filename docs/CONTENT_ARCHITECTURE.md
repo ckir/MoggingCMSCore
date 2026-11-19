@@ -647,6 +647,9 @@ access-control system:
   `createDocument` and `deleteDocument` are not guarded; neither are reads, `unpublish`,
   `rejectDraft`, `trackFields`, `release create/add/remove`, `cancelJobs`, or glossary and budget
   operations.
+  Markdown import (Starlight mode) is guarded once per run, lazily at its first write, so a dry run or an
+  import that writes nothing needs no licence and a run that started licensed finishes; a licence refusal
+  aborts the import before any write, and any other guard failure is reported per file.
 - Reads keep working after expiry, including `resolve`, `getDocument`, `listDocuments`, review
   reads, `listJobs`, provenance and licence state.
 

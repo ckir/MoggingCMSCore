@@ -1,7 +1,7 @@
 # Import write path: fewer statements and concurrent locale writes (design)
 
-Status: DRAFT, awaiting owner approval. Written 2026-11-18; revised after a builder check, a solo adversarial panel and
-agy panel rounds 1 to 5 (findings folded below). Nothing is built.
+Status: IMPLEMENTED on branch `feat/import-write-path`. Written 2026-11-18; revised after a builder check, a solo
+adversarial panel and agy panel rounds 1 to 5 (findings folded below).
 Origin: the owner asked "Add support for bun runtime and Rust to improve speed". Measuring first showed that neither
 touches the slow part, so this design covers what does. Bun and Rust are recorded as rejected for the write path (see
 Approaches).

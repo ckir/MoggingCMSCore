@@ -90,6 +90,9 @@ entry is a no-op Astro integration that imports nothing; the preset is the separ
   `assertActor(ctx)` (`src/ctx.ts`). Never call either inside an internal helper that a loop calls. The list of
   guarded writes is in `CONTENT_ARCHITECTURE.md` section 6.2. `ctx = { sql, config, actor }`, and `actor` is
   attribution only.
+  A write loop guards once through `beginWriteRun` (`@mogging/core/internal`, unlisted) and then calls the
+  within-transaction writers (`saveDraftWithinTx`, `publishWithinRun`); that is the sanctioned form of the "never
+  inside a loop helper" rule.
 - **AI pipeline (`packages/ai`; the design spec has the full implementation notes):**
   - no LLM/provider call inside a database transaction;
   - one lock order everywhere: `ai_budgets` (global first), then the `ai_jobs` row, then `documents` (through
