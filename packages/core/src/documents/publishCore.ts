@@ -6,7 +6,7 @@ import { assertSlugFree, lockSlugs } from "./slugGuard.js";
 export type PublishInput = { docId: string; locale: string | "shared"; version?: number };
 
 // Locale handling duplicates saveDraft.ts on purpose (that file is not shared-code yet).
-export function resolveLocale(ctx: Ctx, input: string): { isShared: boolean; locale: string } {
+export function resolveLocale(ctx: Pick<Ctx, "config">, input: string): { isShared: boolean; locale: string } {
   if (input === "shared") return { isShared: true, locale: "shared" };
   const locale = normalizeLocale(input);
   const { config } = ctx;
@@ -31,9 +31,14 @@ export type Tx = Parameters<Parameters<Ctx["sql"]["begin"]>[1]>[0];
  * data and source hashes but not the `field_warnings` map. A draft head is untouched by a republish.
  *
  * @param tx transaction handle from `sql.begin`; this function never commits or rolls back.
- * @param ctx engine context; used for the actor and locale validation.
+ * @param ctx the config and actor only (a full engine context also fits); used for the actor and locale validation.
  * @param input document, scope and optional explicit version.
  * @param stamp millisecond-granular ISO instant, already truncated and read after the row lock.
+ * @param opts optional `collection`: the document's collection name when the caller already knows it. It stands
+ * in for the `documents` row's collection EVERYWHERE this function uses it (the required-field check, the
+ * shared-scope slug lock and the duplicate-slug check) and the `select collection from documents` read is skipped.
+ * Omitted, the collection is read from the `documents` row, as before. The caller must pass the document's true
+ * collection: the hint is trusted, not verified.
  * @returns resolves when the rows are updated inside `tx`.
  * @throws {NotFoundError} when the scope has no snapshots or the requested version does not exist.
  * @throws {NotPublishableError} when the target is neither a publishable draft head nor a
@@ -44,7 +49,13 @@ export type Tx = Parameters<Parameters<Ctx["sql"]["begin"]>[1]>[0];
  * @remarks Does not check the licence, actor validity, document existence, `deleted_at`, or the
  * release state: callers own those checks. No external side effects.
  */
-export async function publishWithinTx(tx: Tx, ctx: Ctx, input: PublishInput, stamp: string): Promise<void> {
+export async function publishWithinTx(
+  tx: Tx,
+  ctx: Pick<Ctx, "config" | "actor">,
+  input: PublishInput,
+  stamp: string,
+  opts?: { collection?: string },
+): Promise<void> {
   const { actor } = ctx;
   const { isShared, locale } = resolveLocale(ctx, input.locale);
   const table = isShared ? tx`document_shared` : tx`document_localized`;
@@ -75,10 +86,14 @@ export async function publishWithinTx(tx: Tx, ctx: Ctx, input: PublishInput, sta
     );
   }
 
-  // The collection comes from the documents row (the input carries none). A document whose collection is no longer in
-  // the config is not checked for required fields (as assertSlugFree does).
-  const [docRow] = await tx`select collection from documents where id = ${input.docId}`;
-  const collection = docRow ? ctx.config.collections.find((c) => c.name === docRow.collection) : undefined;
+  // The collection comes from the caller's hint when given, else from the documents row (the input carries none). A
+  // document whose collection is no longer in the config is not checked for required fields (as assertSlugFree does).
+  let collectionName: string | undefined = opts?.collection;
+  if (collectionName === undefined) {
+    const [docRow] = await tx`select collection from documents where id = ${input.docId}`;
+    collectionName = docRow ? (docRow.collection as string) : undefined;
+  }
+  const collection = collectionName === undefined ? undefined : ctx.config.collections.find((c) => c.name === collectionName);
 
   // A head is published only with every top-level required field of its scope present (empty values count).
   if (collection) {
@@ -98,9 +113,9 @@ export async function publishWithinTx(tx: Tx, ctx: Ctx, input: PublishInput, sta
 
   // Shared scope: the slug the target would publish must still be free (spec 8). The slug lock is re-entrant and
   // comes after the documents row lock.
-  if (isShared && docRow) {
-    await lockSlugs(tx, ctx, [docRow.collection as string]);
-    await assertSlugFree(tx, ctx, { collection: docRow.collection as string, docId: input.docId, data: target.data });
+  if (isShared && collectionName !== undefined) {
+    await lockSlugs(tx, ctx, [collectionName]);
+    await assertSlugFree(tx, ctx, { collection: collectionName, docId: input.docId, data: target.data });
   }
 
   // Clear the old published head first: the partial unique index allows only one.
