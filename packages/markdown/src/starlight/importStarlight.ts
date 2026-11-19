@@ -3,9 +3,11 @@ import path from "node:path";
 import type { Sql } from "postgres";
 import {
   ValidationError, createDocument, deleteDocument, getDocuments, hashValue, listDocuments, listLocaleRows,
-  listPublishedVersions, normalizeValue, publish, saveDraft,
+  listPublishedVersions, normalizeValue,
 } from "@mogging/core";
 import type { Collection, Ctx, DocumentRecord, HeadPair } from "@mogging/core";
+import { beginWriteRun, publishWithinRun, saveDraftWithinTx } from "@mogging/core/internal";
+import type { Tx, WriteRun } from "@mogging/core/internal";
 import type {
   FileMessage, FileOutcome, ImportInput, ImportReport, SafetyStop, StarlightImportOptions,
 } from "../import.js";
@@ -73,7 +75,24 @@ type Plan = {
   unsupported: string[];
   /** The live documents by published slug, then by draft slug (the locale pass finds a page's document here). */
   bySlug: Map<string, DocumentRecord>;
+  /** The guard-once write run, created lazily by {@link writeRun} at the first write; `null` until then. */
+  run: Promise<WriteRun> | null;
 };
+
+/**
+ * The write run of this import: runs the licence and actor guards on the first call and returns the same promise
+ * afterwards, so one import makes at most one licence read. Never called for a dry run, an all-unchanged run or a
+ * prune-only run, and never from inside a per-file loop's transaction.
+ *
+ * @param plan the plan whose context the guards read.
+ * @returns the run handle (config and actor only).
+ * @throws {LicenceError} when the evaluation has ended without a key.
+ * @throws {ValidationError} for an actor containing U+0000.
+ */
+function writeRun(plan: Plan): Promise<WriteRun> {
+  plan.run ??= beginWriteRun(plan.ctx);
+  return plan.run;
+}
 
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -304,7 +323,7 @@ async function planSource(ctx: Ctx, input: ImportInput & { starlight: StarlightI
   for (const [slug, d] of byPub) bySlug.set(slug, d.rec);
   for (const [slug, d] of byDraft) if (!bySlug.has(slug)) bySlug.set(slug, d.rec);
 
-  return { ctx, options, col, scan, outcomes, warnings, errors, pages, writes, prune, stop, unsupported, bySlug };
+  return { ctx, options, col, scan, outcomes, warnings, errors, pages, writes, prune, stop, unsupported, bySlug, run: null };
 }
 
 /**
@@ -313,18 +332,27 @@ async function planSource(ctx: Ctx, input: ImportInput & { starlight: StarlightI
  */
 async function applySource(plan: Plan): Promise<void> {
   const { ctx, col } = plan;
-  const inTx = <T>(fn: (tctx: Ctx) => Promise<T>): Promise<T> =>
-    ctx.sql.begin(async (tx) => fn({ ...ctx, sql: tx as unknown as Sql })) as Promise<T>;
+  const inTx = <T>(fn: (tx: Tx, tctx: Ctx) => Promise<T>): Promise<T> =>
+    ctx.sql.begin(async (tx) => fn(tx, { ...ctx, sql: tx as unknown as Sql })) as Promise<T>;
 
   for (const page of plan.writes) {
     try {
-      const docId = await inTx(async (tctx) => {
+      // The guards run here, once per import, before the page's transaction opens (a refusal leaves no document row).
+      const run = await writeRun(plan);
+      const docId = await inTx(async (tx, tctx) => {
         const id = page.record?.id ?? (await createDocument(tctx, { collection: col.name })).id;
+        let locked = false;
         for (const s of page.scopes) {
-          if (s.act === "save") await saveDraft(tctx, { docId: id, locale: s.locale, data: s.data });
+          if (s.act === "save") {
+            await saveDraftWithinTx(tx, run, { docId: id, locale: s.locale, data: s.data }, col.name);
+            locked = true;
+          }
         }
         for (const s of page.scopes) {
-          if (s.act !== "none") await publish(tctx, { docId: id, locale: s.locale });
+          if (s.act !== "none") {
+            await publishWithinRun(tx, run, { docId: id, locale: s.locale }, { collection: col.name, alreadyLocked: locked });
+            locked = true;
+          }
         }
         return id;
       });
@@ -612,8 +640,18 @@ async function planLocales(
  */
 async function applyLocales(plan: Plan, lp: LocalePlan): Promise<void> {
   const { ctx } = plan;
-  const inTx = <T>(fn: (tctx: Ctx) => Promise<T>): Promise<T> =>
-    ctx.sql.begin(async (tx) => fn({ ...ctx, sql: tx as unknown as Sql })) as Promise<T>;
+  const inTx = <T>(fn: (tx: Tx) => Promise<T>): Promise<T> =>
+    ctx.sql.begin(async (tx) => fn(tx)) as Promise<T>;
+  // The run is created before any item, and only when at least one item will write: it has something to do and its
+  // document exists (a record, or a page this run created). An all-unchanged run never reads the licence, and a
+  // refusal aborts the import here, before any locale file is written.
+  const writes = (i: LocaleItem): boolean => {
+    if (i.act.kind === "none") return false;
+    if (i.record !== null) return true;
+    const source = plan.outcomes.get(i.pageFile!);
+    return source !== undefined && source.outcome !== "error" && source.docId !== null;
+  };
+  const run = lp.items.some(writes) ? await writeRun(plan) : null;
 
   for (const item of lp.items) {
     const path_ = item.file.path;
@@ -632,16 +670,16 @@ async function applyLocales(plan: Plan, lp: LocalePlan): Promise<void> {
     if (act.kind === "none") continue;
     const locale = item.file.locale;
     try {
-      await inTx(async (tctx) => {
+      await inTx(async (tx) => {
+        const collection = plan.col.name;
         if (act.kind === "save") {
-          await saveDraft(tctx, { docId: docId!, locale, data: item.data, ...(act.untracked ? { untracked: true } : {}) });
-          if (act.publish) await publish(tctx, { docId: docId!, locale });
+          await saveDraftWithinTx(tx, run!, { docId: docId!, locale, data: item.data, ...(act.untracked ? { untracked: true } : {}) }, collection);
+          if (act.publish) await publishWithinRun(tx, run!, { docId: docId!, locale }, { collection, alreadyLocked: true });
         } else {
-          await publish(tctx, { docId: docId!, locale });
+          await publishWithinRun(tx, run!, { docId: docId!, locale }, { collection, alreadyLocked: false });
         }
       });
     } catch (e) {
-      if (isNamed(e, "LicenceError")) throw e;
       plan.errors.set(path_, msg(e));
       plan.outcomes.set(path_, { file: path_, docId, outcome: "error", published: false });
     }
