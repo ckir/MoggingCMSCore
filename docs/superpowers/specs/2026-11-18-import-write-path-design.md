@@ -39,6 +39,16 @@ measurement and decides whether any Rust or Bun work is justified at all.
   arithmetic; agy panel rounds 1 to 5 (`.clavity/seams/import-write-path-panel-r1.md` to `-r5.md`) found 22 further findings; 21 were
   folded and 1 was rejected by measurement. Round 5 was the fifth of a default cap of six, and it still found three small
   contract-level defects, so the panel has NOT closed GREEN; the owner decides whether a sixth round is worth running.
+- Measured after implementation (controller, top level, 2,000 pages x 6 locales = 12,000 files, 0 errors, two runs each,
+  commit `7bc830c`, perf test `MOGGING_PERF=1 pnpm --filter @mogging/markdown test perf --reporter=verbose`; background
+  load uncontrolled: a desktop session at about 8% CPU, no other agent or test running; the baseline figures above were
+  taken on the same machine in an earlier session, so the ratio is between sessions):
+  first import at concurrency 1 (F1 alone): 141.0 to 156.5 s, 170,002 statements (baseline 271.2 to 300.9 s, 268,001),
+  that is 1.7x to 2.1x; first import at concurrency 8 on a pool of 8: 66.1 to 68.2 s, 170,002 statements, 4.0x to 4.6x
+  against that baseline and about 2.1x against concurrency 1; unchanged import 9.7 to 10.3 s / 42 statements (baseline
+  about 10.2 s), export 10.6 to 10.7 s / 40 to 50 statements (baseline 11 to 13 s): not slower. The success bar (at least
+  2.5x at concurrency 8) is met. Not measured: concurrency 4 (the bar of at least 2x), because the perf test has no arm for
+  it. The derived estimates in section 6 (about 1.5x for F1, 75 to 95 s at 8) were conservative.
 
 ## 3. Goals, non-goals, anti-goals
 
